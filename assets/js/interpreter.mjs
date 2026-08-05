@@ -780,6 +780,13 @@ export default class Interpreter {
   static isStrictlyEqual(left, right) {
     const leftType = left.type;
 
+    // Identity fast path. Skipped for floats so that a boxed NaN compared
+    // with itself keeps returning false, matching left.value === right.value
+    // below (Erlang arithmetic raises badarith rather than producing NaN, so
+    // this is expected to be unreachable in practice, but the type is
+    // excluded to avoid silently changing NaN semantics).
+    if (left === right && leftType !== "float") return true;
+
     if (leftType !== right.type) return false;
 
     // Cases ordered by expected frequency (most common first)
