@@ -145,9 +145,10 @@ export default class Renderer {
   // Resolves this render's <window>/<document> listener bindings, dropping any spent once binding so
   // reconcile detaches its real listener through the same path that removes a vanished binding. The
   // fired-state is keyed by the binding's target and slot, both carried on the binding. The drop is
-  // gated on the binding's own once flag: a listener slot is positional across this render's listener
-  // bindings, so a non-once binding can reuse a spent once binding's slot on the shared target, and
-  // the gate keeps it from inheriting that permanent fired-state.
+  // gated on the binding's own once flag: a slot is keyed by template site (see
+  // #collectListenerBindings), not render position, so a non-once binding only shares a slot with a
+  // spent once binding when they are the same template site whose own modifier changed between
+  // renders - and the gate keeps that binding from inheriting its former, permanent fired-state.
   static resolveListenerBindings() {
     return $.listenerBindings.filter(
       ({target, slotKey, once}) => !(once && Once.hasFired(target, slotKey)),
@@ -267,8 +268,8 @@ export default class Renderer {
   // Builds one event binding from a "$"-prefixed attribute, shared by element and window bindings.
   // Returns an {eventName, handler} descriptor (the handler runs modifier matching, dispatch, and
   // debounce/throttle), or null when the attribute is not an event binding. slotKey identifies the
-  // binding for debounce/throttle windows - the attribute index for elements, the binding index for
-  // window bindings, which all share the same currentTarget.
+  // binding for debounce/throttle windows - the attribute index for elements, a component+event+index
+  // template-site key for window bindings, which all share the same currentTarget.
   static #buildEventBinding(
     attrDom,
     slotKey,
@@ -494,7 +495,11 @@ export default class Renderer {
         key,
         attach,
         handler,
-        slotKey: $.listenerBindings.length,
+        // Derived from the binding's template site (component + attribute index), not from this
+        // render's push order - see #collectListenerBindings for why a render-positional slot is
+        // unsound. Unused today (once is always false below, so resolveListenerBindings's gate never
+        // reads it), kept in the same stable form for consistency should that change.
+        slotKey: `${Bitstring.toText(defaultTarget)}:click_outside:${attrIndex}`,
         // click_outside once is keyed on the bound element and torn down when that element is
         // removed (its handler drops out of the shared document listener), not proactively filtered
         // here - so resolveListenerBindings must never drop it for a reused positional slot.
@@ -504,13 +509,20 @@ export default class Renderer {
   }
 
   // Records a <window>/<document> tag's event bindings into the per-render accumulator, tagged with
-  // the target the listener attaches to. Each binding is keyed by its position across all listener
-  // bindings this render, so debounce/throttle windows stay independent even though listeners on one
-  // target share a currentTarget. A bare tag (no attributes) records nothing. A listener target has
-  // no element tag name, so event-name mapping is skipped (passed null).
+  // the target the listener attaches to. Each binding is keyed by its template site - the enclosing
+  // component and the attribute's index on this tag - rather than its position across all listener
+  // bindings this render. A render-positional slot would drift whenever a sibling binding earlier in
+  // the render (a conditional <window> tag, a component appearing) changes count: the same slot would
+  // then belong to a different binding on the next render, letting a spent once fired-state leak onto
+  // an unrelated binding, or an in-flight debounce/throttle timer fire against a stale handler. The
+  // template-site key stays put across such renders, so debounce/throttle windows and once state track
+  // the binding they were recorded for, not whichever binding currently occupies that slot. A bare tag
+  // (no attributes) records nothing. A listener target has no element tag name, so event-name mapping
+  // is skipped (passed null).
   static #collectListenerBindings(target, attrsDom, defaultTarget) {
-    attrsDom.data.forEach((attrDom) => {
-      const slotKey = $.listenerBindings.length;
+    attrsDom.data.forEach((attrDom, attrIndex) => {
+      const eventAttributeName = $.#eventAttributeName(attrDom);
+      const slotKey = `${Bitstring.toText(defaultTarget)}:${eventAttributeName}:${attrIndex}`;
 
       const binding = $.#buildEventBinding(
         attrDom,

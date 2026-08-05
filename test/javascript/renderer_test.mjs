@@ -7585,7 +7585,8 @@ describe("Renderer", () => {
       // Before firing, the binding resolves into the desired set.
       assert.equal(Renderer.resolveListenerBindings().length, 1);
 
-      // A window binding keys once on the window target and its push position.
+      // A window binding keys once on the window target and a template-site slot (the enclosing
+      // component, the event name, and the attribute's index on this tag).
       const {target, slotKey} = Renderer.listenerBindings[0];
       Once.markFired(target, slotKey);
 
@@ -7593,23 +7594,98 @@ describe("Renderer", () => {
       assert.equal(Renderer.resolveListenerBindings().length, 0);
     });
 
-    it("keeps a non-once binding that reuses a spent once binding's slot", () => {
-      // A listener slot is positional across a render's listener bindings, so when the binding set
-      // changes a non-once binding can inherit the slot a spent once binding held. A throwaway
-      // stand-in for the shared window/document target keeps this fired-state from leaking to other
-      // tests; a prior render's spent once binding marked this (target, slot).
-      const target = {};
-      Once.markFired(target, 0);
+    it("keeps a stable slot across renders where an earlier sibling <window> binding's presence changes", () => {
+      // <window $key_down.once="my_action" /> alone, as if a preceding conditional <window $scroll>
+      // sibling were absent on this render.
+      const onceActionSpecDom = Type.list([
+        Type.tuple([Type.atom("text"), Type.bitstring("my_action")]),
+      ]);
 
-      // This render, a non-once binding takes the same slot on the same target. The drop is gated on
-      // the binding's own once flag, so the inherited fired-state must not suppress it.
+      const keyDownOnlyNode = Type.tuple([
+        Type.atom("element"),
+        Type.bitstring("window"),
+        Type.list([
+          Type.tuple([
+            Type.bitstring("$key_down"),
+            onceActionSpecDom,
+            Type.map([[Type.atom("once"), Type.boolean(true)]]),
+          ]),
+        ]),
+        Type.list(),
+      ]);
+
+      Renderer.renderDom(
+        keyDownOnlyNode,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      const firstRenderSlotKey = Renderer.listenerBindings[0].slotKey;
+
+      // Next render, the conditional sibling is now present ahead of it. A render-positional slot
+      // (the bug this key design replaces) would shift under this insertion; a template-site slot
+      // must not.
+      const scrollActionSpecDom = Type.list([
+        Type.tuple([Type.atom("text"), Type.bitstring("my_other_action")]),
+      ]);
+
+      const withPrecedingSiblingNode = Type.list([
+        Type.tuple([
+          Type.atom("element"),
+          Type.bitstring("window"),
+          Type.list([Type.tuple([Type.bitstring("$scroll"), scrollActionSpecDom])]),
+          Type.list(),
+        ]),
+        keyDownOnlyNode,
+      ]);
+
+      Renderer.listenerBindings = [];
+
+      Renderer.renderDom(
+        withPrecedingSiblingNode,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      const keyDownBinding = Renderer.listenerBindings.find(
+        (binding) => binding.key === "bubble:keydown",
+      );
+
+      assert.equal(keyDownBinding.slotKey, firstRenderSlotKey);
+
+      // And its fired-state (recorded against the first render's slot) still suppresses it, rather
+      // than a re-armed once re-firing because the slot drifted onto a different binding.
+      Once.markFired(keyDownBinding.target, firstRenderSlotKey);
+
+      assert.isFalse(
+        Renderer.resolveListenerBindings().some(
+          (binding) => binding.key === "bubble:keydown",
+        ),
+      );
+    });
+
+    it("keeps a non-once binding whose template site inherits a spent once fired-state", () => {
+      // The same template site can change its own once modifier between renders (e.g. a modifier
+      // driven by state), so its slot can carry a fired-state from when it was still a once binding.
+      // A throwaway stand-in for the shared window/document target keeps this fired-state from
+      // leaking to other tests.
+      const target = {};
+      const slotKey = "page:keyup:0";
+      Once.markFired(target, slotKey);
+
+      // This render, the same template site is a non-once binding. The drop is gated on the
+      // binding's own once flag, so the inherited fired-state must not suppress it.
       Renderer.listenerBindings = [
         {
           target,
           key: "bubble:keyup",
           attach: () => {},
           handler: () => {},
-          slotKey: 0,
+          slotKey,
           once: false,
         },
       ];
