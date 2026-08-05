@@ -21,6 +21,7 @@ import JsInterop from "./js_interop.mjs";
 import MemoryStorage from "./memory_storage.mjs";
 import Operation from "./operation.mjs";
 import PerformanceTimer from "./performance_timer.mjs";
+import RenderCache from "./render_cache.mjs";
 import Renderer from "./renderer.mjs";
 import Serializer from "./serializer.mjs";
 import Sse from "./sse.mjs";
@@ -405,6 +406,11 @@ export default class Hologram {
       Hologram.virtualDocument,
       newVirtualDocument,
     );
+
+    // A memoized subtree's controlled inputs skipped patch's own hook.update along with the rest of
+    // their diff, so re-sync them now that patch (and thus .elm) is settled - same timing the hook
+    // would have used.
+    Renderer.replayFormInputs();
 
     // renderPage() collected this render's <window>/<document> bindings into Renderer.listenerBindings
     // and its deferred element bindings (reach, resize) into Renderer.reachBindings and
@@ -1098,6 +1104,12 @@ export default class Hologram {
       Hologram.virtualDocument,
       newVirtualDocument,
     );
+
+    // This path replaces the retained tree from server-rendered HTML rather than through
+    // Renderer.renderPage(), so any cached vnodes RenderCache holds now point at a discarded tree -
+    // clear them rather than risk a future render reusing a stale entry for a cid the new page
+    // happens to reuse.
+    RenderCache.clear();
   }
 
   // Deps: [:maps.get/2, :maps.put/3]

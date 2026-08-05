@@ -10,6 +10,7 @@ import {
   contextFixture,
   defineRuntimeGlobals,
   initComponentRegistryEntry,
+  putState,
   sinon,
   vnode,
 } from "./support/helpers.mjs";
@@ -85,6 +86,7 @@ import HologramRuntimeError from "../../assets/js/errors/runtime_error.mjs";
 import InitActionQueue from "../../assets/js/init_action_queue.mjs";
 import Interpreter from "../../assets/js/interpreter.mjs";
 import Once from "../../assets/js/once.mjs";
+import RenderCache from "../../assets/js/render_cache.mjs";
 import Renderer from "../../assets/js/renderer.mjs";
 import Type from "../../assets/js/type.mjs";
 
@@ -7635,7 +7637,9 @@ describe("Renderer", () => {
         Type.tuple([
           Type.atom("element"),
           Type.bitstring("window"),
-          Type.list([Type.tuple([Type.bitstring("$scroll"), scrollActionSpecDom])]),
+          Type.list([
+            Type.tuple([Type.bitstring("$scroll"), scrollActionSpecDom]),
+          ]),
           Type.list(),
         ]),
         keyDownOnlyNode,
@@ -9507,6 +9511,303 @@ describe("Renderer", () => {
         Erlang_Maps["get/2"](Type.atom("next_action"), struct),
         Type.nil(),
       );
+    });
+  });
+
+  describe("component memoization", () => {
+    // renderPage() wraps every render with RenderCache.beginRender()/endRender(); these tests call
+    // renderDom() directly (as the rest of this file does), so they replicate that wrapping by hand
+    // to get real per-render dirty-set and eviction semantics rather than an ever-growing one.
+    function renderOnce(node) {
+      RenderCache.beginRender();
+
+      try {
+        return Renderer.renderDom(
+          node,
+          context,
+          slots,
+          defaultTarget,
+          parentTagName,
+        );
+      } finally {
+        RenderCache.endRender();
+      }
+    }
+
+    function componentNode(module, cid) {
+      return Type.tuple([
+        Type.atom("component"),
+        Type.alias(module),
+        Type.list([
+          Type.tuple([
+            Type.bitstring("cid"),
+            Type.keywordList([[Type.atom("text"), cid]]),
+          ]),
+        ]),
+        Type.list(),
+      ]);
+    }
+
+    // Module10's own template renders Module11 and Module12 as nested stateful components (not
+    // through slots), interleaved with its own state - "10,11,10,12,10" - so it is a real ancestor /
+    // descendant pair, not just a parent passing children through.
+    const cid10 = Type.bitstring("component_10");
+    const cid11 = Type.bitstring("component_11");
+    const cid12 = Type.bitstring("component_12");
+    const module10Node = componentNode(
+      "Hologram.Test.Fixtures.Template.Renderer.Module10",
+      cid10,
+    );
+
+    function seedModule10Tree() {
+      ComponentRegistry.putEntry(
+        cid10,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.Module10",
+          ),
+          state: Type.map([[Type.atom("a"), Type.integer(10)]]),
+        }),
+      );
+
+      ComponentRegistry.putEntry(
+        cid11,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.Module11",
+          ),
+          state: Type.map([[Type.atom("a"), Type.integer(11)]]),
+        }),
+      );
+
+      ComponentRegistry.putEntry(
+        cid12,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.Module12",
+          ),
+          state: Type.map([[Type.atom("a"), Type.integer(12)]]),
+        }),
+      );
+    }
+
+    it("returns the identical vnode array on an unchanged re-render", () => {
+      seedModule10Tree();
+
+      const first = renderOnce(module10Node);
+      const second = renderOnce(module10Node);
+
+      assert.strictEqual(first, second);
+      assert.deepStrictEqual(first, ["10,11,10,12,10"]);
+    });
+
+    it("re-renders and reflects new state, at both the descendant and the ancestor, when a nested descendant's struct changes", () => {
+      seedModule10Tree();
+
+      const first = renderOnce(module10Node);
+
+      const struct11 = ComponentRegistry.getComponentStruct(cid11);
+
+      ComponentRegistry.putComponentStruct(
+        cid11,
+        putState(struct11, Type.map([[Type.atom("a"), Type.integer(999)]])),
+      );
+
+      const second = renderOnce(module10Node);
+
+      // Not just unequal by value - the ancestor's own cached array must be a different object,
+      // proving cid10 was not served from cache even though its own props/state/context never
+      // changed. Reusing it here would leave the descendant's update invisible in the DOM.
+      assert.notStrictEqual(first, second);
+      assert.deepStrictEqual(second, ["10,999,10,12,10"]);
+    });
+
+    it("leaves an unrelated top-level component's cached output untouched", () => {
+      const cidA = Type.bitstring("sibling_a");
+      const cidB = Type.bitstring("sibling_b");
+
+      ComponentRegistry.putEntry(
+        cidA,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.Module3",
+          ),
+          state: Type.map([
+            [Type.atom("a"), Type.integer(1)],
+            [Type.atom("b"), Type.integer(2)],
+          ]),
+        }),
+      );
+
+      ComponentRegistry.putEntry(
+        cidB,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.Module7",
+          ),
+          state: Type.map([
+            [Type.atom("c"), Type.integer(3)],
+            [Type.atom("d"), Type.integer(4)],
+          ]),
+        }),
+      );
+
+      const nodes = Type.list([
+        componentNode("Hologram.Test.Fixtures.Template.Renderer.Module3", cidA),
+        componentNode("Hologram.Test.Fixtures.Template.Renderer.Module7", cidB),
+      ]);
+
+      const first = renderOnce(nodes);
+
+      const structA = ComponentRegistry.getComponentStruct(cidA);
+
+      ComponentRegistry.putComponentStruct(
+        cidA,
+        putState(structA, Type.map([[Type.atom("a"), Type.integer(-1)]])),
+      );
+
+      const second = renderOnce(nodes);
+
+      // first/second are fresh top-level arrays from #renderNodes on every render regardless of
+      // memoization (only individual component subtrees are cached) - the identity that matters is
+      // each component's own element, spliced in unchanged by .flat() when reused.
+      assert.notStrictEqual(first[0], second[0]);
+      assert.strictEqual(first[1], second[1]);
+    });
+
+    it("does not re-run init/2 side effects on a hit", () => {
+      const cid = Type.bitstring("memo_init_test");
+      const node = componentNode(
+        "Hologram.Test.Fixtures.Template.Renderer.Module3",
+        cid,
+      );
+
+      // Module3's init/2 (see support/fixtures/renderer/module_3.mjs) runs only the first time a cid
+      // is encountered - ComponentRegistry.putEntry is its only side effect reaching the registry, so
+      // a second call here would mean init/2 ran again on a cache hit.
+      const putEntrySpy = sinon.spy(ComponentRegistry, "putEntry");
+
+      try {
+        const first = renderOnce(node);
+        const second = renderOnce(node);
+
+        assert.strictEqual(first, second);
+        sinon.assert.calledOnce(putEntrySpy);
+      } finally {
+        putEntrySpy.restore();
+      }
+    });
+
+    it("evicts a component's cache entry once it stops appearing, so a later reappearance renders fresh", () => {
+      const cid = Type.bitstring("memo_eviction_test");
+      const node = componentNode(
+        "Hologram.Test.Fixtures.Template.Renderer.Module3",
+        cid,
+      );
+
+      const present = Type.list([node]);
+      const absent = Type.list([]);
+
+      const first = renderOnce(present);
+      renderOnce(absent);
+      const third = renderOnce(present);
+
+      assert.notStrictEqual(first[0], third[0]);
+      assert.deepStrictEqual(third, first);
+    });
+
+    it("replays a memoized component's <window> listener bindings on a hit", () => {
+      Interpreter.defineElixirFunction(
+        "Hologram.Test.Fixtures.Template.Renderer.MemoWindowModule",
+        "__props__",
+        0,
+        "public",
+        [
+          {
+            params: (_context) => [],
+            guards: [],
+            body: (_context) => {
+              return Type.list();
+            },
+          },
+        ],
+      );
+
+      Interpreter.defineElixirFunction(
+        "Hologram.Test.Fixtures.Template.Renderer.MemoWindowModule",
+        "template",
+        0,
+        "public",
+        [
+          {
+            params: (_context) => [],
+            guards: [],
+            body: (context) => {
+              return Type.anonymousFunction(
+                1,
+                [
+                  {
+                    params: (_context) => [Type.variablePattern("vars")],
+                    guards: [],
+                    body: (_context) => {
+                      return Type.list([
+                        Type.tuple([
+                          Type.atom("element"),
+                          Type.bitstring("window"),
+                          Type.list([
+                            Type.tuple([
+                              Type.bitstring("$click"),
+                              Type.list([
+                                Type.tuple([
+                                  Type.atom("text"),
+                                  Type.bitstring("my_action"),
+                                ]),
+                              ]),
+                            ]),
+                          ]),
+                          Type.list(),
+                        ]),
+                      ]);
+                    },
+                  },
+                ],
+                context,
+              );
+            },
+          },
+        ],
+      );
+
+      const cid = Type.bitstring("memo_window_test");
+
+      ComponentRegistry.putEntry(
+        cid,
+        componentRegistryEntryFixture({
+          module: Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.MemoWindowModule",
+          ),
+        }),
+      );
+
+      const node = componentNode(
+        "Hologram.Test.Fixtures.Template.Renderer.MemoWindowModule",
+        cid,
+      );
+
+      Renderer.listenerBindings = [];
+      renderOnce(node);
+
+      assert.equal(Renderer.listenerBindings.length, 1);
+      const firstSlotKey = Renderer.listenerBindings[0].slotKey;
+
+      Renderer.listenerBindings = [];
+      renderOnce(node);
+
+      // A hit must re-push its own bindings, not just skip re-collecting them - reconcile() treats
+      // its argument as the complete world for this render, so a binding missing here would be
+      // detached even though the <window> tag is still there.
+      assert.equal(Renderer.listenerBindings.length, 1);
+      assert.equal(Renderer.listenerBindings[0].slotKey, firstSlotKey);
     });
   });
 });

@@ -13,6 +13,7 @@ import InitActionQueue from "./init_action_queue.mjs";
 import Interpreter from "./interpreter.mjs";
 import KeyboardEvent from "./events/keyboard_event.mjs";
 import Once from "./once.mjs";
+import RenderCache from "./render_cache.mjs";
 import Throttler from "./throttler.mjs";
 import Type from "./type.mjs";
 import Utils from "./utils.mjs";
@@ -40,6 +41,13 @@ export default class Renderer {
   // patch, so the binding is held here until resolveResizeBindings turns it into a registry binding
   // once `.elm` exists. renderPage() resets this.
   static resizeBindings = [];
+
+  // Controlled-input vnodes belonging to memoized subtrees this render replayed from RenderCache
+  // instead of rendering fresh. patchVnode()'s identity short-circuit (see render_cache.mjs) skips
+  // those subtrees entirely, so their hook.update never fires and their DOM value/checked state would
+  // silently stop tracking state changes. replayFormInputs() re-syncs them after patch, mirroring
+  // what the hook would have done. renderPage() resets this.
+  static formInputReplays = [];
 
   // Based on render_dom/3
   static renderDom(dom, context, slots, defaultTarget, parentTagName) {
@@ -119,6 +127,8 @@ export default class Renderer {
     Renderer.listenerBindings = [];
     Renderer.reachBindings = [];
     Renderer.resizeBindings = [];
+    Renderer.formInputReplays = [];
+    RenderCache.beginRender();
 
     const pageModuleProxy = Interpreter.moduleProxy(pageModule);
 
@@ -130,6 +140,8 @@ export default class Renderer {
       pageParams,
       pageComponentStruct,
     );
+
+    RenderCache.endRender();
 
     const htmlVnode = pageVdom.find((vnode) => vnode.sel === "html");
 
@@ -1519,6 +1531,8 @@ export default class Renderer {
 
     const elementVnode = vnode(currentTagName, data, childrenVdom);
 
+    RenderCache.noteFormInput(elementVnode);
+
     Renderer.#collectClickOutsideBindings(
       attrsDom,
       elementVnode,
@@ -1692,6 +1706,13 @@ export default class Renderer {
 
   // Based on render_stateful_component/4
   // Deps: [:maps.get/2, :maps.merge/2]
+  //
+  // Memoizes reuse by cid through RenderCache: on a hit, returns the cached vnode array unchanged, so
+  // snabbdom's oldVnode === vnode identity check (vendor/snabbdom/build/init.js patchVnode) skips
+  // diffing that whole subtree, on top of skipping its interpreted template evaluation here. The
+  // layout component is excluded - #renderPageInsideLayout passes the entire page DOM as its
+  // childrenDom, so it is always on the spine of any action and comparing that would cost a full
+  // page-DOM walk for a check that can never hit.
   static #renderStatefulComponent(
     moduleProxy,
     props,
@@ -1700,6 +1721,41 @@ export default class Renderer {
     parentTagName,
   ) {
     const cid = Erlang_Maps["get/2"](Type.atom("cid"), props);
+    const cidKey = Type.encodeMapKey(cid);
+    const isLayout = Bitstring.toText(cid) === "layout";
+
+    RenderCache.noteEncountered(cidKey);
+
+    if (!isLayout) {
+      const cached = RenderCache.get(cidKey);
+
+      if (
+        cached !== undefined &&
+        RenderCache.isReusable(
+          cached,
+          moduleProxy,
+          props,
+          childrenDom,
+          context,
+          parentTagName,
+        )
+      ) {
+        const entry = RenderCache.replay(cached);
+
+        Renderer.listenerBindings.push(...entry.listenerBindings);
+        Renderer.reachBindings.push(...entry.reachBindings);
+        Renderer.resizeBindings.push(...entry.resizeBindings);
+        Renderer.formInputReplays.push(...entry.formInputVnodes);
+
+        return entry.vdom;
+      }
+    }
+
+    const listenerMark = Renderer.listenerBindings.length;
+    const reachMark = Renderer.reachBindings.length;
+    const resizeMark = Renderer.resizeBindings.length;
+    const cidMark = RenderCache.cidMark();
+    const formInputMark = RenderCache.formInputMark();
 
     const [componentState, componentEmittedContext] =
       Renderer.#maybeInitComponent(cid, moduleProxy, props);
@@ -1710,7 +1766,7 @@ export default class Renderer {
       componentEmittedContext,
     );
 
-    return Renderer.#renderTemplate(
+    const vdom = Renderer.#renderTemplate(
       moduleProxy,
       vars,
       childrenDom,
@@ -1718,6 +1774,27 @@ export default class Renderer {
       cid,
       parentTagName,
     );
+
+    if (!isLayout) {
+      RenderCache.put(cidKey, {
+        cidKey,
+        cid,
+        moduleProxy,
+        props,
+        childrenDom,
+        context,
+        parentTagName,
+        struct: ComponentRegistry.getComponentStruct(cid),
+        vdom,
+        listenerBindings: Renderer.listenerBindings.slice(listenerMark),
+        reachBindings: Renderer.reachBindings.slice(reachMark),
+        resizeBindings: Renderer.resizeBindings.slice(resizeMark),
+        descendantCids: RenderCache.descendantsSince(cidMark),
+        formInputVnodes: RenderCache.formInputsSince(formInputMark),
+      });
+    }
+
+    return vdom;
   }
 
   // Based on render_template/4
@@ -1783,6 +1860,26 @@ export default class Renderer {
     );
 
     return throttle === null ? null : Number(throttle.value);
+  }
+
+  // Re-syncs controlled-input DOM state for vnodes RenderCache replayed from a memoized subtree this
+  // render, whose hook.update never ran because patchVnode()'s identity check skipped that subtree
+  // entirely. Called after Vdom.patchVirtualDocument(), matching the hook's own timing, so `.elm`
+  // is populated the same way it is for a freshly-patched vnode.
+  static replayFormInputs() {
+    for (const inputVnode of Renderer.formInputReplays) {
+      if (inputVnode.data.hologramFormInputValue !== undefined) {
+        Renderer.#updateFormInputValue(
+          inputVnode.elm,
+          inputVnode.data.hologramFormInputValue,
+        );
+      } else if (inputVnode.data.hologramFormInputChecked !== undefined) {
+        Renderer.#updateFormInputChecked(
+          inputVnode.elm,
+          inputVnode.data.hologramFormInputChecked,
+        );
+      }
+    }
   }
 
   static #updateFormInputChecked(element, newChecked) {
