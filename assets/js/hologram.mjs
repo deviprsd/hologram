@@ -55,6 +55,7 @@ import ManuallyPortedElixirException from "./elixir/exception.mjs";
 import ManuallyPortedElixirFunctionClauseError from "./elixir/function_clause_error.mjs";
 import ManuallyPortedElixirHologramJS from "./elixir/hologram/js.mjs";
 import ManuallyPortedElixirHologramRouterHelpers from "./elixir/hologram/router/helpers.mjs";
+import ManuallyPortedElixirHologramTemplateMarker from "./elixir/hologram/template/marker.mjs";
 import ManuallyPortedElixirIO from "./elixir/io.mjs";
 import ManuallyPortedElixirKernel from "./elixir/kernel.mjs";
 import ManuallyPortedElixirString from "./elixir/string.mjs";
@@ -606,6 +607,27 @@ export default class Hologram {
       "asset_path/1",
       "public",
       ManuallyPortedElixirHologramRouterHelpers["asset_path/1"],
+    );
+
+    Interpreter.defineManuallyPortedFunction(
+      "Hologram.Template.Marker",
+      "item_key/1",
+      "public",
+      ManuallyPortedElixirHologramTemplateMarker["item_key/1"],
+    );
+
+    Interpreter.defineManuallyPortedFunction(
+      "Hologram.Template.Marker",
+      "item_node/4",
+      "public",
+      ManuallyPortedElixirHologramTemplateMarker["item_node/4"],
+    );
+
+    Interpreter.defineManuallyPortedFunction(
+      "Hologram.Template.Marker",
+      "key_from_value/1",
+      "public",
+      ManuallyPortedElixirHologramTemplateMarker["key_from_value/1"],
     );
 
     Interpreter.defineManuallyPortedFunction(

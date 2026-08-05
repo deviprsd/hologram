@@ -275,6 +275,38 @@ describe("Renderer", () => {
       assert.deepStrictEqual(result, expected);
     });
 
+    // "for" item markers - Hologram.Template.Marker.item_node/4 produces the same shape as a
+    // block marker, plus the item's key as an extra segment before the side. This is the client
+    // rendering path (as opposed to a DOM-derived one), and it has to key the comment exactly the
+    // same way the server's marker text and the DOM-derived paths (Vdom.addKeysToVnodes,
+    // Vdom.#buildVnodeFromDomNode) do, since the first patch after boot/navigation diffs against
+    // whichever of those the page loaded from.
+    it("with item marker", () => {
+      // <!--[h:1a2b3c:0:42:o]-->
+      const node = Type.tuple([
+        Type.atom("public_comment"),
+        Type.list([
+          Type.tuple([Type.atom("text"), Type.bitstring("[h:1a2b3c:0:42:o]")]),
+        ]),
+      ]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      const expected = vnode(
+        "!",
+        {key: "[h:1a2b3c:0:42:o]"},
+        "[h:1a2b3c:0:42:o]",
+      );
+
+      assert.deepStrictEqual(result, expected);
+    });
+
     it("numbers repeated block markers in one list", () => {
       // <!--[h:1a2b3c:0:o]--><!--[h:1a2b3c:0:o]-->
       const marker = Type.tuple([
