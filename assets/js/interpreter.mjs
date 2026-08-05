@@ -1738,9 +1738,8 @@ export default class Interpreter {
           startTime = performance.now();
         }
 
-        const mfa = `${moduleExName}.${functionName}/${arity}`;
-
         // TODO: remove on release
+        // const mfa = `${moduleExName}.${functionName}/${arity}`;
         // Interpreter.#logFunctionCall(mfa, arguments);
 
         const args = Type.list([...arguments]);
@@ -1766,7 +1765,7 @@ export default class Interpreter {
 
               if (globalThis.Hologram.isProfilingEnabled) {
                 console.log(
-                  `Hologram: function ${mfa} executed in`,
+                  `Hologram: function ${moduleExName}.${functionName}/${arity} executed in`,
                   PerformanceTimer.diff(startTime),
                 );
               }
