@@ -353,6 +353,8 @@ defmodule Hologram.Compiler.CallGraph do
   # * the function doesn't make sense on the client side
   # * the function must access the Hologram client runtime
   # * the function has only a client-side implementation
+  # * the function runs once per item of every keyed list, where transpiled output would be
+  #   markedly slower than a hand-written equivalent
   @manually_ported_elixir_mfas [
     {Application, :get_env, 3},
     {Cldr.Locale, :language_data, 0},
@@ -372,6 +374,9 @@ defmodule Hologram.Compiler.CallGraph do
     {Hologram.JS, :set, 4},
     {Hologram.JS, :typeof, 2},
     {Hologram.Router.Helpers, :asset_path, 1},
+    {Hologram.Template.Marker, :item_key, 1},
+    {Hologram.Template.Marker, :item_node, 4},
+    {Hologram.Template.Marker, :key_from_value, 1},
     {IO, :inspect, 1},
     {IO, :inspect, 2},
     {IO, :inspect, 3},

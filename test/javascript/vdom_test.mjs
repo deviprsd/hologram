@@ -651,6 +651,49 @@ describe("Vdom", () => {
       ]);
     });
 
+    // A keyed "for" block's own markers wrap one item-marker fragment per iteration - the shape
+    // Hologram.Template.Marker.item_node/4 produces alongside the block's own open/close markers
+    // (dom.ex's inject_block_markers/3). Item markers share the block's hash and index, so nesting
+    // still has to resolve correctly even though the outer and inner markers only differ by the
+    // extra key segment.
+    it("item marker fragments nest inside their block's own fragment", () => {
+      const children = [
+        marker("[h:1a2b3c:0:o]"),
+        marker("[h:1a2b3c:0:1:o]"),
+        vnode("li", {attrs: {}}, []),
+        marker("[h:1a2b3c:0:1:c]"),
+        marker("[h:1a2b3c:0:2:o]"),
+        vnode("li", {attrs: {}}, []),
+        marker("[h:1a2b3c:0:2:c]"),
+        marker("[h:1a2b3c:0:c]"),
+      ];
+
+      const result = Vdom.groupBlockFragments(children);
+
+      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]"]);
+
+      const block = result[0];
+
+      assert.deepStrictEqual(keysOf(block.children), [
+        "[h:1a2b3c:0:o]",
+        "[h:1a2b3c:0:1:o]",
+        "[h:1a2b3c:0:2:o]",
+        "[h:1a2b3c:0:c]",
+      ]);
+
+      assert.deepStrictEqual(keysOf(block.children[1].children), [
+        "[h:1a2b3c:0:1:o]",
+        "li",
+        "[h:1a2b3c:0:1:c]",
+      ]);
+
+      assert.deepStrictEqual(keysOf(block.children[2].children), [
+        "[h:1a2b3c:0:2:o]",
+        "li",
+        "[h:1a2b3c:0:2:c]",
+      ]);
+    });
+
     it("renumbered repeats pair with their own closing side", () => {
       const children = [
         marker("[h:1a2b3c:0:o]"),
@@ -828,6 +871,26 @@ describe("Vdom", () => {
 
     it("non-string text", () => {
       assert.isNull(Vdom.markerKey(undefined));
+    });
+
+    // "for" item markers - see Hologram.Template.Marker.item_node/4.
+    it("item marker, opening", () => {
+      assert.equal(Vdom.markerKey("[h:1a2b3c:0:42:o]"), "[h:1a2b3c:0:42:o]");
+    });
+
+    it("item marker, closing", () => {
+      assert.equal(Vdom.markerKey("[h:1a2b3c:0:42:c]"), "[h:1a2b3c:0:42:c]");
+    });
+
+    it("item marker with a binary key", () => {
+      assert.equal(
+        Vdom.markerKey("[h:1a2b3c:0:abc-def:o]"),
+        "[h:1a2b3c:0:abc-def:o]",
+      );
+    });
+
+    it("item marker with an invalid character in the key", () => {
+      assert.isNull(Vdom.markerKey("[h:1a2b3c:0:a b:o]"));
     });
   });
 });

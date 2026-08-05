@@ -1499,7 +1499,7 @@ defmodule Hologram.Template.DOMTest do
       tags = [{:block_start, {"for", "{ item <- @items}"}}, {:text, "abc"}, {:block_end, "for"}]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:2789se:0:o]"]},
+               {:public_comment, [text: "[h:byf8s9:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1508,9 +1508,38 @@ defmodule Hologram.Template.DOMTest do
                      {{:., [line: 1], [{:vars, [line: 1], nil}, :items]},
                       [no_parens: true, line: 1], []}
                    ]},
-                  [do: {:__block__, [], [[text: "abc"]]}]
+                  [
+                    do:
+                      {:__block__, [line: 1],
+                       [
+                         {:=, [line: 1],
+                          [
+                            {:holo__item_key__, [line: 1], nil},
+                            {{:., [line: 1],
+                              [
+                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                :item_key
+                              ]}, [line: 1], [{:item, [line: 1], nil}]}
+                          ]},
+                         [
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "byf8s9", 0, "o"]},
+                           [text: "abc"],
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "byf8s9", 0, "c"]}
+                         ]
+                       ]}
+                  ]
                 ]},
-               {:public_comment, [text: "[h:2789se:0:c]"]}
+               {:public_comment, [text: "[h:byf8s9:0:c]"]}
              ]
     end
 
@@ -1524,7 +1553,7 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:2rfi1c:0:o]"]},
+               {:public_comment, [text: "[h:2zqn8:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1535,11 +1564,36 @@ defmodule Hologram.Template.DOMTest do
                    ]},
                   [
                     do:
-                      {:__block__, [],
-                       [[{:text, "abc"}, {:{}, [line: 1], [:element, "div", [], []]}]]}
+                      {:__block__, [line: 1],
+                       [
+                         {:=, [line: 1],
+                          [
+                            {:holo__item_key__, [line: 1], nil},
+                            {{:., [line: 1],
+                              [
+                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                :item_key
+                              ]}, [line: 1], [{:item, [line: 1], nil}]}
+                          ]},
+                         [
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "2zqn8", 0, "o"]},
+                           [{:text, "abc"}, {:{}, [line: 1], [:element, "div", [], []]}],
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "2zqn8", 0, "c"]}
+                         ]
+                       ]}
                   ]
                 ]},
-               {:public_comment, [text: "[h:2rfi1c:0:c]"]}
+               {:public_comment, [text: "[h:2zqn8:0:c]"]}
              ]
     end
 
@@ -1586,14 +1640,14 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:17h2ajb:0:o]"]},
+               {:public_comment, [text: "[h:f19r7d:0:o]"]},
                {:if, [line: 1],
                 [
                   {{:., [line: 1], [{:vars, [line: 1], nil}, :aaa]}, [no_parens: true, line: 1],
                    []},
                   [
                     do: [
-                      {:public_comment, [text: "[h:17h2ajb:1:o]"]},
+                      {:public_comment, [text: "[h:f19r7d:1:o]"]},
                       {:for, [line: 1],
                        [
                          {:<-, [line: 1],
@@ -1602,13 +1656,42 @@ defmodule Hologram.Template.DOMTest do
                             {{:., [line: 1], [{:vars, [line: 1], nil}, :bbb]},
                              [no_parens: true, line: 1], []}
                           ]},
-                         [do: {:__block__, [], [[text: "ccc"]]}]
+                         [
+                           do:
+                             {:__block__, [line: 1],
+                              [
+                                {:=, [line: 1],
+                                 [
+                                   {:holo__item_key__, [line: 1], nil},
+                                   {{:., [line: 1],
+                                     [
+                                       {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                       :item_key
+                                     ]}, [line: 1], [{:x, [line: 1], nil}]}
+                                 ]},
+                                [
+                                  {{:., [line: 1],
+                                    [
+                                      {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                      :item_node
+                                    ]}, [line: 1],
+                                   [{:holo__item_key__, [line: 1], nil}, "f19r7d", 1, "o"]},
+                                  [text: "ccc"],
+                                  {{:., [line: 1],
+                                    [
+                                      {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                      :item_node
+                                    ]}, [line: 1],
+                                   [{:holo__item_key__, [line: 1], nil}, "f19r7d", 1, "c"]}
+                                ]
+                              ]}
+                         ]
                        ]},
-                      {:public_comment, [text: "[h:17h2ajb:1:c]"]}
+                      {:public_comment, [text: "[h:f19r7d:1:c]"]}
                     ]
                   ]
                 ]},
-               {:public_comment, [text: "[h:17h2ajb:0:c]"]}
+               {:public_comment, [text: "[h:f19r7d:0:c]"]}
              ]
     end
 
@@ -1624,7 +1707,7 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:17e67kg:0:o]"]},
+               {:public_comment, [text: "[h:f4kqgf:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1633,18 +1716,219 @@ defmodule Hologram.Template.DOMTest do
                      {{:., [line: 1], [{:vars, [line: 1], nil}, :aaa]},
                       [no_parens: true, line: 1], []}
                    ]},
-                  [do: {:__block__, [], [[text: "bbb"]]}]
+                  [
+                    do:
+                      {:__block__, [line: 1],
+                       [
+                         {:=, [line: 1],
+                          [
+                            {:holo__item_key__, [line: 1], nil},
+                            {{:., [line: 1],
+                              [
+                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                :item_key
+                              ]}, [line: 1], [{:x, [line: 1], nil}]}
+                          ]},
+                         [
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "f4kqgf", 0, "o"]},
+                           [text: "bbb"],
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :item_node
+                             ]}, [line: 1],
+                            [{:holo__item_key__, [line: 1], nil}, "f4kqgf", 0, "c"]}
+                         ]
+                       ]}
+                  ]
                 ]},
-               {:public_comment, [text: "[h:17e67kg:0:c]"]},
-               {:public_comment, [text: "[h:17e67kg:1:o]"]},
+               {:public_comment, [text: "[h:f4kqgf:0:c]"]},
+               {:public_comment, [text: "[h:f4kqgf:1:o]"]},
                {:if, [line: 1],
                 [
                   {{:., [line: 1], [{:vars, [line: 1], nil}, :ccc]}, [no_parens: true, line: 1],
                    []},
                   [do: [text: "ddd"]]
                 ]},
-               {:public_comment, [text: "[h:17e67kg:1:c]"]}
+               {:public_comment, [text: "[h:f4kqgf:1:c]"]}
              ]
+    end
+  end
+
+  describe "build_ast/1, for block, keyed lists" do
+    test "multi-generator falls back to positional diffing" do
+      # {%for x <- @xs, y <- @ys}zzz{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs, y <- @ys}"}},
+        {:text, "zzz"},
+        {:block_end, "for"}
+      ]
+
+      assert [
+               {:public_comment, [text: _open]},
+               {:for, [line: 1],
+                [
+                  {:<-, _meta_1, _generator_1},
+                  {:<-, _meta_2, _generator_2},
+                  [do: {:__block__, [], [[text: "zzz"]]}]
+                ]},
+               {:public_comment, [text: _close]}
+             ] = build_ast(tags)
+    end
+
+    test "destructuring pattern generator falls back to positional diffing" do
+      # {%for {a, b} <- @pairs}zzz{/for}
+      tags = [
+        {:block_start, {"for", "{ {a, b} <- @pairs}"}},
+        {:text, "zzz"},
+        {:block_end, "for"}
+      ]
+
+      assert [
+               {:public_comment, [text: _open]},
+               {:for, [line: 1],
+                [
+                  {:<-, _meta, _generator},
+                  [do: {:__block__, [], [[text: "zzz"]]}]
+                ]},
+               {:public_comment, [text: _close]}
+             ] = build_ast(tags)
+    end
+
+    test "underscore-prefixed generator variable falls back to positional diffing" do
+      # {%for _x <- @xs}zzz{/for}
+      tags = [
+        {:block_start, {"for", "{ _x <- @xs}"}},
+        {:text, "zzz"},
+        {:block_end, "for"}
+      ]
+
+      assert [
+               {:public_comment, [text: _open]},
+               {:for, [line: 1],
+                [
+                  {:<-, _meta, _generator},
+                  [do: {:__block__, [], [[text: "zzz"]]}]
+                ]},
+               {:public_comment, [text: _close]}
+             ] = build_ast(tags)
+    end
+
+    test "explicit $key overrides auto-key and is stripped from the tag" do
+      # {%for item <- @items}<li $key={item.id}>{item.name}</li>{/for}
+      tags = [
+        {:block_start, {"for", "{ item <- @items}"}},
+        {:start_tag, {"li", [{"$key", [expression: "{item.id}"]}]}},
+        {:expression, "{item.name}"},
+        {:end_tag, "li"},
+        {:block_end, "for"}
+      ]
+
+      assert [
+               {:public_comment, [text: _open]},
+               {:for, [line: 1],
+                [
+                  {:<-, _meta, _generator},
+                  [
+                    do:
+                      {:__block__, [line: 1],
+                       [
+                         {:=, [line: 1],
+                          [
+                            {:holo__item_key__, [line: 1], nil},
+                            {{:., [line: 1],
+                              [
+                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                :key_from_value
+                              ]}, [line: 1],
+                             [
+                               {{:., [line: 1], [{:item, [line: 1], nil}, :id]},
+                                [no_parens: true, line: 1], []}
+                             ]}
+                          ]},
+                         [
+                           _open_item_node,
+                           [{:{}, [line: 1], [:element, "li", [], _li_children]}],
+                           _close_item_node
+                         ]
+                       ]}
+                  ]
+                ]},
+               {:public_comment, [text: _close]}
+             ] = build_ast(tags)
+    end
+
+    test "$key outside a for block raises" do
+      tags = [{:start_tag, {"div", [{"$key", [expression: "{1}"]}]}}, {:end_tag, "div"}]
+
+      assert_raise Hologram.TemplateSyntaxError,
+                   ~s'the "$key" attribute is only allowed inside a "for" block',
+                   fn -> build_ast(tags) end
+    end
+
+    test "$key on a nested (non-top-level) tag raises" do
+      # {%for x <- @xs}<div><span $key={x}></span></div>{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs}"}},
+        {:start_tag, {"div", []}},
+        {:start_tag, {"span", [{"$key", [expression: "{x}"]}]}},
+        {:end_tag, "span"},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert_raise Hologram.TemplateSyntaxError,
+                   ~s'the "$key" attribute must be set on a top-level element of the "for" block body, not a nested one',
+                   fn -> build_ast(tags) end
+    end
+
+    test "more than one $key in a for block body raises" do
+      # {%for x <- @xs}<div $key={x}></div><div $key={x}></div>{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs}"}},
+        {:start_tag, {"div", [{"$key", [expression: "{x}"]}]}},
+        {:end_tag, "div"},
+        {:start_tag, {"div", [{"$key", [expression: "{x}"]}]}},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert_raise Hologram.TemplateSyntaxError,
+                   ~s'the "for" block body has more than one "$key" attribute',
+                   fn -> build_ast(tags) end
+    end
+
+    test "$key with a text value raises" do
+      # {%for x <- @xs}<div $key="abc"></div>{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs}"}},
+        {:start_tag, {"div", [{"$key", [text: "abc"]}]}},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert_raise Hologram.TemplateSyntaxError,
+                   ~s'the "$key" attribute must be a single expression, e.g. $key={item.id}',
+                   fn -> build_ast(tags) end
+    end
+
+    test "$key with a mixed text/expression value raises" do
+      # {%for x <- @xs}<div $key="row-{x}"></div>{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs}"}},
+        {:start_tag, {"div", [{"$key", [text: "row-", expression: "{x}"]}]}},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert_raise Hologram.TemplateSyntaxError,
+                   ~s'the "$key" attribute must be a single expression, e.g. $key={item.id}',
+                   fn -> build_ast(tags) end
     end
   end
 
