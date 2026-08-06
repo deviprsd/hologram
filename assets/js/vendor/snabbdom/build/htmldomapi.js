@@ -22,11 +22,32 @@ function insertBefore(parentNode, newNode, referenceNode) {
         }
         parentNode = node !== null && node !== void 0 ? node : parentNode;
     }
-    if (isDocumentFragment(newNode)) {
-        newNode = parseFragment(newNode, parentNode);
-    }
     if (referenceNode && isDocumentFragment(referenceNode)) {
         referenceNode = parseFragment(referenceNode).firstChildNode;
+    }
+    if (isDocumentFragment(newNode)) {
+        const fragment = parseFragment(newNode, parentNode);
+        // HOLOGRAM PATCH: a native DocumentFragment empties itself into its parent on its
+        // first insertion - the browser moves its children out and leaves it with none. A
+        // fragment vnode being moved again (a keyed reorder, not an add/remove) hands this
+        // same, now-empty DocumentFragment back as newNode: inserting it natively at this
+        // point moves nothing, so the reorder silently no-ops. firstChildNode/lastChildNode
+        // (stamped on first insertion, above) still point at the live boundary nodes, so walk
+        // and relocate that real sibling range by hand instead.
+        if (newNode.childNodes.length === 0 && fragment.firstChildNode) {
+            let node = fragment.firstChildNode;
+            const stop = fragment.lastChildNode;
+            while (node) {
+                const next = node.nextSibling;
+                parentNode.insertBefore(node, referenceNode);
+                if (node === stop) {
+                    break;
+                }
+                node = next;
+            }
+            fragment.parent = parentNode;
+            return;
+        }
     }
     parentNode.insertBefore(newNode, referenceNode);
 }
