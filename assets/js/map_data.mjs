@@ -10,12 +10,11 @@
 //
 // Standard 32-way (5 bits/level) HAMT: put/remove copy only the O(log32 n)
 // nodes on the changed path, sharing every other subtree with the previous
-// root. Not wired into Type yet - see map_data_test.mjs for the randomized
-// oracle test this is verified against before anything imports it.
+// root.
 //
 // Node shapes (private - never exposed outside this module):
 //   null                          - empty subtree
-//   {h, k, v, s}                  - leaf: one entry (hash, key, value, seq)
+//   {h, k, v}                     - leaf: one entry (hash, key, value)
 //   {h, ls: [leaf, ...]}          - collision: 2+ entries, same (possibly
 //                                    hash-bit-limited) hash, different keys
 //   {bm, ch: [node, ...]}         - bitmap-indexed node: bm's set bits mark
@@ -23,11 +22,18 @@
 //                                    occupied; ch holds only those children,
 //                                    compacted (no empty-slot gaps)
 //
-// `s` (seq) is a monotonic insertion index, assigned once per key on first
-// insert and preserved across value updates - see insert() - so
-// MapData.entries() can reproduce plain-object insertion-order semantics
-// (the same guarantee Type.map()'s old {} reduce gave for free) without the
-// trie itself being ordered.
+// This trie is deliberately order-agnostic: entries() below returns pairs in
+// whatever order the trie's own hash-bucket traversal visits them, not
+// insertion order. An earlier version threaded a monotonic seq number
+// through every leaf specifically to reproduce insertion order here - that
+// baked traversal order into the node shape itself, so two independently-
+// built tries holding the identical entries in a different insertion order
+// came out byte-unequal (different seq values on otherwise-identical
+// leaves), breaking deepStrictEqual-based test assertions throughout the
+// codebase for no semantic reason. Insertion order is exactly the kind of
+// caller-observable metadata that does not belong in a structural-sharing
+// key/value store: Type's TrieMap (see type.mjs) now tracks it itself, as a
+// separate ordered array of encoded keys alongside the trie.
 
 const BITS_PER_LEVEL = 5;
 const LEVEL_MASK = (1 << BITS_PER_LEVEL) - 1;
@@ -37,12 +43,6 @@ const LEVEL_MASK = (1 << BITS_PER_LEVEL) - 1;
 // into a collision node, so the oracle test can make collisions common with
 // a handful of random keys instead of reverse-engineering real 32-bit ones.
 let activeHashBits = 32;
-
-let seqCounter = 0;
-
-function nextSeq() {
-  return seqCounter++;
-}
 
 function maxDepth() {
   return Math.ceil(activeHashBits / BITS_PER_LEVEL);
@@ -135,11 +135,8 @@ function splitLeaves(leafA, leafB, depth) {
   return {bm, ch: bitPosA < bitPosB ? [leafA, leafB] : [leafB, leafA]};
 }
 
-// `seq` is resolved by the caller (MapData.put) before calling this, so a
-// value-only update on an existing key reuses that key's original seq
-// rather than being treated as a fresh insert - see the module doc.
-function insert(root, hash, key, value, seq, depth) {
-  const newLeaf = {h: hash, k: key, v: value, s: seq};
+function insert(root, hash, key, value, depth) {
+  const newLeaf = {h: hash, k: key, v: value};
 
   if (root === null) {
     return newLeaf;
@@ -165,7 +162,7 @@ function insert(root, hash, key, value, seq, depth) {
       // regardless: fold the whole collision group back through
       // splitLeaves against the new leaf, pairwise.
       return root.ls.reduce(
-        (acc, leaf) => insert(acc, leaf.h, leaf.k, leaf.v, leaf.s, depth),
+        (acc, leaf) => insert(acc, leaf.h, leaf.k, leaf.v, depth),
         newLeaf,
       );
     }
@@ -195,19 +192,31 @@ function insert(root, hash, key, value, seq, depth) {
   }
 
   const newChildren = root.ch.slice();
-  newChildren[idx] = insert(root.ch[idx], hash, key, value, seq, depth + 1);
+  newChildren[idx] = insert(root.ch[idx], hash, key, value, depth + 1);
 
   return {bm: root.bm, ch: newChildren};
 }
 
-// Simpler than a maximally-compacting HAMT delete: doesn't collapse
-// single-child bitmap nodes left behind by a removal back into a bare leaf.
-// That's a real trie shallowness optimization this gives up, not a
-// correctness gap - every get/put/remove/entries call below is unaffected,
-// it's purely about how many nodes get copied on the next update through an
-// under-compacted path. Deliberate simplification given how easy that
-// collapsing logic is to get subtly wrong; can be revisited later against
-// the oracle test if profiling ever shows it matters.
+// A bitmap node left with exactly one child that happens to be a bare leaf
+// is promoted to that leaf directly, dropping the now-pointless wrapper.
+// Only safe for a leaf child: a leaf validates itself against its own
+// stored hash (root.h === hash && root.k === key), so it works correctly
+// no matter how many levels up it gets moved. A bitmap or collision node is
+// NOT promoted the same way - those rely on the *caller* tracking depth to
+// mask the right hash bits, so moving one up a level without every
+// find/insert/remove call site also adjusting depth would corrupt lookups
+// into it. Leaving a lone non-leaf child un-collapsed is a real (if rare -
+// it needs a hash collision or a narrowed test hash width to reach at all)
+// trie shallowness gap, not a correctness one: get/put/remove/entries all
+// still work, it only costs one extra node on the path.
+function collapseIfSingleLeaf(bm, ch) {
+  if (ch.length === 1 && isLeaf(ch[0])) {
+    return ch[0];
+  }
+
+  return {bm, ch};
+}
+
 function removeAt(root, hash, key, depth) {
   if (root === null) {
     return null;
@@ -254,13 +263,13 @@ function removeAt(root, hash, key, depth) {
     const newChildren = root.ch.slice();
     newChildren.splice(idx, 1);
 
-    return {bm: root.bm & ~bit, ch: newChildren};
+    return collapseIfSingleLeaf(root.bm & ~bit, newChildren);
   }
 
   const newChildren = root.ch.slice();
   newChildren[idx] = newChild;
 
-  return {bm: root.bm, ch: newChildren};
+  return collapseIfSingleLeaf(root.bm, newChildren);
 }
 
 function collectLeaves(root, acc) {
@@ -300,15 +309,14 @@ const MapData = {
 
   // Returns {root, added}. `added` is false (and `root` is the same
   // reference as the input) for a value-only update on an already-present
-  // key OR when nothing about the key/value pair is new - callers that want
-  // an identity short-circuit on an unchanged *value* (see maps:put/3's
-  // reference-identity no-op check, #878 stage 1) still need to do that
-  // check themselves before calling put; this always writes.
+  // key - callers that want an identity short-circuit on an unchanged
+  // *value* too (see maps:put/3's reference-identity no-op check, #878
+  // stage 1) still need to do that check themselves before calling put;
+  // this always writes.
   put(root, key, value) {
     const hash = maskedHash(key);
     const existing = findLeaf(root, hash, key, 0);
-    const seq = existing === undefined ? nextSeq() : existing.s;
-    const newRoot = insert(root, hash, key, value, seq, 0);
+    const newRoot = insert(root, hash, key, value, 0);
 
     return {root: newRoot, added: existing === undefined};
   },
@@ -324,19 +332,20 @@ const MapData = {
     return {root: removeAt(root, hash, key, 0), removed: true};
   },
 
-  // [[key, value], ...] in insertion order (first-occurrence position, last-
-  // write value - the same semantics a plain {} object literal with
-  // duplicate keys has always given Type.map()).
+  // [[key, value], ...] in trie traversal order - NOT insertion order (see
+  // the module doc). Callers that need insertion order (Type's TrieMap)
+  // track it themselves alongside the trie.
   entries(root) {
-    const leaves = collectLeaves(root, []);
-    leaves.sort((a, b) => a.s - b.s);
-
-    return leaves.map((leaf) => [leaf.k, leaf.v]);
+    return collectLeaves(root, []).map((leaf) => [leaf.k, leaf.v]);
   },
 
-  // O(n) bulk build from [[key, value], ...] - one pass, not N sequential
-  // path-copies. Duplicate keys: last value wins, first occurrence's
-  // position wins (see put()'s seq-reuse), matching entries()'s contract.
+  // Builds a trie from [[key, value], ...] via N sequential put() calls -
+  // O(n log32 n), not a single O(n) pass. (A true one-pass bulk builder -
+  // sorting entries by hash and assembling the trie bottom-up without
+  // repeated path-copies - would be O(n), but nothing has shown this needs
+  // to be that fast yet; revisit if benchmarking Type.map() construction
+  // says otherwise.) Duplicate keys: last value wins, matching a plain {}
+  // object literal's semantics. Returns {root, size}.
   fromEntries(pairs) {
     let root = null;
     let size = 0;

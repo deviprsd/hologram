@@ -2949,7 +2949,9 @@ const Erlang = {
       Interpreter.raiseBadMapError(map);
     }
 
-    return Type.integer(Object.keys(map.data).length);
+    // #878: Type.mapSize is O(1); Object.keys(map.data).length would force
+    // a full trie materialization just to count.
+    return Type.integer(Type.mapSize(map));
   },
   // End map_size/1
   // Deps: []

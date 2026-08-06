@@ -17,8 +17,8 @@ import {
   sinon,
 } from "./support/helpers.mjs";
 
-import {defineModule1Fixture as defineInterpreterModule1Fixture} from "./support/fixtures/ex_js_consistency/interpreter/module_1.mjs";
-import {defineModule1Fixture as defineMatchOperatorModule1Fixture} from "./support/fixtures/ex_js_consistency/match_operator/module_1.mjs";
+import { defineModule1Fixture as defineInterpreterModule1Fixture } from "./support/fixtures/ex_js_consistency/interpreter/module_1.mjs";
+import { defineModule1Fixture as defineMatchOperatorModule1Fixture } from "./support/fixtures/ex_js_consistency/match_operator/module_1.mjs";
 
 import Bitstring from "../../assets/js/bitstring.mjs";
 import CallStack from "../../assets/js/erts/call_stack.mjs";
@@ -136,7 +136,7 @@ describe("Interpreter", () => {
 
     beforeEach(() => {
       context = contextFixture({
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       });
 
       prevIntoFun = globalThis.Elixir_Enum["into/2"];
@@ -209,9 +209,9 @@ describe("Interpreter", () => {
         ]),
         body: async (_context) =>
           Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(3), { type: "integer" }),
           ]),
       };
 
@@ -387,7 +387,7 @@ describe("Interpreter", () => {
 
     beforeEach(() => {
       context = contextFixture({
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       });
 
       prevToListFun = globalThis.Elixir_Enum["to_list/1"];
@@ -470,9 +470,9 @@ describe("Interpreter", () => {
         ]),
         body: async (_context) =>
           Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(3), { type: "integer" }),
           ]),
       };
 
@@ -910,13 +910,13 @@ describe("Interpreter", () => {
   describe("buildContext()", () => {
     it("module undefined, vars undefined", () => {
       const result = Interpreter.buildContext();
-      const expected = {module: null, stacktrace: null, vars: {}};
+      const expected = { module: null, stacktrace: null, vars: {} };
 
       assert.deepStrictEqual(result, expected);
     });
 
     it("module defined, string", () => {
-      const result = Interpreter.buildContext({module: "MyModule"});
+      const result = Interpreter.buildContext({ module: "MyModule" });
 
       const expected = {
         module: Type.atom("Elixir.MyModule"),
@@ -928,7 +928,9 @@ describe("Interpreter", () => {
     });
 
     it("module defined, boxed alias", () => {
-      const result = Interpreter.buildContext({module: Type.alias("MyModule")});
+      const result = Interpreter.buildContext({
+        module: Type.alias("MyModule"),
+      });
 
       const expected = {
         module: Type.atom("Elixir.MyModule"),
@@ -940,8 +942,8 @@ describe("Interpreter", () => {
     });
 
     it("module defined, null", () => {
-      const result = Interpreter.buildContext({module: null});
-      const expected = {module: null, stacktrace: null, vars: {}};
+      const result = Interpreter.buildContext({ module: null });
+      const expected = { module: null, stacktrace: null, vars: {} };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -956,7 +958,7 @@ describe("Interpreter", () => {
         ]),
       ]);
 
-      const result = Interpreter.buildContext({stacktrace});
+      const result = Interpreter.buildContext({ stacktrace });
 
       const expected = {
         module: null,
@@ -969,13 +971,13 @@ describe("Interpreter", () => {
 
     it("vars defined", () => {
       const result = Interpreter.buildContext({
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       });
 
       const expected = {
         module: null,
         stacktrace: null,
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       };
 
       assert.deepStrictEqual(result, expected);
@@ -999,7 +1001,7 @@ describe("Interpreter", () => {
   // need updating each time Hologram.Compiler.Encoder's implementation
   // changes.
   describe("callAnonymousFunction() frame tracking", () => {
-    const context = contextFixture({module: "Aaa.Bbb"});
+    const context = contextFixture({ module: "Aaa.Bbb" });
 
     const okClauses = (onCall) => [
       {
@@ -1014,12 +1016,12 @@ describe("Interpreter", () => {
 
     beforeEach(() => {
       CallStack.reset();
-      globalThis.Hologram.config = {stacktraces: true};
+      globalThis.Hologram.config = { stacktraces: true };
     });
 
     afterEach(() => {
       ERTS.moduleMetadata = {};
-      globalThis.Hologram.config = {stacktraces: false};
+      globalThis.Hologram.config = { stacktraces: false };
     });
 
     it("pushes the fun's frame for the duration of the call", () => {
@@ -1139,13 +1141,13 @@ describe("Interpreter", () => {
       let framesDuringCall;
 
       ERTS.registerModuleMetadata({
-        "Iii.Jjj": {app: "my_app", file: "lib/iii/jjj.ex"},
+        "Iii.Jjj": { app: "my_app", file: "lib/iii/jjj.ex" },
       });
 
       const fun = Type.anonymousFunction(
         1,
         okClauses(() => (framesDuringCall = CallStack.snapshot())),
-        contextFixture({module: "Iii.Jjj"}),
+        contextFixture({ module: "Iii.Jjj" }),
       );
 
       Interpreter.callAnonymousFunction(fun, [Type.integer(1)]);
@@ -1203,7 +1205,7 @@ describe("Interpreter", () => {
     });
 
     it("doesn't track frames when client stacktraces are disabled", () => {
-      globalThis.Hologram.config = {stacktraces: false};
+      globalThis.Hologram.config = { stacktraces: false };
 
       let framesDuringCall;
 
@@ -1719,7 +1721,7 @@ describe("Interpreter", () => {
 
     beforeEach(() => {
       context = contextFixture({
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       });
       prevIntoFun = globalThis.Elixir_Enum["into/2"];
 
@@ -1922,9 +1924,9 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(3), { type: "integer" }),
             ]),
         };
 
@@ -1962,10 +1964,10 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(3), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(4), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(3), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(4), { type: "integer" }),
             ]),
         };
 
@@ -1998,7 +2000,7 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(0xab), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(0xab), { type: "integer" }),
             ]),
         };
 
@@ -2027,8 +2029,8 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
             ]),
         };
 
@@ -2041,8 +2043,8 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(3), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(4), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(3), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(4), { type: "integer" }),
             ]),
         };
 
@@ -2074,11 +2076,11 @@ describe("Interpreter", () => {
           body: (_context) =>
             Type.list([
               Type.bitstring([
-                Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-                Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+                Type.bitstringSegment(Type.integer(2), { type: "integer" }),
               ]),
               Type.bitstring([
-                Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(3), { type: "integer" }),
               ]),
             ]),
         };
@@ -2116,17 +2118,17 @@ describe("Interpreter", () => {
         const generator = {
           type: "bitstring_generator",
           match: Type.bitstringPattern([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
             Type.bitstringSegment(Type.variablePattern("x"), {
               type: "integer",
             }),
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(3), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(4), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(3), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(4), { type: "integer" }),
             ]),
         };
 
@@ -2156,8 +2158,8 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
               Type.bitstringSegment(Type.integer(3), {
                 type: "integer",
                 size: Type.integer(4),
@@ -2214,9 +2216,9 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(3), { type: "integer" }),
             ]),
         };
 
@@ -2254,9 +2256,9 @@ describe("Interpreter", () => {
           ]),
           body: (_context) =>
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-              Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+              Type.bitstringSegment(Type.integer(1), { type: "integer" }),
             ]),
         };
 
@@ -2306,7 +2308,9 @@ describe("Interpreter", () => {
         const generator = {
           type: "bitstring_generator",
           match: Type.bitstringPattern([
-            Type.bitstringSegment(Type.variablePattern("x"), {type: "integer"}),
+            Type.bitstringSegment(Type.variablePattern("x"), {
+              type: "integer",
+            }),
           ]),
           body: (_context) => Type.list([Type.integer(1), Type.integer(2)]),
         };
@@ -2840,7 +2844,7 @@ describe("Interpreter", () => {
 
     beforeEach(() => {
       context = contextFixture({
-        vars: {a: Type.integer(1), b: Type.integer(2)},
+        vars: { a: Type.integer(1), b: Type.integer(2) },
       });
 
       prevToListFun = globalThis.Elixir_Enum["to_list/1"];
@@ -2897,9 +2901,9 @@ describe("Interpreter", () => {
         ]),
         body: (_context) =>
           Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(3), { type: "integer" }),
           ]),
       };
 
@@ -3484,7 +3488,7 @@ describe("Interpreter", () => {
           params: (_context) => [Type.integer(1)],
           guards: [],
           body: (_context) => Type.atom("expr_1"),
-          blame: {params: ["1"], guards: []},
+          blame: { params: ["1"], guards: [] },
         },
         {
           params: (_context) => [Type.variablePattern("x")],
@@ -3510,7 +3514,7 @@ describe("Interpreter", () => {
     });
 
     it("the error frame carries the args in place of the arity, keeping the file", () => {
-      ERTS.registerModuleMetadata({"Aaa.Bbb": {file: "lib/aaa/bbb.ex"}});
+      ERTS.registerModuleMetadata({ "Aaa.Bbb": { file: "lib/aaa/bbb.ex" } });
 
       // def my_fun_g(1), do: :ok
       Interpreter.defineElixirFunction("Aaa.Bbb", "my_fun_g", 1, "public", [
@@ -3653,11 +3657,11 @@ describe("Interpreter", () => {
 
       beforeEach(() => {
         CallStack.reset();
-        globalThis.Hologram.config = {stacktraces: true};
+        globalThis.Hologram.config = { stacktraces: true };
       });
 
       afterEach(() => {
-        globalThis.Hologram.config = {stacktraces: false};
+        globalThis.Hologram.config = { stacktraces: false };
       });
 
       it("pushes the function's frame for the duration of the call", () => {
@@ -3801,7 +3805,7 @@ describe("Interpreter", () => {
         let framesDuringCall;
 
         ERTS.registerModuleMetadata({
-          "Aaa.Bbb": {app: "my_app", file: "lib/aaa/bbb.ex"},
+          "Aaa.Bbb": { app: "my_app", file: "lib/aaa/bbb.ex" },
         });
 
         Interpreter.defineElixirFunction("Aaa.Bbb", "my_fun_g", 0, "public", [
@@ -3847,7 +3851,7 @@ describe("Interpreter", () => {
       });
 
       it("doesn't track frames when client stacktraces are disabled", () => {
-        globalThis.Hologram.config = {stacktraces: false};
+        globalThis.Hologram.config = { stacktraces: false };
 
         let framesDuringCall;
 
@@ -3924,11 +3928,11 @@ describe("Interpreter", () => {
     describe("frame tracking", () => {
       beforeEach(() => {
         CallStack.reset();
-        globalThis.Hologram.config = {stacktraces: true};
+        globalThis.Hologram.config = { stacktraces: true };
       });
 
       afterEach(() => {
-        globalThis.Hologram.config = {stacktraces: false};
+        globalThis.Hologram.config = { stacktraces: false };
       });
 
       it("pushes the function's frame for the duration of the call", () => {
@@ -3965,7 +3969,7 @@ describe("Interpreter", () => {
       {
         params: (_context) => [Type.variablePattern("module_0")],
         guards: [(_context) => Type.boolean(true)],
-        blame: {params: ["module"], guards: [{source: "is_atom(module)"}]},
+        blame: { params: ["module"], guards: [{ source: "is_atom(module)" }] },
       },
     ];
 
@@ -3980,7 +3984,7 @@ describe("Interpreter", () => {
 
       assert.deepStrictEqual(
         Interpreter.functionClauseHeads("MyModuleExName", "my_fun", 1),
-        {visibility: "public", clauses: clauseHeads},
+        { visibility: "public", clauses: clauseHeads },
       );
     });
 
@@ -3999,7 +4003,7 @@ describe("Interpreter", () => {
 
       assert.deepStrictEqual(
         Interpreter.functionClauseHeads("MyModuleExName", "my_other_fun", 2),
-        {visibility: "private", clauses: clauseHeads},
+        { visibility: "private", clauses: clauseHeads },
       );
     });
   });
@@ -4071,11 +4075,11 @@ describe("Interpreter", () => {
     describe("frame tracking", () => {
       beforeEach(() => {
         CallStack.reset();
-        globalThis.Hologram.config = {stacktraces: true};
+        globalThis.Hologram.config = { stacktraces: true };
       });
 
       afterEach(() => {
-        globalThis.Hologram.config = {stacktraces: false};
+        globalThis.Hologram.config = { stacktraces: false };
       });
 
       it("pushes the function's frame for the duration of the call", () => {
@@ -4129,7 +4133,7 @@ describe("Interpreter", () => {
     });
 
     it("appends to the module global var if it is already initiated", () => {
-      globalThis.Erlang_Eee = {dummy: "dummy"};
+      globalThis.Erlang_Eee = { dummy: "dummy" };
       Interpreter.defineNotImplementedErlangFunction("eee", "my_fun_e", 1, []);
 
       assert.isDefined(globalThis.Erlang_Eee);
@@ -4971,7 +4975,9 @@ describe("Interpreter", () => {
       );
 
       assert.isTrue(result);
-      assert.deepStrictEqual(context.vars, {__matched__: {x: Type.integer(9)}});
+      assert.deepStrictEqual(context.vars, {
+        __matched__: { x: Type.integer(9) },
+      });
     });
   });
 
@@ -5456,12 +5462,12 @@ describe("Interpreter", () => {
   // left and right args are not stored in temporary variables but used directly in matchOperator() call,
   // to make the test as close as possible to real behaviour in which the matchOperator() call is encoded as a whole.
   describe("matchOperator()", () => {
-    const varsWithEmptyMatchedValues = {a: Type.integer(9), __matched__: {}};
+    const varsWithEmptyMatchedValues = { a: Type.integer(9), __matched__: {} };
 
     let context;
 
     beforeEach(() => {
-      context = contextFixture({vars: {a: Type.integer(9)}});
+      context = contextFixture({ vars: { a: Type.integer(9) } });
     });
 
     describe("atom type", () => {
@@ -5505,8 +5511,8 @@ describe("Interpreter", () => {
       const emptyBitstringValue = Type.bitstring([]);
 
       const multiSegmentBitstringValue = Type.bitstring([
-        Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-        Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+        Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+        Type.bitstringSegment(Type.integer(2), { type: "integer" }),
       ]);
 
       // <<>> = <<>>
@@ -5551,16 +5557,16 @@ describe("Interpreter", () => {
       it("left literal single-segment bitstring == right literal single-segment bitstring", () => {
         const result = Interpreter.matchOperator(
           Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
           ]),
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
           ]),
           context,
         );
 
         const expected = Type.bitstring([
-          Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+          Type.bitstringSegment(Type.integer(1), { type: "integer" }),
         ]);
 
         assertBoxedStrictEqual(result, expected);
@@ -5568,7 +5574,7 @@ describe("Interpreter", () => {
 
       it("left literal single-segment bitstring != right literal single-segment bitstring", () => {
         const myBitstring = Type.bitstring([
-          Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+          Type.bitstringSegment(Type.integer(2), { type: "integer" }),
         ]);
 
         assertBoxedError(
@@ -5576,7 +5582,7 @@ describe("Interpreter", () => {
             Interpreter.matchOperator(
               myBitstring,
               Type.bitstringPattern([
-                Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(1), { type: "integer" }),
               ]),
               context,
             ),
@@ -5593,7 +5599,7 @@ describe("Interpreter", () => {
             Interpreter.matchOperator(
               myAtom,
               Type.bitstringPattern([
-                Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(1), { type: "integer" }),
               ]),
               context,
             ),
@@ -5644,19 +5650,19 @@ describe("Interpreter", () => {
       it("multiple literal float segments", () => {
         const result = Interpreter.matchOperator(
           Type.bitstring([
-            Type.bitstringSegment(Type.float(1.0), {type: "float"}),
-            Type.bitstringSegment(Type.float(2.0), {type: "float"}),
+            Type.bitstringSegment(Type.float(1.0), { type: "float" }),
+            Type.bitstringSegment(Type.float(2.0), { type: "float" }),
           ]),
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.float(1.0), {type: "float"}),
-            Type.bitstringSegment(Type.float(2.0), {type: "float"}),
+            Type.bitstringSegment(Type.float(1.0), { type: "float" }),
+            Type.bitstringSegment(Type.float(2.0), { type: "float" }),
           ]),
           context,
         );
 
         const expected = Type.bitstring([
-          Type.bitstringSegment(Type.float(1.0), {type: "float"}),
-          Type.bitstringSegment(Type.float(2.0), {type: "float"}),
+          Type.bitstringSegment(Type.float(1.0), { type: "float" }),
+          Type.bitstringSegment(Type.float(2.0), { type: "float" }),
         ]);
 
         assertBoxedStrictEqual(result, expected);
@@ -5665,19 +5671,19 @@ describe("Interpreter", () => {
       it("multiple literal integer segments", () => {
         const result = Interpreter.matchOperator(
           Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
           ]),
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
           ]),
           context,
         );
 
         const expected = Type.bitstring([
-          Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-          Type.bitstringSegment(Type.integer(2), {type: "integer"}),
+          Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+          Type.bitstringSegment(Type.integer(2), { type: "integer" }),
         ]);
 
         assertBoxedStrictEqual(result, expected);
@@ -5686,19 +5692,19 @@ describe("Interpreter", () => {
       it("multiple literal string segments", () => {
         const result = Interpreter.matchOperator(
           Type.bitstring([
-            Type.bitstringSegment(Type.string("aaa"), {type: "binary"}),
-            Type.bitstringSegment(Type.string("bbb"), {type: "binary"}),
+            Type.bitstringSegment(Type.string("aaa"), { type: "binary" }),
+            Type.bitstringSegment(Type.string("bbb"), { type: "binary" }),
           ]),
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.string("aaa"), {type: "binary"}),
-            Type.bitstringSegment(Type.string("bbb"), {type: "binary"}),
+            Type.bitstringSegment(Type.string("aaa"), { type: "binary" }),
+            Type.bitstringSegment(Type.string("bbb"), { type: "binary" }),
           ]),
           context,
         );
 
         const expected = Type.bitstring([
-          Type.bitstringSegment(Type.string("aaa"), {type: "binary"}),
-          Type.bitstringSegment(Type.string("bbb"), {type: "binary"}),
+          Type.bitstringSegment(Type.string("aaa"), { type: "binary" }),
+          Type.bitstringSegment(Type.string("bbb"), { type: "binary" }),
         ]);
 
         assertBoxedStrictEqual(result, expected);
@@ -5707,13 +5713,15 @@ describe("Interpreter", () => {
       // <<x::integer>> = <<1>>
       it("left single-segment bitstring with variable pattern == right bitstring", () => {
         const myBitstring = Type.bitstring([
-          Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+          Type.bitstringSegment(Type.integer(1), { type: "integer" }),
         ]);
 
         const result = Interpreter.matchOperator(
           myBitstring,
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.variablePattern("x"), {type: "integer"}),
+            Type.bitstringSegment(Type.variablePattern("x"), {
+              type: "integer",
+            }),
           ]),
           context,
         );
@@ -5733,8 +5741,12 @@ describe("Interpreter", () => {
         const result = Interpreter.matchOperator(
           multiSegmentBitstringValue,
           Type.bitstringPattern([
-            Type.bitstringSegment(Type.variablePattern("x"), {type: "integer"}),
-            Type.bitstringSegment(Type.variablePattern("y"), {type: "integer"}),
+            Type.bitstringSegment(Type.variablePattern("x"), {
+              type: "integer",
+            }),
+            Type.bitstringSegment(Type.variablePattern("y"), {
+              type: "integer",
+            }),
           ]),
           context,
         );
@@ -5757,7 +5769,7 @@ describe("Interpreter", () => {
             Interpreter.matchOperator(
               multiSegmentBitstringValue,
               Type.bitstringPattern([
-                Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(3), { type: "integer" }),
                 Type.bitstringSegment(Type.variablePattern("y"), {
                   type: "integer",
                 }),
@@ -5776,7 +5788,7 @@ describe("Interpreter", () => {
             Interpreter.matchOperator(
               multiSegmentBitstringValue,
               Type.bitstringPattern([
-                Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(1), { type: "integer" }),
                 Type.bitstringSegment(Type.integer(2), {
                   type: "integer",
                   size: Type.integer(7),
@@ -5796,7 +5808,7 @@ describe("Interpreter", () => {
             Interpreter.matchOperator(
               multiSegmentBitstringValue,
               Type.bitstringPattern([
-                Type.bitstringSegment(Type.integer(1), {type: "integer"}),
+                Type.bitstringSegment(Type.integer(1), { type: "integer" }),
                 Type.bitstringSegment(Type.integer(2), {
                   type: "integer",
                   size: Type.integer(9),
@@ -5881,9 +5893,9 @@ describe("Interpreter", () => {
         // <<prefix::size(12), rest::bitstring>> = <<1, 2, 3>>
         it("last bitstring segment without size consumes remaining bits even when not byte-aligned", () => {
           const myBitstring = Type.bitstring([
-            Type.bitstringSegment(Type.integer(1), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(2), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(3), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(1), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(2), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(3), { type: "integer" }),
           ]);
 
           const result = Interpreter.matchOperator(
@@ -5905,7 +5917,7 @@ describe("Interpreter", () => {
           assertBoxedStrictEqual(
             context.vars.__matched__.rest,
             Type.bitstring([
-              Type.bitstringSegment(Type.integer(32), {type: "integer"}),
+              Type.bitstringSegment(Type.integer(32), { type: "integer" }),
               Type.bitstringSegment(Type.integer(3), {
                 type: "integer",
                 size: Type.integer(4),
@@ -6293,7 +6305,9 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             value,
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6308,7 +6322,9 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("abc"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6329,7 +6345,9 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("élo"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6350,7 +6368,9 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("日本"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6371,7 +6391,9 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("😀a"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6392,8 +6414,12 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("héllo"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
-              Type.bitstringSegment(Type.variablePattern("y"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
+              Type.bitstringSegment(Type.variablePattern("y"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6415,7 +6441,7 @@ describe("Interpreter", () => {
           Interpreter.matchOperator(
             Type.bitstring("abc"),
             Type.bitstringPattern([
-              Type.bitstringSegment(Type.integer(97), {type: "utf8"}),
+              Type.bitstringSegment(Type.integer(97), { type: "utf8" }),
               Type.bitstringSegment(Type.variablePattern("rest"), {
                 type: "binary",
               }),
@@ -6437,7 +6463,7 @@ describe("Interpreter", () => {
               type: "integer",
               size: Type.integer(1),
             }),
-            Type.bitstringSegment(Type.bitstring("a"), {type: "binary"}),
+            Type.bitstringSegment(Type.bitstring("a"), { type: "binary" }),
           ]);
 
           Interpreter.matchOperator(
@@ -6447,7 +6473,9 @@ describe("Interpreter", () => {
                 type: "integer",
                 size: Type.integer(1),
               }),
-              Type.bitstringSegment(Type.variablePattern("x"), {type: "utf8"}),
+              Type.bitstringSegment(Type.variablePattern("x"), {
+                type: "utf8",
+              }),
               Type.bitstringSegment(Type.matchPlaceholder(), {
                 type: "bitstring",
               }),
@@ -6469,7 +6497,7 @@ describe("Interpreter", () => {
               Interpreter.matchOperator(
                 myBitstring,
                 Type.bitstringPattern([
-                  Type.bitstringSegment(Type.integer(122), {type: "utf8"}),
+                  Type.bitstringSegment(Type.integer(122), { type: "utf8" }),
                   Type.bitstringSegment(Type.variablePattern("rest"), {
                     type: "binary",
                   }),
@@ -6484,8 +6512,8 @@ describe("Interpreter", () => {
         // <<x::utf8, rest::binary>> = <<0xFF, 0xFE>>
         it("invalid utf8 bytes", () => {
           const myBitstring = Type.bitstring([
-            Type.bitstringSegment(Type.integer(0xff), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(0xfe), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(0xff), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(0xfe), { type: "integer" }),
           ]);
 
           assertBoxedError(
@@ -6509,7 +6537,7 @@ describe("Interpreter", () => {
         // <<x::utf8, rest::binary>> = <<0xC3>>
         it("truncated sequence", () => {
           const myBitstring = Type.bitstring([
-            Type.bitstringSegment(Type.integer(0xc3), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(0xc3), { type: "integer" }),
           ]);
 
           assertBoxedError(
@@ -6522,9 +6550,9 @@ describe("Interpreter", () => {
         // <<x::utf8, rest::binary>> = <<0xED, 0xA0, 0x80>>
         it("surrogate is invalid", () => {
           const myBitstring = Type.bitstring([
-            Type.bitstringSegment(Type.integer(0xed), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(0xa0), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(0x80), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(0xed), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(0xa0), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(0x80), { type: "integer" }),
           ]);
 
           assertBoxedError(
@@ -6537,8 +6565,8 @@ describe("Interpreter", () => {
         // <<x::utf8, rest::binary>> = <<0xC0, 0xAF>>
         it("overlong encoding is invalid", () => {
           const myBitstring = Type.bitstring([
-            Type.bitstringSegment(Type.integer(0xc0), {type: "integer"}),
-            Type.bitstringSegment(Type.integer(0xaf), {type: "integer"}),
+            Type.bitstringSegment(Type.integer(0xc0), { type: "integer" }),
+            Type.bitstringSegment(Type.integer(0xaf), { type: "integer" }),
           ]);
 
           assertBoxedError(
@@ -6608,7 +6636,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.45)},
+          __matched__: { value: Type.float(123.45) },
         });
       });
 
@@ -6635,7 +6663,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.44999694824219)},
+          __matched__: { value: Type.float(123.44999694824219) },
         });
       });
 
@@ -6662,7 +6690,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.4375)},
+          __matched__: { value: Type.float(123.4375) },
         });
       });
 
@@ -6704,7 +6732,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.integer(-86)},
+          __matched__: { value: Type.integer(-86) },
         });
       });
 
@@ -6752,7 +6780,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.45)},
+          __matched__: { value: Type.float(123.45) },
         });
       });
 
@@ -6779,7 +6807,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.44999694824219)},
+          __matched__: { value: Type.float(123.44999694824219) },
         });
       });
 
@@ -6806,7 +6834,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.float(123.4375)},
+          __matched__: { value: Type.float(123.4375) },
         });
       });
 
@@ -6848,7 +6876,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {value: Type.integer(170)},
+          __matched__: { value: Type.integer(170) },
         });
       });
 
@@ -7814,7 +7842,17 @@ describe("Interpreter", () => {
       // %{x: 1, y: 2} = %{x: 1, y: 2}
       it("left and right maps have the same items", () => {
         const left = map;
-        const right = structuredClone(map);
+
+        // #878: structuredClone() doesn't preserve a class instance's
+        // prototype (or its private fields) - it would hand back a plain
+        // object masquerading as a TrieMap, missing the .data getter
+        // entirely. Rebuild an equal-but-distinct map the normal way
+        // instead.
+        const right = Type.map([
+          [Type.atom("x"), Type.integer(1)],
+          [Type.atom("y"), Type.integer(2)],
+        ]);
+
         const result = Interpreter.matchOperator(right, left, context);
 
         assert.deepStrictEqual(result, right);
@@ -7970,7 +8008,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {x: term},
+          __matched__: { x: term },
         });
       });
 
@@ -7987,7 +8025,7 @@ describe("Interpreter", () => {
 
         assert.deepStrictEqual(context.vars, {
           a: Type.integer(9),
-          __matched__: {x: term},
+          __matched__: { x: term },
         });
       });
 
@@ -8046,7 +8084,7 @@ describe("Interpreter", () => {
       });
 
       it("on the right", () => {
-        const expectedVars = {...varsWithEmptyMatchedValues};
+        const expectedVars = { ...varsWithEmptyMatchedValues };
         delete expectedVars.__matched__;
 
         // fn 2 = _placeholder -> :ok end
@@ -10695,8 +10733,8 @@ describe("Interpreter", () => {
   });
 
   describe("registerJsBindings()", () => {
-    const $1 = {name: "import_1"};
-    const $2 = {name: "import_2"};
+    const $1 = { name: "import_1" };
+    const $2 = { name: "import_2" };
 
     beforeEach(() => {
       delete globalThis.Elixir_Aaa_Bbb;
@@ -10704,7 +10742,7 @@ describe("Interpreter", () => {
     });
 
     it("initializes module proxy if not yet initialized", () => {
-      Interpreter.registerJsBindings({"Aaa.Bbb": {my_alias: $1}});
+      Interpreter.registerJsBindings({ "Aaa.Bbb": { my_alias: $1 } });
 
       assert.isDefined(globalThis.Elixir_Aaa_Bbb);
 
@@ -10715,7 +10753,7 @@ describe("Interpreter", () => {
     });
 
     it("sets bindings on module proxy", () => {
-      Interpreter.registerJsBindings({"Aaa.Bbb": {my_alias: $1}});
+      Interpreter.registerJsBindings({ "Aaa.Bbb": { my_alias: $1 } });
 
       assert.deepStrictEqual(
         globalThis.Elixir_Aaa_Bbb.__jsBindings__,
@@ -10725,8 +10763,8 @@ describe("Interpreter", () => {
 
     it("registers bindings for multiple modules", () => {
       Interpreter.registerJsBindings({
-        "Aaa.Bbb": {alias_1: $1},
-        "Ccc.Ddd": {alias_2: $2},
+        "Aaa.Bbb": { alias_1: $1 },
+        "Ccc.Ddd": { alias_2: $2 },
       });
 
       assert.deepStrictEqual(
@@ -10742,9 +10780,9 @@ describe("Interpreter", () => {
 
     it("merges bindings when module proxy already exists", () => {
       Interpreter.defineElixirFunction("Aaa.Bbb", "my_fun", 0, "public", []);
-      Interpreter.registerJsBindings({"Aaa.Bbb": {existing_alias: $1}});
+      Interpreter.registerJsBindings({ "Aaa.Bbb": { existing_alias: $1 } });
 
-      Interpreter.registerJsBindings({"Aaa.Bbb": {new_alias: $2}});
+      Interpreter.registerJsBindings({ "Aaa.Bbb": { new_alias: $2 } });
 
       assert.deepStrictEqual(
         globalThis.Elixir_Aaa_Bbb.__jsBindings__,
@@ -11193,7 +11231,11 @@ describe("Interpreter", () => {
       };
 
       const rescueClauses = [
-        {variable: null, modules: [], body: (_context) => Type.atom("rescued")},
+        {
+          variable: null,
+          modules: [],
+          body: (_context) => Type.atom("rescued"),
+        },
       ];
 
       const result = Interpreter.try(
@@ -11536,7 +11578,11 @@ describe("Interpreter", () => {
       };
 
       const rescueClauses = [
-        {variable: null, modules: [], body: (_context) => Type.atom("rescued")},
+        {
+          variable: null,
+          modules: [],
+          body: (_context) => Type.atom("rescued"),
+        },
       ];
 
       let caught;
@@ -11734,7 +11780,11 @@ describe("Interpreter", () => {
       };
 
       const rescueClauses = [
-        {variable: null, modules: [], body: (_context) => Type.atom("rescued")},
+        {
+          variable: null,
+          modules: [],
+          body: (_context) => Type.atom("rescued"),
+        },
       ];
 
       const catchClauses = [

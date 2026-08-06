@@ -1,6 +1,6 @@
 "use strict";
 
-import {assert} from "./support/helpers.mjs";
+import { assert } from "./support/helpers.mjs";
 
 import MapData from "../../assets/js/map_data.mjs";
 
@@ -21,9 +21,10 @@ function mulberry32(seed) {
 }
 
 // Interleaved random put/remove against MapData, mirrored on a plain JS
-// Map (which already has exactly the insertion-order semantics
-// MapData.entries() needs to match), asserting agreement after every single
-// operation - contents, size, and iteration order, not just the end state.
+// Map, asserting agreement after every single operation - contents and
+// size, not just the end state. Iteration order is NOT asserted here: the
+// trie itself is order-agnostic (see map_data.mjs's module doc) - insertion
+// order is tracked by Type's TrieMap, one layer up, and covered there.
 function runOracle(rand, operationCount, keyPoolSize) {
   const reference = new Map();
   let root = MapData.EMPTY;
@@ -75,10 +76,15 @@ function runOracle(rand, operationCount, keyPoolSize) {
       );
     }
 
+    const actualKeys = MapData.entries(root)
+      .map(([k]) => k)
+      .sort();
+    const expectedKeys = [...reference.keys()].sort();
+
     assert.deepStrictEqual(
-      MapData.entries(root).map(([k]) => k),
-      [...reference.keys()],
-      `iteration order mismatch at op ${i}`,
+      actualKeys,
+      expectedKeys,
+      `entries() contents mismatch at op ${i}`,
     );
   }
 }
@@ -95,14 +101,14 @@ describe("MapData", () => {
     });
 
     it("returns the value/true for a present key", () => {
-      const {root} = MapData.put(MapData.EMPTY, "a", 1);
+      const { root } = MapData.put(MapData.EMPTY, "a", 1);
 
       assert.strictEqual(MapData.get(root, "a"), 1);
       assert.isTrue(MapData.has(root, "a"));
     });
 
     it("returns undefined/false for an absent key in a non-empty trie", () => {
-      const {root} = MapData.put(MapData.EMPTY, "a", 1);
+      const { root } = MapData.put(MapData.EMPTY, "a", 1);
 
       assert.isUndefined(MapData.get(root, "b"));
       assert.isFalse(MapData.has(root, "b"));
@@ -117,7 +123,7 @@ describe("MapData", () => {
     });
 
     it("reports added: false for a value-only update on an existing key", () => {
-      const {root} = MapData.put(MapData.EMPTY, "a", 1);
+      const { root } = MapData.put(MapData.EMPTY, "a", 1);
       const result = MapData.put(root, "a", 2);
 
       assert.isFalse(result.added);
@@ -125,23 +131,22 @@ describe("MapData", () => {
     });
 
     it("never mutates the previous root - old root keeps its old contents", () => {
-      const {root: root1} = MapData.put(MapData.EMPTY, "a", 1);
-      const {root: root2} = MapData.put(root1, "a", 2);
+      const { root: root1 } = MapData.put(MapData.EMPTY, "a", 1);
+      const { root: root2 } = MapData.put(root1, "a", 2);
 
       assert.strictEqual(MapData.get(root1, "a"), 1);
       assert.strictEqual(MapData.get(root2, "a"), 2);
     });
 
-    it("preserves insertion position when updating an existing key's value", () => {
+    it("updates the value in place without disturbing sibling keys", () => {
       let root = MapData.EMPTY;
       root = MapData.put(root, "a", 1).root;
       root = MapData.put(root, "b", 2).root;
       root = MapData.put(root, "a", 99).root;
 
-      assert.deepStrictEqual(MapData.entries(root), [
-        ["a", 99],
-        ["b", 2],
-      ]);
+      assert.strictEqual(MapData.get(root, "a"), 99);
+      assert.strictEqual(MapData.get(root, "b"), 2);
+      assert.strictEqual(MapData.sizeSlow(root), 2);
     });
   });
 
@@ -154,7 +159,7 @@ describe("MapData", () => {
     });
 
     it("reports removed: true and drops the key", () => {
-      const {root} = MapData.put(MapData.EMPTY, "a", 1);
+      const { root } = MapData.put(MapData.EMPTY, "a", 1);
       const result = MapData.remove(root, "a");
 
       assert.isTrue(result.removed);
@@ -162,8 +167,8 @@ describe("MapData", () => {
     });
 
     it("never mutates the previous root", () => {
-      const {root: root1} = MapData.put(MapData.EMPTY, "a", 1);
-      const {root: root2} = MapData.remove(root1, "a");
+      const { root: root1 } = MapData.put(MapData.EMPTY, "a", 1);
+      const { root: root2 } = MapData.remove(root1, "a");
 
       assert.isTrue(MapData.has(root1, "a"));
       assert.isFalse(MapData.has(root2, "a"));
@@ -176,7 +181,7 @@ describe("MapData", () => {
       root = MapData.put(root, "c", 3).root;
       root = MapData.remove(root, "b").root;
 
-      assert.deepStrictEqual(MapData.entries(root), [
+      assert.sameDeepMembers(MapData.entries(root), [
         ["a", 1],
         ["c", 3],
       ]);
@@ -188,13 +193,13 @@ describe("MapData", () => {
       assert.deepStrictEqual(MapData.entries(MapData.EMPTY), []);
     });
 
-    it("returns [key, value] pairs in insertion order", () => {
+    it("returns all [key, value] pairs", () => {
       let root = MapData.EMPTY;
       root = MapData.put(root, "z", 1).root;
       root = MapData.put(root, "a", 2).root;
       root = MapData.put(root, "m", 3).root;
 
-      assert.deepStrictEqual(MapData.entries(root), [
+      assert.sameDeepMembers(MapData.entries(root), [
         ["z", 1],
         ["a", 2],
         ["m", 3],
@@ -210,25 +215,40 @@ describe("MapData", () => {
         ["c", 3],
       ];
 
-      const {root, size} = MapData.fromEntries(pairs);
+      const { root, size } = MapData.fromEntries(pairs);
 
       assert.strictEqual(size, 3);
-      assert.deepStrictEqual(MapData.entries(root), pairs);
+      assert.sameDeepMembers(MapData.entries(root), pairs);
     });
 
-    it("keeps the first occurrence's position but the last occurrence's value for duplicate keys, matching plain-object literal semantics", () => {
+    it("keeps the last occurrence's value for duplicate keys, matching plain-object literal semantics", () => {
       const pairs = [
         ["a", 1],
         ["b", 2],
         ["a", 3],
       ];
 
-      const {root, size} = MapData.fromEntries(pairs);
+      const { root, size } = MapData.fromEntries(pairs);
 
       assert.strictEqual(size, 2);
-      assert.deepStrictEqual(MapData.entries(root), [
+      assert.sameDeepMembers(MapData.entries(root), [
         ["a", 3],
         ["b", 2],
+      ]);
+    });
+
+    it("produces a trie a further put() can keep growing", () => {
+      const { root } = MapData.fromEntries([
+        ["a", 1],
+        ["b", 2],
+      ]);
+
+      const result = MapData.put(root, "c", 3);
+
+      assert.sameDeepMembers(MapData.entries(result.root), [
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
       ]);
     });
   });

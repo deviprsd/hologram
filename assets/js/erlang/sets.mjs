@@ -160,12 +160,15 @@ const Erlang_Sets = {
     const encodedKeys2 = new Set(Object.keys(set2.data));
     const intersectedKeys = encodedKeys1.intersection(encodedKeys2);
 
-    const data = {};
+    // #878: a real TrieMap, built via Type.map() - not a bare {type, data}
+    // literal, which would be missing the trie apparatus (_trie/_size)
+    // every accessor and Erlang_Maps BIF now depends on.
+    const pairs = [];
     for (const encodedKey of intersectedKeys) {
-      data[encodedKey] = set1.data[encodedKey];
+      pairs.push(set1.data[encodedKey]);
     }
 
-    return {type: "map", data};
+    return Type.map(pairs);
   },
   // End intersection/2
   // Deps: []
@@ -282,12 +285,14 @@ const Erlang_Sets = {
     const encodedKeys2 = new Set(Object.keys(set2.data));
     const subtractedKeys = encodedKeys1.difference(encodedKeys2);
 
-    const data = {};
+    // #878: see intersection/2's comment above - a real TrieMap, not a bare
+    // {type, data} literal.
+    const pairs = [];
     for (const encodedKey of subtractedKeys) {
-      data[encodedKey] = set1.data[encodedKey];
+      pairs.push(set1.data[encodedKey]);
     }
 
-    return {type: "map", data};
+    return Type.map(pairs);
   },
   // End subtract/2
   // Deps: []
@@ -317,13 +322,16 @@ const Erlang_Sets = {
     const encodedKeys2 = new Set(Object.keys(set2.data));
     const unionedKeys = encodedKeys1.union(encodedKeys2);
 
-    const data = {};
+    // #878: see intersection/2's comment above - a real TrieMap, not a bare
+    // {type, data} literal.
+    const pairs = [];
     for (const encodedKey of unionedKeys) {
-      data[encodedKey] =
-        encodedKey in set1.data ? set1.data[encodedKey] : set2.data[encodedKey];
+      pairs.push(
+        encodedKey in set1.data ? set1.data[encodedKey] : set2.data[encodedKey],
+      );
     }
 
-    return {type: "map", data};
+    return Type.map(pairs);
   },
   // End union/2
   // Deps: []

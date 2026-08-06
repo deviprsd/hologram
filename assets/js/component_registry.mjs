@@ -89,12 +89,12 @@ export default class ComponentRegistry {
   }
 
   // #878: was an in-place mutation of ComponentRegistry.entries.data,
-  // which an immutable trie-backed map (see map_data.mjs; not wired in
-  // yet) can't support - entries has to be replaced through maps:put/3
-  // like any other map write. Not yet "Optimized" the way the old
-  // in-place version was: until the trie lands, this clones the whole
-  // entries map (maps:put/3 -> Type.cloneMap) rather than path-copying
-  // just this cid, on every component struct write.
+  // which an immutable trie-backed map (map_data.mjs) can't support -
+  // entries has to be replaced through maps:put/3 like any other map
+  // write. Now that the trie is wired into Type.map, this is back to
+  // "Optimized" in the sense the old in-place version was: maps:put/3 ->
+  // Type.mapPut path-copies only the O(log32 n) nodes on the changed cid,
+  // not the whole entries registry.
   static putComponentStruct(cid, componentStruct) {
     const entry = ComponentRegistry.getEntry(cid);
 
@@ -113,8 +113,7 @@ export default class ComponentRegistry {
     RenderCache.markDirty(cid);
   }
 
-  // #878: see putComponentStruct - same in-place-mutation removal, same
-  // temporary full-clone-per-write cost until the trie lands.
+  // #878: see putComponentStruct - same in-place-mutation removal.
   static putEntry(cid, entry) {
     ComponentRegistry.entries = Erlang_Maps["put/3"](
       cid,
