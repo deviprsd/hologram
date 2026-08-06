@@ -17,6 +17,7 @@ import HologramInterpreterError from "./errors/interpreter_error.mjs";
 import HologramRuntimeError from "./errors/runtime_error.mjs";
 import InitActionQueue from "./init_action_queue.mjs";
 import Interpreter from "./interpreter.mjs";
+import ItemCache from "./item_cache.mjs";
 import JsInterop from "./js_interop.mjs";
 import MemoryStorage from "./memory_storage.mjs";
 import Operation from "./operation.mjs";
@@ -631,6 +632,13 @@ export default class Hologram {
     );
 
     Interpreter.defineManuallyPortedFunction(
+      "Hologram.Template.Marker",
+      "memoized_item/5",
+      "public",
+      ManuallyPortedElixirHologramTemplateMarker["memoized_item/5"],
+    );
+
+    Interpreter.defineManuallyPortedFunction(
       "IO",
       "inspect/1",
       "public",
@@ -1128,10 +1136,11 @@ export default class Hologram {
     );
 
     // This path replaces the retained tree from server-rendered HTML rather than through
-    // Renderer.renderPage(), so any cached vnodes RenderCache holds now point at a discarded tree -
-    // clear them rather than risk a future render reusing a stale entry for a cid the new page
-    // happens to reuse.
+    // Renderer.renderPage(), so any cached vnodes RenderCache/ItemCache hold now point at a
+    // discarded tree - clear them rather than risk a future render reusing a stale entry for a
+    // cid or item key the new page happens to reuse.
     RenderCache.clear();
+    ItemCache.clear();
   }
 
   // Deps: [:maps.get/2, :maps.put/3]

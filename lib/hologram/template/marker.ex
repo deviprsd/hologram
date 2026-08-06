@@ -60,6 +60,16 @@ defmodule Hologram.Template.Marker do
     {:public_comment, [text: "[h:#{hash}:#{index}:#{key}:#{side}]"]}
   end
 
+  @doc """
+  Wraps a keyed `{%for}` item's body. Semantically transparent on the BEAM - always calls
+  `item_fun`, ignoring `key`/`hash`/`index`/`guards` - so server-rendered output is unchanged.
+  The client twin (`assets/js/elixir/hologram/template/marker.mjs`) is where this actually caches
+  the item's rendered DOM term by key, invalidating only when `guards` (the item's free variables,
+  computed at compile time by `Hologram.Template.DOM`) changed since the last render.
+  """
+  @spec memoized_item(String.t() | nil, String.t(), non_neg_integer, list, (-> term)) :: term
+  def memoized_item(_key, _hash, _index, _guards, item_fun), do: item_fun.()
+
   defp validate_key_text(text) do
     if byte_size(text) in 1..@max_key_length and
          not String.contains?(text, "--") and
