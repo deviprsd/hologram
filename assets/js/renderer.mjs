@@ -1635,6 +1635,10 @@ export default class Renderer {
     );
 
     const vars = Erlang_Maps["merge/2"](pageParams, pageState);
+    console.log(
+      "WIP DIAGNOSTIC: vars before evaluateTemplate",
+      Interpreter.inspect(vars),
+    );
     const pageDom = Renderer.#evaluateTemplate(pageModuleProxy, vars);
 
     const layoutModule = pageModuleProxy["__layout_module__/0"]();
