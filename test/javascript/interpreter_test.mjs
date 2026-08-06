@@ -5267,6 +5267,28 @@ describe("Interpreter", () => {
 
         assert.isFalse(isStrictlyEqual(map1, map2));
       });
+
+      it("not equal when the second map has an extra key not present in the first", () => {
+        const map1 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const map2 = Type.map([
+          [Type.atom("a"), Type.integer(1)],
+          [Type.atom("b"), Type.integer(2)],
+        ]);
+
+        assert.isFalse(isStrictlyEqual(map1, map2));
+      });
+
+      it("not equal when the first map has an extra key not present in the second", () => {
+        const map1 = Type.map([
+          [Type.atom("a"), Type.integer(1)],
+          [Type.atom("b"), Type.integer(2)],
+        ]);
+
+        const map2 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        assert.isFalse(isStrictlyEqual(map1, map2));
+      });
     });
 
     describe("PIDs", () => {

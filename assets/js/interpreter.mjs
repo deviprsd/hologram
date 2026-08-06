@@ -1601,9 +1601,13 @@ export default class Interpreter {
     const data1 = map1.data;
     const data2 = map2.data;
 
-    if (data1.length !== data2.length) return false;
-
     const keys = Object.keys(data1);
+
+    // map.data is a plain object, not an array, so it has no .length -
+    // comparing sizes needs an explicit key count. Without this, a map that
+    // is a strict subset of the other (e.g. %{a: 1} vs %{a: 1, b: 2}) would
+    // incorrectly compare equal, since the loop below only walks map1's keys.
+    if (keys.length !== Object.keys(data2).length) return false;
 
     for (let i = 0; i < keys.length; ++i) {
       const key = keys[i];
