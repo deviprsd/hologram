@@ -22,6 +22,12 @@ const patch = init([attributesModule, eventListenersModule], undefined, {
 //   0       index of the block within that template
 //   o       side of the pair, "o" opening or "c" closing
 //
+// A "for" item marker carries a fifth segment, the item's key, inserted before the side, e.g.
+// "[h:1a2b3c:0:42:o]" - see Hologram.Template.Marker.item_node/4. Reusing the block's own hash and
+// index scopes an item marker to its own list without needing a separate namespace: an item
+// marker's text always has one more ":"-separated segment than any block marker, so the two can
+// never collide even when they share a hash and index.
+//
 // The module hash is what keeps keys unique: slot splicing merges nodes from different templates
 // into one children list, where bare block indexes would collide.
 //
@@ -34,7 +40,10 @@ const patch = init([attributesModule, eventListenersModule], undefined, {
 // diffs against a vdom derived from server-rendered markup, and a comment's own text is the only
 // carrier that round-trips. Unkeyed markers would be matched against unrelated comments, which
 // desyncs the pairing and reopens the same failure.
-const MARKER_KEY_REGEX = /^\[h:[a-z0-9]+:\d+:[oc]\]$/;
+//
+// The key segment's charset mirrors Hologram.Template.Marker's @key_regex - kept in sync there,
+// not re-derived here, since a key that failed validation never reaches this regex at all.
+const MARKER_KEY_REGEX = /^\[h:[a-z0-9]+:\d+(:[A-Za-z0-9_.@|~+-]+)?:[oc]\]$/;
 
 export default class Vdom {
   static addKeysToVnodes(node) {

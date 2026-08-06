@@ -33,6 +33,7 @@ export default [
         Elixir_Enum: "readonly",
         Elixir_Exception: "readonly",
         Elixir_Hologram_Router_Helpers: "readonly",
+        Elixir_Hologram_Template_Marker: "readonly",
         Elixir_Kernel: "readonly",
         Elixir_Macro: "readonly",
         Elixir_Map: "readonly",
