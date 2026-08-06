@@ -56,3 +56,6 @@ a list actually built by recursive `[h | t]` consing (the classic
 (`erlang.mjs`) instead of `list.data.slice(1)`, so each step is O(1) and the
 whole walk is O(n) - 4.83 μs warm here versus 120.66 μs for the same 1000
 elements in `../walk_1000`'s packed-array case, a ~25x drop.
+
+Re-measured after #878 stage 3 (the map HAMT wiring): 4.76 μs warm, flat
+within noise, as expected - this walk never touches `Type.map`.

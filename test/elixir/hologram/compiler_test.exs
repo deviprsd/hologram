@@ -934,10 +934,10 @@ defmodule Hologram.CompilerTest do
               ]);
             }
 
-            const encodedKey = Type.encodeMapKey(key);
+            const pair = Type.mapGet(map, Type.encodeMapKey(key));
 
-            if (map.data[encodedKey]) {
-              return map.data[encodedKey][1];
+            if (pair !== undefined) {
+              return pair[1];
             }
 
             Interpreter.raiseBifError(["badkey", key], "erlang", "map_get", [key, map]);

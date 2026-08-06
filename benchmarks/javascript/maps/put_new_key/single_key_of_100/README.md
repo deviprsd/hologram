@@ -38,6 +38,8 @@ Argument: a 100-key map, putting a genuinely new key
 
 ## Statistics
 
+Before #878 stage 3 (HAMT):
+
 <table>
   <tr>
     <th>Average Cold Execution Time</th>
@@ -49,8 +51,22 @@ Argument: a 100-key map, putting a genuinely new key
   </tr>
 </table>
 
-Baseline before #878 stage 3 (HAMT). This one must always allocate - it's the
-control for `put_no_op` above. Unlike that case, this cost should stay
-roughly flat (O(log32 n)) rather than drop toward zero once the trie lands;
-what changes is that it stops scaling with map size the way `Type.cloneMap`'s
-full shallow copy does today.
+After stage 3 (HAMT wired into Type.map):
+
+<table>
+  <tr>
+    <th>Average Cold Execution Time</th>
+    <td>56.88 μs</td>
+  </tr>
+  <tr>
+    <th>Average Warm Execution Time</th>
+    <td>1.18 μs</td>
+  </tr>
+</table>
+
+This one must always allocate - it's the control for `put_no_op` above,
+which can skip the write entirely. 1.18 μs warm is a ~12.7x drop from
+`Type.cloneMap`'s O(n) shallow copy of the whole 100-key hashtable object to
+`Type.mapPut`'s O(log32 n) path-copy of only the trie nodes on the changed
+path - a complexity-class change, not just a constant-factor one, so unlike
+the pre-HAMT number this stops scaling linearly with map size.

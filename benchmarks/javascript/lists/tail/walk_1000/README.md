@@ -62,3 +62,7 @@ within noise, because there's nothing for the cons-cell work to speed up.
 See `../walk_1000_consed` for the shape #878 actually targets (a list built
 by repeated consing, matching how transpiled `[h | t]` construction really
 produces one) - same 1000 elements, same walk, 4.83 μs warm, a ~25x drop.
+
+Re-measured after #878 stage 3 (the map HAMT wiring): 116.66 μs warm, flat
+within noise, as expected for the same reason - nothing here touches
+`Type.map`.

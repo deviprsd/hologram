@@ -71,3 +71,7 @@ depends on the tail's length, verified directly (`result.tail === tail`) in
 `interpreter_test.mjs`, not just inferred from timing. Compare against
 `lists/tail/walk_1000_consed`, which shows the compounding effect of this
 cost dropping out of a loop that repeatedly walks a consed list.
+
+Re-measured after #878 stage 3 (the map HAMT wiring, unrelated to lists):
+0.21 μs warm, flat within noise, as expected - cons cells don't touch
+`Type.map`/`map_data.mjs` at all.

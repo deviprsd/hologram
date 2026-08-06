@@ -65,6 +65,19 @@ below):
   </tr>
 </table>
 
+After stage 3 (HAMT wired into Type.map, via Type.mapMerge):
+
+<table>
+  <tr>
+    <th>Average Cold Execution Time</th>
+    <td>84.46 μs</td>
+  </tr>
+  <tr>
+    <th>Average Warm Execution Time</th>
+    <td>1.42 μs</td>
+  </tr>
+</table>
+
 `transformer.ex` compiles `%{m | k: v}` to `Map.merge/2`, which today spreads
 both operands into a fresh object (`{...map1.data, ...map2.data}`) - a full
 copy of the 20-key map to change one key. This is the single hottest
@@ -80,3 +93,13 @@ directly (not benchmarked, since a no-op has near-zero cost to measure
 meaningfully): merging an empty map is `===` the non-empty operand in either
 direction, and merging in a value that's already reference-identical returns
 the original map unchanged.
+
+Stage 3 replaces `{...map1.data, ...map2.data}`'s full O(n) spread copy with
+`Type.mapMerge`'s O(size(map2) * log32 size(map1)) path-copy - map2 here is
+the 1-key change, so this is one small trie descent into map1's 20-key trie.
+1.42 μs warm is a ~1.9x drop from stage 1's 2.72 μs. That is a modest
+absolute win at n=20 (a 20-key object spread is already fast; log32(20) is
+barely more than one level, so there isn't much O(n) to shed yet) - the
+complexity-class change matters far more as component state maps grow past
+this benchmark's size, which this single fixed-size number doesn't show on
+its own.

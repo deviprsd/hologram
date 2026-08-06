@@ -64,12 +64,35 @@ After stage 1:
   </tr>
 </table>
 
+After stage 3 (HAMT wired into Type.map):
+
+<table>
+  <tr>
+    <th>Average Cold Execution Time</th>
+    <td>40.21 μs</td>
+  </tr>
+  <tr>
+    <th>Average Warm Execution Time</th>
+    <td>0.46 μs</td>
+  </tr>
+</table>
+
 `put/3` used to always call `Type.cloneMap` regardless of whether the value
 actually changed, so a no-op write cost the same O(n) copy as a real one.
 Stage 1 adds a reference-identity check before the clone: 0.23 μs warm is a
 ~57x drop, matching the expected O(1) hashtable lookup replacing an O(n)
 shallow copy - and the returned map is now `===` the input, verified directly
 (not just inferred from timing).
+
+Stage 3 roughly doubles that check's own cost, still well under a
+microsecond: `Type.mapPut`'s no-op path now does `MapData.get` - a small
+trie descent (bitmap/popcount arithmetic per level) - where the pre-HAMT
+version did a single flat JS-object property lookup on `map.data`. Both are
+O(1)/O(log32 n)-in-name-only at this map size in practice; the trie's
+constant factor is just higher than a plain object's. Worth naming honestly
+rather than only reporting the favorable comparisons: not every #878 number
+moves in the same direction, and this one is a real (if tiny) cost of
+gaining a genuinely persistent representation.
 
 Note: getting a real measurement here required reusing the exact value
 object already stored under the key rather than constructing a fresh
