@@ -11,11 +11,25 @@ export default class ComponentRegistry {
     RenderCache.clear();
   }
 
-  // Optimized (mutates next_action field in-place)
+  // #878: was an in-place mutation of the struct's next_action field,
+  // bypassing putComponentStruct entirely - which meant it never called
+  // RenderCache.markDirty, silently violating the invariant
+  // render_cache.mjs documents (a struct write always replaces the
+  // reference, so struct !== is a sound self-dirty test). Now writes
+  // through maps:put/3 and putComponentStruct like every other struct
+  // update. In the overwhelmingly common case (next_action already nil),
+  // put/3's identity fast path (see erlang/maps.mjs) returns the same
+  // struct reference, so this stays cheap - see putComponentStruct.
   static clearNextAction(cid) {
-    const entry = ComponentRegistry.entries.data[Type.encodeMapKey(cid)][1];
-    const componentStruct = entry.data["atom(struct)"][1];
-    componentStruct.data["atom(next_action)"][1] = Type.nil();
+    const componentStruct = ComponentRegistry.getComponentStruct(cid);
+
+    const updatedStruct = Erlang_Maps["put/3"](
+      Type.atom("next_action"),
+      Type.nil(),
+      componentStruct,
+    );
+
+    ComponentRegistry.putComponentStruct(cid, updatedStruct);
   }
 
   // null instead of boxed nil is returned by default on purpose, because the function is not used by transpiled code.
@@ -74,18 +88,40 @@ export default class ComponentRegistry {
     RenderCache.clear();
   }
 
-  // Optimized (mutates entries/struct field in-place)
+  // #878: was an in-place mutation of ComponentRegistry.entries.data,
+  // which an immutable trie-backed map (see map_data.mjs; not wired in
+  // yet) can't support - entries has to be replaced through maps:put/3
+  // like any other map write. Not yet "Optimized" the way the old
+  // in-place version was: until the trie lands, this clones the whole
+  // entries map (maps:put/3 -> Type.cloneMap) rather than path-copying
+  // just this cid, on every component struct write.
   static putComponentStruct(cid, componentStruct) {
-    ComponentRegistry.entries.data[Type.encodeMapKey(cid)][1].data[
-      "atom(struct)"
-    ][1] = componentStruct;
+    const entry = ComponentRegistry.getEntry(cid);
+
+    const updatedEntry = Erlang_Maps["put/3"](
+      Type.atom("struct"),
+      componentStruct,
+      entry,
+    );
+
+    ComponentRegistry.entries = Erlang_Maps["put/3"](
+      cid,
+      updatedEntry,
+      ComponentRegistry.entries,
+    );
 
     RenderCache.markDirty(cid);
   }
 
-  // Optimized (mutates entries field in-place)
+  // #878: see putComponentStruct - same in-place-mutation removal, same
+  // temporary full-clone-per-write cost until the trie lands.
   static putEntry(cid, entry) {
-    ComponentRegistry.entries.data[Type.encodeMapKey(cid)] = [cid, entry];
+    ComponentRegistry.entries = Erlang_Maps["put/3"](
+      cid,
+      entry,
+      ComponentRegistry.entries,
+    );
+
     RenderCache.markDirty(cid);
   }
 }

@@ -4,9 +4,11 @@ import {
   assert,
   defineRuntimeGlobals,
   initComponentRegistryEntry,
+  sinon,
 } from "./support/helpers.mjs";
 
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
+import RenderCache from "../../assets/js/render_cache.mjs";
 import Type from "../../assets/js/type.mjs";
 
 defineRuntimeGlobals();
@@ -127,6 +129,49 @@ describe("ComponentRegistry", () => {
         Erlang_Maps["get/2"](Type.atom("next_action"), updatedStruct),
         Type.nil(),
       );
+    });
+
+    it("marks the cid dirty in RenderCache (#878)", () => {
+      // Previously an in-place mutation of the struct that bypassed
+      // putComponentStruct entirely, so this never happened - a real
+      // (if narrow) correctness gap in the RenderCache.isReusable
+      // invariant it's supposed to be part of. Now routes through
+      // putComponentStruct like any other struct write.
+      const struct = Type.componentStruct({
+        nextAction: Type.actionStruct({name: Type.atom("my_action")}),
+      });
+
+      const entry = Type.map([
+        [Type.atom("module"), Type.alias("MyModule")],
+        [Type.atom("struct"), struct],
+      ]);
+
+      ComponentRegistry.entries = Type.map([[cid3, entry]]);
+
+      const markDirtySpy = sinon.spy(RenderCache, "markDirty");
+
+      try {
+        ComponentRegistry.clearNextAction(cid3);
+
+        sinon.assert.calledWith(markDirtySpy, cid3);
+      } finally {
+        markDirtySpy.restore();
+      }
+    });
+
+    it("returns the same struct reference when next_action is already nil (identity fast path)", () => {
+      const struct = Type.componentStruct();
+
+      const entry = Type.map([
+        [Type.atom("module"), Type.alias("MyModule")],
+        [Type.atom("struct"), struct],
+      ]);
+
+      ComponentRegistry.entries = Type.map([[cid3, entry]]);
+
+      ComponentRegistry.clearNextAction(cid3);
+
+      assert.strictEqual(ComponentRegistry.getComponentStruct(cid3), struct);
     });
   });
 
