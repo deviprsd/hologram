@@ -40,7 +40,7 @@ describe("Type", () => {
 
       const delay = Type.integer(750);
 
-      const result = Type.actionStruct({name, params, target, delay});
+      const result = Type.actionStruct({ name, params, target, delay });
 
       assert.deepStrictEqual(
         result,
@@ -69,7 +69,7 @@ describe("Type", () => {
     const clauses = ["clause_dummy_1", "clause_dummy_2"];
 
     const context = contextFixture({
-      vars: {a: Type.integer(1), b: Type.integer(2)},
+      vars: { a: Type.integer(1), b: Type.integer(2) },
     });
 
     const result = Type.anonymousFunction(arity, clauses, context);
@@ -90,7 +90,7 @@ describe("Type", () => {
 
   it("atom()", () => {
     const result = Type.atom("test");
-    const expected = {type: "atom", value: "test"};
+    const expected = { type: "atom", value: "test" };
 
     assert.deepStrictEqual(result, expected);
   });
@@ -148,8 +148,12 @@ describe("Type", () => {
   });
 
   it("bitstringPattern()", () => {
-    const segment1 = Type.bitstringSegment(Type.integer(1), {type: "integer"});
-    const segment2 = Type.bitstringSegment(Type.integer(2), {type: "integer"});
+    const segment1 = Type.bitstringSegment(Type.integer(1), {
+      type: "integer",
+    });
+    const segment2 = Type.bitstringSegment(Type.integer(2), {
+      type: "integer",
+    });
 
     const result = Type.bitstringPattern([segment1, segment2]);
 
@@ -168,7 +172,7 @@ describe("Type", () => {
       });
 
       const expected = {
-        value: {type: "integer", value: 123n},
+        value: { type: "integer", value: 123n },
         type: "integer",
         size: null,
         unit: null,
@@ -189,7 +193,7 @@ describe("Type", () => {
       });
 
       const expected = {
-        value: {type: "integer", value: 123n},
+        value: { type: "integer", value: 123n },
         type: "integer",
         size: Type.integer(8),
         unit: 3n,
@@ -207,7 +211,7 @@ describe("Type", () => {
       });
 
       const expected = {
-        value: {type: "integer", value: 123n},
+        value: { type: "integer", value: 123n },
         type: "integer",
         size: null,
         unit: null,
@@ -222,14 +226,14 @@ describe("Type", () => {
   describe("boolean()", () => {
     it("returns boxed true value", () => {
       const result = Type.boolean(true);
-      const expected = {type: "atom", value: "true"};
+      const expected = { type: "atom", value: "true" };
 
       assert.deepStrictEqual(result, expected);
     });
 
     it("returns boxed false value", () => {
       const result = Type.boolean(false);
-      const expected = {type: "atom", value: "false"};
+      const expected = { type: "atom", value: "false" };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -281,35 +285,155 @@ describe("Type", () => {
     });
   });
 
-  describe("cloneMap()", () => {
-    it("creates a shallow clone of the map", () => {
-      const original = Type.map([
-        [Type.atom("a"), Type.integer(1)],
-        [Type.atom("b"), Type.integer(2)],
-      ]);
+  // #878: Type.cloneMap was deleted - its "give me a mutable copy to bash
+  // on" contract has no equivalent over an immutable trie-backed map.
+  // Direct .data mutation (what cloneMap existed to support) now throws
+  // instead - see the ".data" describe block below - and every write goes
+  // through mapPut/mapRemove/mapMerge instead, covered in their own
+  // describe blocks.
 
-      const cloned = Type.cloneMap(original);
+  describe(".data", () => {
+    it("is frozen once materialized, so a direct write throws instead of silently diverging from the trie", () => {
+      const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
 
-      assert.deepStrictEqual(cloned, original);
-      assert.notEqual(cloned, original);
-      assert.notEqual(cloned.data, original.data);
+      assert.throws(() => {
+        map.data[Type.encodeMapKey(Type.atom("b"))] = [
+          Type.atom("b"),
+          Type.integer(2),
+        ];
+      }, TypeError);
     });
 
-    it("modifications to the cloned map do not affect the original", () => {
-      const original = Type.map([
+    it("returns the same object on repeated access", () => {
+      const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+      const firstAccess = map.data;
+      const secondAccess = map.data;
+
+      assert.strictEqual(firstAccess, secondAccess);
+    });
+
+    it("reflects the map's contents in insertion order, matching a plain-object build", () => {
+      const map = Type.map([
+        [Type.atom("z"), Type.integer(1)],
+        [Type.atom("a"), Type.integer(2)],
+      ]);
+
+      assert.deepStrictEqual(Object.keys(map.data), [
+        Type.encodeMapKey(Type.atom("z")),
+        Type.encodeMapKey(Type.atom("a")),
+      ]);
+    });
+  });
+
+  describe("mapGet()/mapHas()", () => {
+    it("returns the [key, value] pair for a present key", () => {
+      const key = Type.atom("a");
+      const value = Type.integer(1);
+      const map = Type.map([[key, value]]);
+
+      const result = Type.mapGet(map, Type.encodeMapKey(key));
+
+      assert.deepStrictEqual(result, [key, value]);
+      assert.isTrue(Type.mapHas(map, Type.encodeMapKey(key)));
+    });
+
+    it("returns undefined/false for an absent key", () => {
+      const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+      const absentKey = Type.encodeMapKey(Type.atom("b"));
+
+      assert.isUndefined(Type.mapGet(map, absentKey));
+      assert.isFalse(Type.mapHas(map, absentKey));
+    });
+  });
+
+  describe("mapPut()", () => {
+    it("returns a map with the new/updated key, sharing the rest with the original (#878)", () => {
+      const original = Type.map([[Type.atom("a"), Type.integer(1)]]);
+      const key = Type.atom("b");
+      const value = Type.integer(2);
+
+      const result = Type.mapPut(original, Type.encodeMapKey(key), [
+        key,
+        value,
+      ]);
+
+      assert.notStrictEqual(result, original);
+      assert.strictEqual(Type.mapSize(original), 1);
+      assert.strictEqual(Type.mapSize(result), 2);
+      assert.deepStrictEqual(Type.mapGet(result, Type.encodeMapKey(key)), [
+        key,
+        value,
+      ]);
+    });
+
+    it("returns the same map when the value is already stored, reference-identical (#878)", () => {
+      const key = Type.atom("a");
+      const value = Type.integer(1);
+      const map = Type.map([[key, value]]);
+
+      const result = Type.mapPut(map, Type.encodeMapKey(key), [key, value]);
+
+      assert.strictEqual(result, map);
+    });
+
+    it("still writes when the value is only equal, not reference-identical", () => {
+      const key = Type.atom("a");
+      const map = Type.map([[key, Type.integer(1)]]);
+
+      const result = Type.mapPut(map, Type.encodeMapKey(key), [
+        key,
+        Type.integer(1),
+      ]);
+
+      assert.notStrictEqual(result, map);
+    });
+  });
+
+  describe("mapRemove()", () => {
+    it("returns a map without the removed key", () => {
+      const key = Type.atom("a");
+      const map = Type.map([[key, Type.integer(1)]]);
+
+      const result = Type.mapRemove(map, Type.encodeMapKey(key));
+
+      assert.strictEqual(Type.mapSize(result), 0);
+      assert.isFalse(Type.mapHas(result, Type.encodeMapKey(key)));
+    });
+
+    it("returns the same map when the key is absent (#878)", () => {
+      const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+      const absentKey = Type.encodeMapKey(Type.atom("b"));
+
+      const result = Type.mapRemove(map, absentKey);
+
+      assert.strictEqual(result, map);
+    });
+  });
+
+  describe("mapMerge()", () => {
+    it("overwrites map1's keys with map2's, keeping map1's insertion position for overwritten keys", () => {
+      const map1 = Type.map([
         [Type.atom("a"), Type.integer(1)],
         [Type.atom("b"), Type.integer(2)],
       ]);
+      const map2 = Type.map([[Type.atom("a"), Type.integer(99)]]);
 
-      const cloned = Type.cloneMap(original);
+      const result = Type.mapMerge(map1, map2);
 
-      cloned.data[Type.encodeMapKey(Type.atom("c"))] = [
-        Type.atom("c"),
-        Type.integer(3),
-      ];
+      assert.deepStrictEqual(Object.values(result.data), [
+        [Type.atom("a"), Type.integer(99)],
+        [Type.atom("b"), Type.integer(2)],
+      ]);
+    });
 
-      assert.equal(Object.keys(original.data).length, 2);
-      assert.equal(Object.keys(cloned.data).length, 3);
+    it("appends map2's genuinely new keys", () => {
+      const map1 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+      const map2 = Type.map([[Type.atom("b"), Type.integer(2)]]);
+
+      const result = Type.mapMerge(map1, map2);
+
+      assert.strictEqual(Type.mapSize(result), 2);
     });
   });
 
@@ -336,7 +460,7 @@ describe("Type", () => {
 
       const target = Type.bitstring("my_target");
 
-      const result = Type.commandStruct({name, params, target});
+      const result = Type.commandStruct({ name, params, target });
 
       assert.deepStrictEqual(
         result,
@@ -371,9 +495,9 @@ describe("Type", () => {
         [Type.atom("b"), Type.integer(2)],
       ]);
 
-      const nextAction = Type.actionStruct({name: "my_action"});
+      const nextAction = Type.actionStruct({ name: "my_action" });
 
-      const nextCommand = Type.commandStruct({name: "my_command"});
+      const nextCommand = Type.commandStruct({ name: "my_command" });
 
       const nextPage = Type.tuple([
         Type.alias("MyPage"),
@@ -469,7 +593,7 @@ describe("Type", () => {
     const tail = Type.list([Type.integer(2), Type.integer(3)]);
     const result = Type.consPattern(head, tail);
 
-    const expected = {type: "cons_pattern", head: head, tail: tail};
+    const expected = { type: "cons_pattern", head: head, tail: tail };
     assert.deepStrictEqual(result, expected);
   });
 
@@ -574,21 +698,24 @@ describe("Type", () => {
   it("errorStruct()", () => {
     const result = Type.errorStruct("Aaa.Bbb", "abc");
 
-    const expected = {
-      type: "map",
-      data: {
-        "atom(__exception__)": [Type.atom("__exception__"), Type.boolean(true)],
-        "atom(__struct__)": [Type.atom("__struct__"), Type.alias("Aaa.Bbb")],
-        "atom(message)": [Type.atom("message"), Type.bitstring("abc")],
-      },
-    };
+    // #878: expected is built via Type.map(), not a raw {type, data}
+    // literal - TrieMap's internal trie shape has nothing in common with
+    // the old plain-object representation. Trie construction is a pure
+    // function of the entries given it (see map_data.mjs), so two
+    // TrieMaps built from the same entries in the same order are
+    // deepStrictEqual, same as before.
+    const expected = Type.map([
+      [Type.atom("__exception__"), Type.boolean(true)],
+      [Type.atom("__struct__"), Type.alias("Aaa.Bbb")],
+      [Type.atom("message"), Type.bitstring("abc")],
+    ]);
 
     assert.deepStrictEqual(result, expected);
   });
 
   it("float()", () => {
     const result = Type.float(1.23);
-    const expected = {type: "float", value: 1.23};
+    const expected = { type: "float", value: 1.23 };
 
     assert.deepStrictEqual(result, expected);
   });
@@ -603,7 +730,7 @@ describe("Type", () => {
 
     const context = contextFixture({
       module: "Aaa.Bbb",
-      vars: {a: Type.integer(1), b: Type.integer(2)},
+      vars: { a: Type.integer(1), b: Type.integer(2) },
     });
 
     const result = Type.functionCapture(
@@ -620,7 +747,7 @@ describe("Type", () => {
       capturedFunction: capturedFunction,
       capturedModule: capturedModule,
       clauses: clauses,
-      context: contextFixture({module: "Aaa.Bbb", vars: {}}),
+      context: contextFixture({ module: "Aaa.Bbb", vars: {} }),
       name: null,
       uniq: 1,
     };
@@ -648,7 +775,7 @@ describe("Type", () => {
     it("2 items list", () => {
       const data = [Type.integer(1), Type.integer(2)];
       const result = Type.improperList(data);
-      const expected = {type: "list", data: data, isProper: false};
+      const expected = { type: "list", data: data, isProper: false };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -657,14 +784,14 @@ describe("Type", () => {
   describe("integer()", () => {
     it("returns boxed integer value given JavaScript integer", () => {
       const result = Type.integer(1);
-      const expected = {type: "integer", value: 1n};
+      const expected = { type: "integer", value: 1n };
 
       assert.deepStrictEqual(result, expected);
     });
 
     it("returns boxed integer value given JavaScript bigint", () => {
       const result = Type.integer(1n);
-      const expected = {type: "integer", value: 1n};
+      const expected = { type: "integer", value: 1n };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -1397,7 +1524,7 @@ describe("Type", () => {
   describe("list()", () => {
     it("empty", () => {
       const result = Type.list();
-      const expected = {type: "list", data: [], isProper: true};
+      const expected = { type: "list", data: [], isProper: true };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -1405,7 +1532,7 @@ describe("Type", () => {
     it("non-empty", () => {
       const data = [Type.integer(1), Type.integer(2)];
       const result = Type.list(data);
-      const expected = {type: "list", data: data, isProper: true};
+      const expected = { type: "list", data: data, isProper: true };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -1457,7 +1584,9 @@ describe("Type", () => {
 
   describe("map()", () => {
     it("returns empty boxed map value", () => {
-      const expected = {type: "map", data: {}};
+      // #878: expected is a real TrieMap (Type.map()), not a raw
+      // {type, data} literal - see errorStruct()'s comment above.
+      const expected = Type.map();
 
       assert.deepStrictEqual(Type.map(), expected);
     });
@@ -1468,12 +1597,10 @@ describe("Type", () => {
         [Type.atom("b"), Type.integer(2)],
       ];
 
-      const expectedData = {
-        "atom(a)": [Type.atom("a"), Type.integer(1)],
-        "atom(b)": [Type.atom("b"), Type.integer(2)],
-      };
-
-      const expected = {type: "map", data: expectedData};
+      const expected = Type.map([
+        [Type.atom("a"), Type.integer(1)],
+        [Type.atom("b"), Type.integer(2)],
+      ]);
 
       assert.deepStrictEqual(Type.map(inputData), expected);
     });
@@ -1488,12 +1615,10 @@ describe("Type", () => {
         [Type.atom("b"), Type.integer(6)],
       ];
 
-      const expectedData = {
-        "atom(a)": [Type.atom("a"), Type.integer(5)],
-        "atom(b)": [Type.atom("b"), Type.integer(6)],
-      };
-
-      const expected = {type: "map", data: expectedData};
+      const expected = Type.map([
+        [Type.atom("a"), Type.integer(5)],
+        [Type.atom("b"), Type.integer(6)],
+      ]);
 
       assert.deepStrictEqual(Type.map(inputData), expected);
     });
@@ -1664,7 +1789,7 @@ describe("Type", () => {
 
   it("string()", () => {
     const result = Type.string("test");
-    const expected = {type: "string", value: "test"};
+    const expected = { type: "string", value: "test" };
 
     assert.deepStrictEqual(result, expected);
   });
@@ -1677,16 +1802,12 @@ describe("Type", () => {
 
     const result = Type.struct("Aaa.Bbb", data);
 
-    const expectedData = {
-      "atom(__struct__)": [
-        Type.atom("__struct__"),
-        Type.atom("Elixir.Aaa.Bbb"),
-      ],
-      "atom(a)": [Type.atom("a"), Type.integer(1)],
-      "atom(b)": [Type.atom("b"), Type.integer(2)],
-    };
-
-    const expected = {type: "map", data: expectedData};
+    // #878: see errorStruct()'s comment above.
+    const expected = Type.map([
+      [Type.atom("__struct__"), Type.atom("Elixir.Aaa.Bbb")],
+      [Type.atom("a"), Type.integer(1)],
+      [Type.atom("b"), Type.integer(2)],
+    ]);
 
     assert.deepStrictEqual(result, expected);
   });
@@ -1737,14 +1858,14 @@ describe("Type", () => {
     it("non-empty", () => {
       const data = [Type.integer(1), Type.integer(2)];
       const result = Type.tuple(data);
-      const expected = {type: "tuple", data: data};
+      const expected = { type: "tuple", data: data };
 
       assert.deepStrictEqual(result, expected);
     });
 
     it("empty", () => {
       const result = Type.tuple();
-      const expected = {type: "tuple", data: []};
+      const expected = { type: "tuple", data: [] };
 
       assert.deepStrictEqual(result, expected);
     });
@@ -1752,7 +1873,7 @@ describe("Type", () => {
 
   it("variablePattern()", () => {
     const result = Type.variablePattern("test");
-    const expected = {type: "variable_pattern", name: "test"};
+    const expected = { type: "variable_pattern", name: "test" };
 
     assert.deepStrictEqual(result, expected);
   });

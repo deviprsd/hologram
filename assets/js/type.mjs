@@ -4,8 +4,8 @@ import Bitstring from "./bitstring.mjs";
 import ERTS from "./erts.mjs";
 import HologramInterpreterError from "./errors/interpreter_error.mjs";
 import Interpreter from "./interpreter.mjs";
+import MapData from "./map_data.mjs";
 import Serializer from "./serializer.mjs";
-import Utils from "./utils.mjs";
 
 // #878 (structural sharing): a proper-list cons cell built by Type.cons().
 // Kept as its own class (rather than a plain object literal like every
@@ -15,6 +15,20 @@ import Utils from "./utils.mjs";
 // V8 hidden classes on every single cons. Improper-list construction never
 // reaches this class - see Type.cons().
 class ConsCell {
+  // True private field, not a shadowing own-property trick: caching the
+  // materialized array here means repeated .data reads on the same
+  // instance are O(1) after the first, exactly like the old approach, but
+  // `data` itself stays a *prototype* getter forever - never becomes an
+  // own property. That matters beyond micro-optimization: chai/Node's
+  // deepStrictEqual only ever compares own enumerable properties, so it
+  // never invokes a prototype getter at all. Shadowing `data` as an own
+  // property (the previous approach) made two logically-identical lists
+  // compare *unequal* under deepStrictEqual purely because one of them had
+  // incidentally had .data read somewhere (inspect, serialization, error
+  // formatting, ...) before the comparison ran and the other hadn't -
+  // caching state leaking into a correctness-sensitive equality check.
+  #data;
+
   constructor(head, tail) {
     this.type = "list";
     this.isProper = true;
@@ -23,16 +37,11 @@ class ConsCell {
     this.tail = tail;
   }
 
-  // Materializes the chain into a real array on first access, then shadows
-  // this getter with a plain value property so every later .data read (on
-  // this object) is an ordinary field read, not a chain walk. Every
-  // existing consumer of a boxed list's .data - the ~200 sites across the
-  // runtime that index or iterate it - keeps working unchanged against
-  // whichever shape it gets; only the handful of hot paths that
-  // deliberately avoid ever reading .data (Type.cons's own tail chaining,
-  // Interpreter.#listRemainder, erlang:hd/1, erlang:tl/1) get true O(1)
-  // sharing instead of paying this materialization.
   get data() {
+    if (this.#data !== undefined) {
+      return this.#data;
+    }
+
     const items = [];
     let node = this;
 
@@ -47,13 +56,95 @@ class ConsCell {
     // ConsCell (loop wouldn't have exited) and never an improper list.
     items.push(...node.data);
 
-    Object.defineProperty(this, "data", {
-      value: items,
-      enumerable: true,
-      configurable: true,
-    });
+    this.#data = items;
 
     return items;
+  }
+}
+
+// #878: a boxed map backed by map_data.mjs's persistent HAMT. `_trie` and
+// `_size` are this class's own private-by-convention fields - never read
+// outside this file. Everywhere else in the runtime goes through either the
+// Type.mapGet/mapHas/mapPut/mapRemove/mapSize/mapEntries accessors below
+// (O(log32 n), no materialization - required for any point-access call site
+// that used to be O(1) against a plain object, or it silently becomes
+// O(n log n): see the accessors' own comments) or through `.data` (the
+// materialize-once compatibility view every existing O(n) consumer - fold,
+// keys/values/to_list, inspect, the serializer - keeps reading unchanged,
+// same trick as ConsCell.data above).
+class TrieMap {
+  // True private field (see ConsCell.#data above for why): caches the
+  // materialized .data view without `data` ever becoming an own property,
+  // so deepStrictEqual - which only ever compares own enumerable
+  // properties and so never invokes a prototype getter - can't observe
+  // whether .data happens to have been read yet. That asymmetry is exactly
+  // what broke hundreds of existing tests the first time this was wired
+  // in: any code path that happened to read a map's .data before a test's
+  // own comparison ran (inspect, error formatting, serialization, ...)
+  // made that specific map instance compare unequal to a freshly-built,
+  // never-read "expected" value with identical logical content.
+  #data;
+
+  // _order: encoded keys in insertion order (first-occurrence position,
+  // matching a plain {} object literal's semantics), tracked as a plain
+  // array separate from the trie itself. map_data.mjs's trie is
+  // deliberately order-agnostic - see that module's doc - so insertion
+  // order, which callers (keys/1, to_list/1, inspect, ...) genuinely
+  // observe, lives here instead. Keeping it out of the trie's own node
+  // shape is what makes two independently-built maps with identical
+  // entries in the identical order come out byte-reproducible: an earlier
+  // version baked a seq number into every leaf to get the same effect, and
+  // that made the trie's shape depend on unrelated global state, breaking
+  // deepStrictEqual for logically-identical maps built via different code
+  // paths.
+  constructor(trie, size, order) {
+    this.type = "map";
+    this._trie = trie;
+    this._size = size;
+
+    // Non-enumerable: deepStrictEqual only compares own *enumerable*
+    // properties, so this keeps insertion order out of map equality
+    // entirely - matching Elixir's own %{a: 1, b: 2} == %{b: 2, a: 1}
+    // (true, order doesn't factor in). Two maps built via genuinely
+    // different call paths but with identical content routinely end up
+    // with different _order (e.g. a URI parser assembling a result map
+    // field-by-field in a different order than a hand-written test
+    // fixture) - real, harmless divergence that must not fail equality.
+    // Still fully readable via map._order (mapEntries/.data below) -
+    // non-enumerable only means "invisible to enumeration/deep-equal",
+    // never "inaccessible".
+    Object.defineProperty(this, "_order", {
+      value: order,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+
+  get data() {
+    if (this.#data !== undefined) {
+      return this.#data;
+    }
+
+    const obj = {};
+
+    for (const encodedKey of this._order) {
+      obj[encodedKey] = MapData.get(this._trie, encodedKey);
+    }
+
+    // Frozen so a write that should have gone through Type.mapPut/mapRemove
+    // (and therefore updated the trie) throws immediately in this
+    // "use strict" codebase instead of silently mutating a snapshot the
+    // trie never sees and that every later .data read would keep serving.
+    // Shallow only - a caller that reaches one level deeper
+    // (data[k][1] = ...) isn't caught by this and needs to not exist in the
+    // first place; see component_registry.mjs's history with exactly that
+    // pattern.
+    Object.freeze(obj);
+
+    this.#data = obj;
+
+    return obj;
   }
 }
 
@@ -154,10 +245,6 @@ export default class Type {
     return Type.list(
       Array.from(string, (char) => Type.integer(char.codePointAt(0))),
     );
-  }
-
-  static cloneMap(map) {
-    return {type: "map", data: Utils.shallowCloneObject(map.data)};
   }
 
   static commandStruct(data = {}) {
@@ -512,12 +599,117 @@ export default class Type {
   }
 
   static map(data = []) {
-    const hashTableWithMetadata = data.reduce((acc, [key, value]) => {
-      acc[Type.encodeMapKey(key)] = [key, value];
-      return acc;
-    }, {});
+    const pairs = data.map(([key, value]) => [
+      Type.encodeMapKey(key),
+      [key, value],
+    ]);
 
-    return {type: "map", data: hashTableWithMetadata};
+    const {root, size} = MapData.fromEntries(pairs);
+    const order = [];
+    const seen = new Set();
+
+    // Mirrors fromEntries()'s own dedup semantics: first occurrence's
+    // position, last occurrence's value (the value already landed in the
+    // trie above; here we only need to not double-list a duplicate key).
+    for (const [encodedKey] of pairs) {
+      if (!seen.has(encodedKey)) {
+        seen.add(encodedKey);
+        order.push(encodedKey);
+      }
+    }
+
+    return new TrieMap(root, size, order);
+  }
+
+  // #878: O(log32 n) point read, returns the [keyTerm, valueTerm] pair (or
+  // undefined) - same shape every existing `map.data[encodedKey]` site
+  // already expects, so callers keep doing `Type.mapGet(map, encodedKey)[1]`
+  // for the value. `encodedKey` is a pre-encoded Type.encodeMapKey() string,
+  // not a boxed term - matches what every BIF here already computes once
+  // and reuses, rather than re-encoding on every accessor call.
+  static mapGet(map, encodedKey) {
+    return MapData.get(map._trie, encodedKey);
+  }
+
+  static mapHas(map, encodedKey) {
+    return MapData.has(map._trie, encodedKey);
+  }
+
+  // [[encodedKey, [keyTerm, valueTerm]], ...] in insertion order. For
+  // genuinely O(n) consumers that need encoded keys directly (e.g. merge's
+  // no-op check below) without paying .data's extra freeze/cache step for a
+  // one-shot traversal. The trie itself (map_data.mjs) doesn't track
+  // insertion order - see TrieMap's _order field - so this walks _order and
+  // does one point-read per key rather than delegating to MapData.entries().
+  static mapEntries(map) {
+    return map._order.map((encodedKey) => [
+      encodedKey,
+      MapData.get(map._trie, encodedKey),
+    ]);
+  }
+
+  static mapSize(map) {
+    return map._size;
+  }
+
+  // #878: O(log32 n) point write. Reference-identity no-op check lives here
+  // (not in map_data.mjs, which always writes) - putting back a value
+  // that's already stored, reference-identical, returns the same map
+  // instead of paying the path-copy. Reference identity only, never
+  // isStrictlyEqual: this check itself must stay O(log32 n), and a deep
+  // walk would cost more than the write it's meant to save.
+  static mapPut(map, encodedKey, pair) {
+    const existing = MapData.get(map._trie, encodedKey);
+
+    if (existing !== undefined && existing[1] === pair[1]) {
+      return map;
+    }
+
+    const {root, added} = MapData.put(map._trie, encodedKey, pair);
+
+    if (!added) {
+      return new TrieMap(root, map._size, map._order);
+    }
+
+    return new TrieMap(root, map._size + 1, [...map._order, encodedKey]);
+  }
+
+  // #878: no-op (same map reference) if encodedKey is absent.
+  static mapRemove(map, encodedKey) {
+    const {root, removed} = MapData.remove(map._trie, encodedKey);
+
+    if (!removed) {
+      return map;
+    }
+
+    return new TrieMap(
+      root,
+      map._size - 1,
+      map._order.filter((k) => k !== encodedKey),
+    );
+  }
+
+  // #878: map2's keys overwrite map1's at their *shared* trie positions -
+  // O(size(map2) * log32 size(map1)), not a full O(n) rebuild. Matches
+  // {...map1.data, ...map2.data}'s old semantics exactly: an overwritten
+  // key keeps map1's insertion position, a genuinely new key from map2 is
+  // appended in map2's own order.
+  static mapMerge(map1, map2) {
+    let trie = map1._trie;
+    let size = map1._size;
+    const order = map1._order.slice();
+
+    for (const [encodedKey, pair] of Type.mapEntries(map2)) {
+      const result = MapData.put(trie, encodedKey, pair);
+      trie = result.root;
+
+      if (result.added) {
+        ++size;
+        order.push(encodedKey);
+      }
+    }
+
+    return new TrieMap(trie, size, order);
   }
 
   static matchPattern(left, right) {

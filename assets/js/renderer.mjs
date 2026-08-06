@@ -16,7 +16,6 @@ import Once from "./once.mjs";
 import RenderCache from "./render_cache.mjs";
 import Throttler from "./throttler.mjs";
 import Type from "./type.mjs";
-import Utils from "./utils.mjs";
 import Vdom from "./vdom.mjs";
 
 import {h as vnode} from "./vendor/snabbdom/build/index.js";
@@ -986,20 +985,24 @@ export default class Renderer {
             ),
           )
         ) {
-          // Optimized (mutates map)
-          acc.data[Type.encodeMapKey(prop.data[0])] = [
+          // #878: acc is a TrieMap - in-place mutation of a materialized
+          // .data view (the old pattern here) silently diverges from the
+          // trie it was meant to represent, so this writes through
+          // Type.mapPut instead, same as component_registry.mjs's history
+          // with the same pattern.
+          return Type.mapPut(acc, Type.encodeMapKey(prop.data[0]), [
             prop.data[0],
             Erlang_Lists["keyfind/3"](
               Type.atom("default"),
               Type.integer(1),
               prop.data[2],
             ).data[1],
-          ];
+          ]);
         }
 
         return acc;
       },
-      Utils.shallowCloneObject(props),
+      props,
     );
   }
 

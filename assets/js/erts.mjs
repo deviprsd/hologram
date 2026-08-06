@@ -93,7 +93,7 @@ export default class ERTS {
   // expand_error/1, which is the only part the three OTP copies differ in. The entries accumulate
   // into the given boxed map.
   static formatErrorMap(fragments, argumentNumber, map, expandError) {
-    const result = Type.cloneMap(map);
+    let result = map;
     let currentArgumentNumber = argumentNumber;
 
     for (const fragment of fragments) {
@@ -105,16 +105,20 @@ export default class ERTS {
       if (typeof fragment === "object" && "general" in fragment) {
         const generalKey = Type.atom("general");
 
-        result.data[Type.encodeMapKey(generalKey)] = [
+        result = Type.mapPut(result, Type.encodeMapKey(generalKey), [
           generalKey,
           expandError(fragment.general),
-        ];
+        ]);
 
         continue;
       }
 
       const key = Type.integer(currentArgumentNumber);
-      result.data[Type.encodeMapKey(key)] = [key, expandError(fragment)];
+
+      result = Type.mapPut(result, Type.encodeMapKey(key), [
+        key,
+        expandError(fragment),
+      ]);
 
       ++currentArgumentNumber;
     }

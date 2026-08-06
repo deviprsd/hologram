@@ -2562,10 +2562,18 @@ export default class Interpreter {
   }
 
   static #matchMap(right, left, context, raiseMatchError) {
-    for (const [key, value] of Object.entries(left.data)) {
+    // left is the pattern (typically a handful of keys) - iterating its
+    // .data is fine. right is the value actually being matched, which can
+    // be arbitrarily large, so each check against it goes through
+    // Type.mapGet (#878) rather than right.data[key] - a point lookup on a
+    // trie-backed map that would otherwise force a full O(n log n)
+    // materialization just to check one or two keys.
+    for (const [encodedKey, [, patternValue]] of Object.entries(left.data)) {
+      const rightPair = Type.mapGet(right, encodedKey);
+
       if (
-        typeof right.data[key] === "undefined" ||
-        !Interpreter.isMatched(value[1], right.data[key][1], context)
+        rightPair === undefined ||
+        !Interpreter.isMatched(patternValue, rightPair[1], context)
       ) {
         return $.#handleMatchFail(right, raiseMatchError);
       }
