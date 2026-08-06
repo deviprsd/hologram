@@ -8281,6 +8281,16 @@ describe("Erlang", () => {
         ertsErrorFrame("hd", Type.list([Type.atom("abc")])),
       ]);
     });
+
+    it("returns the head of a cons cell without materializing it (#878)", () => {
+      const tail = Type.list([Type.integer(2), Type.integer(3)]);
+      const list = Interpreter.consOperator(Type.integer(1), tail);
+
+      const result = hd(list);
+
+      assert.strictEqual(result, list.head);
+      assert.deepStrictEqual(result, Type.integer(1));
+    });
   });
 
   describe("insert_element/3", () => {
@@ -12219,6 +12229,26 @@ describe("Erlang", () => {
         const expected = Type.improperList([Type.integer(2), Type.integer(3)]);
 
         assert.deepStrictEqual(result, expected);
+      });
+    });
+
+    describe("cons cell (#878)", () => {
+      it("returns the cons cell's own tail without materializing it", () => {
+        const tail = Type.list([Type.integer(2), Type.integer(3)]);
+        const list = Interpreter.consOperator(Type.integer(1), tail);
+
+        const result = tl(list);
+
+        assert.strictEqual(result, tail);
+      });
+
+      it("returns the same tail through a chain of conses", () => {
+        const innermost = Type.list([Type.integer(3)]);
+        const middle = Interpreter.consOperator(Type.integer(2), innermost);
+        const outer = Interpreter.consOperator(Type.integer(1), middle);
+
+        assert.strictEqual(tl(outer), middle);
+        assert.strictEqual(tl(tl(outer)), innermost);
       });
     });
 

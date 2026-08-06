@@ -38,6 +38,8 @@ Argument: a single `[h | t]` cons where `t` is a 1000-element proper list
 
 ## Statistics
 
+Before #878 stage 4 (cons cells):
+
 <table>
   <tr>
     <th>Average Cold Execution Time</th>
@@ -49,8 +51,23 @@ Argument: a single `[h | t]` cons where `t` is a 1000-element proper list
   </tr>
 </table>
 
-Baseline before #878 stage 4 (cons cells). `consOperator` is
-`Type.list([head].concat(tail.data))` - an O(n) array copy per cons. Compare
-against `lists/tail/walk_1000`, which shows what happens when this cost is
-paid repeatedly in a loop. After stage 4, a single cons should cost O(1)
-regardless of the tail's length.
+After stage 4:
+
+<table>
+  <tr>
+    <th>Average Cold Execution Time</th>
+    <td>36.75 μs</td>
+  </tr>
+  <tr>
+    <th>Average Warm Execution Time</th>
+    <td>0.19 μs</td>
+  </tr>
+</table>
+
+`consOperator` used to be `Type.list([head].concat(tail.data))` - an O(n)
+array copy per cons. It now shares the tail via a cons cell instead
+(`Type.cons`, `type.mjs`) - 0.19 μs warm is a ~5.8x drop and no longer
+depends on the tail's length, verified directly (`result.tail === tail`) in
+`interpreter_test.mjs`, not just inferred from timing. Compare against
+`lists/tail/walk_1000_consed`, which shows the compounding effect of this
+cost dropping out of a loop that repeatedly walks a consed list.

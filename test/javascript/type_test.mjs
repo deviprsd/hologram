@@ -410,6 +410,60 @@ describe("Type", () => {
     });
   });
 
+  describe("cons()", () => {
+    it("shares a proper list tail instead of copying it", () => {
+      const head = Type.integer(1);
+      const tail = Type.list([Type.integer(2), Type.integer(3)]);
+      const result = Type.cons(head, tail);
+
+      assert.isTrue(Type.isConsCell(result));
+      assert.strictEqual(result.head, head);
+      assert.strictEqual(result.tail, tail);
+      assert.isTrue(Type.isProperList(result));
+    });
+
+    it("materializes .data lazily, matching the plain-list contents", () => {
+      const head = Type.integer(1);
+      const tail = Type.list([Type.integer(2), Type.integer(3)]);
+      const result = Type.cons(head, tail);
+
+      assert.deepStrictEqual(result.data, [
+        Type.integer(1),
+        Type.integer(2),
+        Type.integer(3),
+      ]);
+    });
+
+    it("returns the same .data array on repeated access", () => {
+      const result = Type.cons(Type.integer(1), Type.list([Type.integer(2)]));
+
+      const firstAccess = result.data;
+      const secondAccess = result.data;
+
+      assert.strictEqual(firstAccess, secondAccess);
+    });
+
+    it("builds an improper list, not a cons cell, when the tail is not a proper list", () => {
+      const head = Type.integer(1);
+      const tail = Type.atom("abc");
+      const result = Type.cons(head, tail);
+
+      assert.isFalse(Type.isConsCell(result));
+      assert.deepStrictEqual(result, Type.improperList([head, tail]));
+    });
+
+    it("builds an improper list when the tail is itself improper, nesting rather than flattening it", () => {
+      const innerTail = Type.improperList([Type.integer(2), Type.integer(3)]);
+      const result = Type.cons(Type.integer(1), innerTail);
+
+      assert.isFalse(Type.isConsCell(result));
+      assert.deepStrictEqual(
+        result,
+        Type.improperList([Type.integer(1), innerTail]),
+      );
+    });
+  });
+
   it("consPattern()", () => {
     const head = Type.integer(1);
     const tail = Type.list([Type.integer(2), Type.integer(3)]);
@@ -830,6 +884,28 @@ describe("Type", () => {
     it("returns false if second element is not a reference", () => {
       const term = Type.tuple([Type.atom("bm"), Type.integer(123)]);
       assert.isFalse(Type.isCompiledPattern(term));
+    });
+  });
+
+  describe("isConsCell()", () => {
+    it("returns true for a cons cell built by Type.cons()", () => {
+      const list = Type.cons(Type.integer(1), Type.list([Type.integer(2)]));
+
+      assert.isTrue(Type.isConsCell(list));
+    });
+
+    it("returns false for a packed list", () => {
+      assert.isFalse(Type.isConsCell(Type.list([Type.integer(1)])));
+    });
+
+    it("returns false for an empty packed list", () => {
+      assert.isFalse(Type.isConsCell(Type.list()));
+    });
+
+    it("returns false for an improper list", () => {
+      const list = Type.improperList([Type.integer(1), Type.integer(2)]);
+
+      assert.isFalse(Type.isConsCell(list));
     });
   });
 
@@ -1332,6 +1408,28 @@ describe("Type", () => {
       const expected = {type: "list", data: data, isProper: true};
 
       assert.deepStrictEqual(result, expected);
+    });
+  });
+
+  describe("listIsEmpty()", () => {
+    it("returns true for an empty packed list", () => {
+      assert.isTrue(Type.listIsEmpty(Type.list()));
+    });
+
+    it("returns false for a non-empty packed list", () => {
+      assert.isFalse(Type.listIsEmpty(Type.list([Type.integer(1)])));
+    });
+
+    it("returns false for a cons cell without materializing .data (#878)", () => {
+      const list = Type.cons(Type.integer(1), Type.list());
+
+      const result = Type.listIsEmpty(list);
+
+      assert.isFalse(result);
+      // hasOwnProperty, not assert.property/list.data - either would invoke
+      // the .data getter and materialize it, which is exactly what this
+      // test is checking didn't happen.
+      assert.isFalse(Object.hasOwn(list, "data"));
     });
   });
 
