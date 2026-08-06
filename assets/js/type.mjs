@@ -7,6 +7,56 @@ import Interpreter from "./interpreter.mjs";
 import Serializer from "./serializer.mjs";
 import Utils from "./utils.mjs";
 
+// #878 (structural sharing): a proper-list cons cell built by Type.cons().
+// Kept as its own class (rather than a plain object literal like every
+// other boxed term) specifically so `data` can be a *prototype* getter -
+// one property definition per materialized list, not one per cons, which is
+// what keeps consing off the packed-list array-copy path without churning
+// V8 hidden classes on every single cons. Improper-list construction never
+// reaches this class - see Type.cons().
+class ConsCell {
+  constructor(head, tail) {
+    this.type = "list";
+    this.isProper = true;
+    this.isConsCell = true;
+    this.head = head;
+    this.tail = tail;
+  }
+
+  // Materializes the chain into a real array on first access, then shadows
+  // this getter with a plain value property so every later .data read (on
+  // this object) is an ordinary field read, not a chain walk. Every
+  // existing consumer of a boxed list's .data - the ~200 sites across the
+  // runtime that index or iterate it - keeps working unchanged against
+  // whichever shape it gets; only the handful of hot paths that
+  // deliberately avoid ever reading .data (Type.cons's own tail chaining,
+  // Interpreter.#listRemainder, erlang:hd/1, erlang:tl/1) get true O(1)
+  // sharing instead of paying this materialization.
+  get data() {
+    const items = [];
+    let node = this;
+
+    while (node instanceof ConsCell) {
+      items.push(node.head);
+      node = node.tail;
+    }
+
+    // A cons chain always bottoms out in a packed proper list - see
+    // Type.cons(): a cons cell is only ever built when its tail is already
+    // a proper list, so `node` here is guaranteed proper-packed, never a
+    // ConsCell (loop wouldn't have exited) and never an improper list.
+    items.push(...node.data);
+
+    Object.defineProperty(this, "data", {
+      value: items,
+      enumerable: true,
+      configurable: true,
+    });
+
+    return items;
+  }
+}
+
 export default class Type {
   // Singleton for Type.nil() (#878). `nil` is the single most common atom in
   // the runtime (default action/command target, next_action/next_command
@@ -162,6 +212,21 @@ export default class Type {
       [Type.atom("next_page"), nextPage],
       [Type.atom("state"), state],
     ]);
+  }
+
+  // #878: O(1) `[head | tail]` construction when tail is already a proper
+  // list - the tail is shared, not copied. Matches the previous
+  // Interpreter.consOperator contract exactly, including the improper-list
+  // branch: when tail is anything other than a proper list (already
+  // improper, or not a list at all), the result nests it as a single
+  // element rather than flattening - a ConsCell is never involved there,
+  // since only a proper tail is O(1)-shareable in the first place.
+  static cons(head, tail) {
+    if (Type.isProperList(tail)) {
+      return new ConsCell(head, tail);
+    }
+
+    return Type.improperList([head, tail]);
   }
 
   static consPattern(head, tail) {
@@ -338,6 +403,10 @@ export default class Type {
     );
   }
 
+  static isConsCell(term) {
+    return term.isConsCell === true;
+  }
+
   static isList(term) {
     return term.type === "list";
   }
@@ -427,6 +496,15 @@ export default class Type {
 
   static list(data = []) {
     return {type: "list", data: data, isProper: true};
+  }
+
+  // #878: cheap emptiness check that never forces a ConsCell to
+  // materialize .data - a cons cell always has a head, so it is never
+  // empty by construction, and checking that doesn't need to touch .data
+  // at all. Callers must already know `list` isList(); this doesn't
+  // re-check.
+  static listIsEmpty(list) {
+    return !Type.isConsCell(list) && list.data.length === 0;
   }
 
   static keywordList(data = []) {

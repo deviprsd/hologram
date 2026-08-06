@@ -4,9 +4,14 @@
 // pattern-matching `[h | t]` down to `[]`) by repeatedly taking the tail via
 // erlang:tl/1, which bottoms out in Interpreter.#listRemainder -
 // list.data.slice(fromIndex), an O(n) array copy per step. Walking a full
-// 1000-element list this way is therefore O(n^2) today. After stage 4's
-// cons-cell representation, each tl/1 step should be O(1), making the whole
-// walk O(n).
+// 1000-element list this way is therefore O(n^2) today.
+//
+// #878 note: this specific list is built as a single Type.list(array), a
+// packed list with no cons cells - it stays that way (walking it is
+// unaffected by stage 4's cons-cell work) because there is nothing to walk
+// lazily; the array already exists in full. See ../walk_1000_consed for the
+// case #878 actually targets: a list built by repeated consing, which is
+// how transpiled `[h | t]` construction really produces one.
 
 import Erlang from "../../../../../assets/js/erlang/erlang.mjs";
 import Type from "../../../../../assets/js/type.mjs";

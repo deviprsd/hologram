@@ -419,7 +419,11 @@ describe("Erlang_Sets", () => {
       const result = fold_3(fun, Type.list(), set);
       const expected = Type.list([integer2]);
 
-      assert.deepStrictEqual(result, expected);
+      // #878: the fold's cons-onto-empty-list step returns a cons cell, not
+      // a plain packed list - isStrictlyEqual is the representation-
+      // transparent equality check (see interpreter_test.mjs
+      // consOperator() for the same situation).
+      assert.isTrue(Interpreter.isStrictlyEqual(result, expected));
     });
 
     it("folds over a set with multiple elements", () => {

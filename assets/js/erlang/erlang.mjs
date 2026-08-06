@@ -2188,11 +2188,12 @@ const Erlang = {
 
   // Start hd/1
   "hd/1": (list) => {
-    if (!Type.isList(list) || list.data.length === 0) {
+    if (!Type.isList(list) || Type.listIsEmpty(list)) {
       Interpreter.raiseBifError("badarg", "erlang", "hd", [list]);
     }
 
-    return list.data[0];
+    // #878: reads the cons cell's own head field, no materialization.
+    return Type.isConsCell(list) ? list.head : list.data[0];
   },
   // End hd/1
   // Deps: []
@@ -3360,8 +3361,16 @@ const Erlang = {
 
   // Start tl/1
   "tl/1": (list) => {
-    if (!Type.isList(list) || list.data.length === 0) {
+    if (!Type.isList(list) || Type.listIsEmpty(list)) {
       Interpreter.raiseBifError("badarg", "erlang", "tl", [list]);
+    }
+
+    // #878: the cons cell's own tail is already the correct result value
+    // (another cons cell, or the packed list it bottoms out in) - no
+    // materialization, no allocation, and it's shared with whatever else
+    // holds a reference to this tail.
+    if (Type.isConsCell(list)) {
+      return list.tail;
     }
 
     const length = list.data.length;

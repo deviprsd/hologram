@@ -3221,7 +3221,14 @@ describe("Interpreter", () => {
         Type.integer(3),
       ]);
 
-      assert.deepStrictEqual(result, expected);
+      // #878: the result is a cons cell now, not a plain packed list, so
+      // its internal shape legitimately differs from a Type.list() literal
+      // - deepStrictEqual would (correctly) reject that as a representation
+      // mismatch even though the two are the same logical list.
+      // isStrictlyEqual is the representation-transparent check (it
+      // compares .data arrays, both real by the time it reads them).
+      assert.isTrue(Interpreter.isStrictlyEqual(result, expected));
+      assert.isTrue(Type.isProperList(result));
     });
 
     it("constructs a proper list when the tail param is an empty list", () => {
@@ -3230,7 +3237,8 @@ describe("Interpreter", () => {
       const result = Interpreter.consOperator(head, tail);
       const expected = Type.list([Type.integer(1)]);
 
-      assert.deepStrictEqual(result, expected);
+      assert.isTrue(Interpreter.isStrictlyEqual(result, expected));
+      assert.isTrue(Type.isProperList(result));
     });
 
     it("constructs improper list when the tail is not a list", () => {
@@ -3240,6 +3248,25 @@ describe("Interpreter", () => {
       const expected = Type.improperList([Type.integer(1), Type.atom("abc")]);
 
       assert.deepStrictEqual(result, expected);
+    });
+
+    describe("structural sharing (#878)", () => {
+      it("shares the tail by reference instead of copying it", () => {
+        const head = Type.integer(1);
+        const tail = Type.list([Type.integer(2), Type.integer(3)]);
+        const result = Interpreter.consOperator(head, tail);
+
+        assert.strictEqual(result.tail, tail);
+      });
+
+      it("shares the tail's own tail transitively through a chain of conses", () => {
+        const innermost = Type.list([Type.integer(3)]);
+        const middle = Interpreter.consOperator(Type.integer(2), innermost);
+        const outer = Interpreter.consOperator(Type.integer(1), middle);
+
+        assert.strictEqual(outer.tail, middle);
+        assert.strictEqual(outer.tail.tail, innermost);
+      });
     });
   });
 

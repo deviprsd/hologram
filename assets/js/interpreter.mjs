@@ -471,11 +471,7 @@ export default class Interpreter {
   }
 
   static consOperator(head, tail) {
-    if (Type.isProperList(tail)) {
-      return Type.list([head].concat(tail.data));
-    } else {
-      return Type.improperList([head, tail]);
-    }
+    return Type.cons(head, tail);
   }
 
   static defineElixirFunction(
@@ -2360,10 +2356,31 @@ export default class Interpreter {
 
   // Returns the nonempty list formed by the list's items from the given
   // index on, preserving an improper tail.
+  //
+  // #878: when list is a cons-cell chain, walks tail pointers instead of
+  // slicing an array - the returned remainder is the shared tail node
+  // itself, not a copy, and costs O(fromIndex) regardless of the list's
+  // total length (the case that mattered most: destructuring a small fixed
+  // prefix like `[a, b | rest]` off an arbitrarily long list). A chain
+  // always bottoms out in a packed list (see Type.cons), so if fromIndex
+  // hops run out mid-chain, the remaining hops fall back to slicing just
+  // that shorter packed tail, not the original list.
   static #listRemainder(list, fromIndex) {
-    const data = list.data.slice(fromIndex);
+    let node = list;
+    let remaining = fromIndex;
 
-    return list.isProper ? Type.list(data) : Type.improperList(data);
+    while (remaining > 0 && Type.isConsCell(node)) {
+      node = node.tail;
+      --remaining;
+    }
+
+    if (remaining === 0) {
+      return node;
+    }
+
+    const data = node.data.slice(remaining);
+
+    return node.isProper ? Type.list(data) : Type.improperList(data);
   }
 
   // TODO: reenable when debug mode is implemented
@@ -2498,7 +2515,9 @@ export default class Interpreter {
 
   // Deps: [:erlang.hd/1, :erlang.tl/1]
   static #matchConsPattern(right, left, context, raiseMatchError) {
-    if (!Type.isList(right) || right.data.length === 0) {
+    // #878: Type.listIsEmpty avoids materializing a cons cell just to check
+    // it's non-empty (it always is, by construction).
+    if (!Type.isList(right) || Type.listIsEmpty(right)) {
       return $.#handleMatchFail(right, raiseMatchError);
     }
 
