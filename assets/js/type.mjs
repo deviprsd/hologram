@@ -8,6 +8,17 @@ import Serializer from "./serializer.mjs";
 import Utils from "./utils.mjs";
 
 export default class Type {
+  // Singleton for Type.nil() (#878). `nil` is the single most common atom in
+  // the runtime (default action/command target, next_action/next_command
+  // when unset, absent map values, ...), and unlike a general value it is
+  // never held up for comparison against a *different* nil produced
+  // elsewhere - nil is nil. Interning it means repeated
+  // Erlang_Maps["put/3"](key, Type.nil(), map) calls on an already-nil field
+  // (see hologram.mjs #processActionResult) hit put/3's reference-identity
+  // no-op check instead of always allocating both a fresh atom and a fresh
+  // map. Atoms are otherwise deliberately not interned - see Type.atom().
+  static #nil = {type: "atom", value: "nil"};
+
   static actionStruct(data = {}) {
     let {name, params, target, delay} = data;
 
@@ -468,7 +479,7 @@ export default class Type {
   }
 
   static nil() {
-    return Type.atom("nil");
+    return Type.#nil;
   }
 
   static pid(node, segments, origin = "server") {

@@ -352,6 +352,36 @@ describe("Erlang", () => {
         ertsErrorFrame("++", Type.list([Type.atom("abc"), Type.list()])),
       ]);
     });
+
+    describe("identity fast path (#878)", () => {
+      it("returns the right operand by reference when the left list is empty", () => {
+        const left = Type.list();
+        const right = Type.list([Type.integer(1), Type.integer(2)]);
+
+        const result = testedFun(left, right);
+
+        assert.strictEqual(result, right);
+      });
+
+      it("returns the left operand by reference when the right list is empty and proper", () => {
+        const left = Type.list([Type.integer(1), Type.integer(2)]);
+        const right = Type.list();
+
+        const result = testedFun(left, right);
+
+        assert.strictEqual(result, left);
+      });
+
+      it("still builds a new list when both operands are non-empty", () => {
+        const left = Type.list([Type.integer(1)]);
+        const right = Type.list([Type.integer(2)]);
+
+        const result = testedFun(left, right);
+
+        assert.notStrictEqual(result, left);
+        assert.notStrictEqual(result, right);
+      });
+    });
   });
 
   describe("-/1", () => {
@@ -11790,6 +11820,26 @@ describe("Erlang", () => {
           ]),
         ),
       ]);
+    });
+
+    describe("identity fast path (#878)", () => {
+      it("returns the same tuple when the element is already reference-identical", () => {
+        const value = Type.integer(2);
+        const tuple = Type.tuple([Type.integer(1), value]);
+
+        const result = setelement(Type.integer(2), tuple, value);
+
+        assert.strictEqual(result, tuple);
+      });
+
+      it("still copies when the new value is only equal, not reference-identical", () => {
+        const tuple = Type.tuple([Type.integer(1), Type.integer(2)]);
+
+        const result = setelement(Type.integer(2), tuple, Type.integer(2));
+
+        assert.notStrictEqual(result, tuple);
+        assert.deepStrictEqual(result, tuple);
+      });
     });
   });
 

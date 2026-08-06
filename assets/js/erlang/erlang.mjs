@@ -114,6 +114,21 @@ const Erlang = {
       Interpreter.raiseBifError("badarg", "erlang", "++", [left, right]);
     }
 
+    // Identity fast paths (#878): appending onto/into an empty list is a
+    // no-op that can return the other operand unchanged instead of copying.
+    // Gated on Type.isList(right) rather than being unconditional: when
+    // right isn't a list at all, the pre-existing (unrelated to #878) path
+    // below already raises on a 1-item improper list, and this fast path
+    // intentionally preserves that behavior rather than silently changing
+    // it.
+    if (left.data.length === 0 && Type.isList(right)) {
+      return right;
+    }
+
+    if (Type.isProperList(right) && right.data.length === 0) {
+      return left;
+    }
+
     const data = left.data.concat(Type.isList(right) ? right.data : [right]);
 
     return Type.isProperList(right) ? Type.list(data) : Type.improperList(data);
@@ -3192,9 +3207,17 @@ const Erlang = {
       raiseBadarg();
     }
 
-    const data = [...tuple.data];
     // The tuple index is one-based, so we need to compensate
-    data[Number(index.value) - 1] = value;
+    const zeroBasedIndex = Number(index.value) - 1;
+
+    // Identity fast path (#878): setting an element to its current,
+    // reference-identical value is a no-op.
+    if (tuple.data[zeroBasedIndex] === value) {
+      return tuple;
+    }
+
+    const data = [...tuple.data];
+    data[zeroBasedIndex] = value;
 
     return Type.tuple(data);
   },

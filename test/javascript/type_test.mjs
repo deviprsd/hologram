@@ -1445,6 +1445,21 @@ describe("Type", () => {
     });
   });
 
+  describe("nil()", () => {
+    it("returns a boxed nil atom", () => {
+      assert.deepStrictEqual(Type.nil(), Type.atom("nil"));
+    });
+
+    // #878: nil is interned (unlike Type.atom() in general - see the
+    // comment on Type's private #nil field) so that repeated writes of an
+    // already-nil field can be recognized as no-ops by reference identity,
+    // e.g. Erlang_Maps["put/3"] on next_action/next_command in
+    // hologram.mjs #processActionResult.
+    it("returns the same object on every call", () => {
+      assert.strictEqual(Type.nil(), Type.nil());
+    });
+  });
+
   describe("nativeValueStruct()", () => {
     it("object type with reference value", () => {
       const ref = ERTS.uniqueReference();
