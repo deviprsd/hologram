@@ -5,9 +5,14 @@
 // key that one side derives and the other rejects would desync the vdom the client boots from
 // server-rendered markup from the vdom it renders itself.
 
-import {assert, defineRuntimeGlobals} from "../../../support/helpers.mjs";
+import {
+  assert,
+  contextFixture,
+  defineRuntimeGlobals,
+} from "../../../support/helpers.mjs";
 
 import Elixir_Hologram_Template_Marker from "../../../../../assets/js/elixir/hologram/template/marker.mjs";
+import ItemCache from "../../../../../assets/js/item_cache.mjs";
 import Type from "../../../../../assets/js/type.mjs";
 
 defineRuntimeGlobals();
@@ -15,6 +20,30 @@ defineRuntimeGlobals();
 const item_key = Elixir_Hologram_Template_Marker["item_key/1"];
 const item_node = Elixir_Hologram_Template_Marker["item_node/4"];
 const key_from_value = Elixir_Hologram_Template_Marker["key_from_value/1"];
+const memoized_item = Elixir_Hologram_Template_Marker["memoized_item/5"];
+
+// Wraps a JS thunk as a boxed 0-arity anonymous function, the shape a compiled `fn -> ... end`
+// item body arrives as. Counts its own calls, so tests can assert a cache hit skipped it.
+const trackedThunk = (value) => {
+  const calls = {count: 0};
+
+  const fun = Type.anonymousFunction(
+    0,
+    [
+      {
+        params: () => [],
+        guards: [],
+        body: () => {
+          calls.count += 1;
+          return value;
+        },
+      },
+    ],
+    contextFixture(),
+  );
+
+  return [fun, calls];
+};
 
 const mapItem = (id) =>
   Type.map([
@@ -237,6 +266,80 @@ describe("Elixir_Hologram_Template_Marker", () => {
       );
 
       assert.deepStrictEqual(result, Type.nil());
+    });
+  });
+
+  describe("memoized_item/5", () => {
+    beforeEach(() => {
+      ItemCache.clear();
+      globalThis.hologramItemMemoDisabled = false;
+    });
+
+    it("nil key: never caches, always calls item_fun", () => {
+      const [fun, calls] = trackedThunk(Type.bitstring("abc"));
+
+      memoized_item(
+        Type.nil(),
+        Type.bitstring("h"),
+        Type.integer(0),
+        Type.list([]),
+        fun,
+      );
+      memoized_item(
+        Type.nil(),
+        Type.bitstring("h"),
+        Type.integer(0),
+        Type.list([]),
+        fun,
+      );
+
+      assert.equal(calls.count, 2);
+    });
+
+    it("same key and guards: second call is a hit, item_fun runs once", () => {
+      const [fun, calls] = trackedThunk(Type.bitstring("abc"));
+      const guards = Type.list([Type.integer(1)]);
+
+      const first = memoized_item(
+        Type.bitstring("k"),
+        Type.bitstring("h"),
+        Type.integer(0),
+        guards,
+        fun,
+      );
+
+      const second = memoized_item(
+        Type.bitstring("k"),
+        Type.bitstring("h"),
+        Type.integer(0),
+        guards,
+        fun,
+      );
+
+      assert.equal(calls.count, 1);
+      assert.strictEqual(first, second);
+    });
+
+    it("a changed guard value is a miss", () => {
+      const [fun, calls] = trackedThunk(Type.bitstring("abc"));
+
+      memoized_item(
+        Type.bitstring("k"),
+        Type.bitstring("h"),
+        Type.integer(0),
+        Type.list([Type.integer(1)]),
+        fun,
+      );
+
+      memoized_item(
+        Type.bitstring("k"),
+        Type.bitstring("h"),
+        Type.integer(0),
+        Type.list([Type.integer(2)]),
+        fun,
+      );
+
+      assert.equal(calls.count, 2);
     });
   });
 });

@@ -1,5 +1,6 @@
 "use strict";
 
+import ItemCache from "./item_cache.mjs";
 import RenderCache from "./render_cache.mjs";
 import Type from "./type.mjs";
 
@@ -9,6 +10,7 @@ export default class ComponentRegistry {
   static clear() {
     ComponentRegistry.entries = Type.map();
     RenderCache.clear();
+    ItemCache.clear();
   }
 
   // #878: was an in-place mutation of the struct's next_action field,
@@ -86,6 +88,7 @@ export default class ComponentRegistry {
   static populate(entries) {
     ComponentRegistry.entries = entries;
     RenderCache.clear();
+    ItemCache.clear();
   }
 
   // #878: was an in-place mutation of ComponentRegistry.entries.data,

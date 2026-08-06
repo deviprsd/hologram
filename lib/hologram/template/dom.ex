@@ -86,33 +86,37 @@ defmodule Hologram.Template.DOM do
       element_depth: 0,
       raw_depth: 0,
       plans: %{},
+      guards: %{},
+      guard_refs: %{},
       strip: MapSet.new()
     }
 
     final_state = Enum.reduce(indexed_tags, initial_state, &scan_for_key_plan_tag/2)
 
     Enum.map(indexed_tags, fn {tag, index} ->
-      apply_for_key_plan(tag, index, final_state.plans, final_state.strip)
+      apply_for_key_plan(tag, index, final_state)
     end)
   end
 
-  # Rewrites a "for" block's own start tag to carry its resolved key plan, and strips the $key
-  # attribute (if any) from whichever tag carried it - the marker machinery reads the key from the
-  # loop variable or the hoisted expression, not from an attribute left on the rendered element,
-  # and an unstripped "$key" would otherwise reach #buildEventBinding as a bogus "key" event.
-  defp apply_for_key_plan({:block_start, {"for", expr_str}}, index, plans, _strip) do
-    {:block_start, {"for", expr_str, Map.fetch!(plans, index)}}
+  # Rewrites a "for" block's own start tag to carry its resolved key plan and memoization guard
+  # list, and strips the $key attribute (if any) from whichever tag carried it - the marker
+  # machinery reads the key from the loop variable or the hoisted expression, not from an
+  # attribute left on the rendered element, and an unstripped "$key" would otherwise reach
+  # #buildEventBinding as a bogus "key" event.
+  defp apply_for_key_plan({:block_start, {"for", expr_str}}, index, state) do
+    {:block_start,
+     {"for", expr_str, Map.fetch!(state.plans, index), Map.fetch!(state.guards, index)}}
   end
 
-  defp apply_for_key_plan({:start_tag, {tag_name, attrs}}, index, _plans, strip) do
-    {:start_tag, {tag_name, strip_key_attr(attrs, index, strip)}}
+  defp apply_for_key_plan({:start_tag, {tag_name, attrs}}, index, state) do
+    {:start_tag, {tag_name, strip_key_attr(attrs, index, state.strip)}}
   end
 
-  defp apply_for_key_plan({:self_closing_tag, {tag_name, attrs}}, index, _plans, strip) do
-    {:self_closing_tag, {tag_name, strip_key_attr(attrs, index, strip)}}
+  defp apply_for_key_plan({:self_closing_tag, {tag_name, attrs}}, index, state) do
+    {:self_closing_tag, {tag_name, strip_key_attr(attrs, index, state.strip)}}
   end
 
-  defp apply_for_key_plan(tag, _index, _plans, _strip), do: tag
+  defp apply_for_key_plan(tag, _index, _state), do: tag
 
   defp strip_key_attr(attrs, index, strip) do
     if MapSet.member?(strip, index) do
@@ -207,8 +211,135 @@ defmodule Hologram.Template.DOM do
     |> String.starts_with?("_")
   end
 
+  # Collects every name a "for" block's own generator clause(s) bind - the pattern side of every
+  # `<-` qualifier, list or bitstring. This is the whitelist a memoized keyed block's guard list
+  # draws from: a name referenced in the body is only a safe, in-scope guard if it's bound here or
+  # by an enclosing "for" (see collect_refs/1 and the block_end "for" clause below).
+  defp collect_generator_bound_vars(expr_str) do
+    content = extract_expression_content(expr_str)
+
+    case Code.string_to_quoted("for #{content}, do: nil") do
+      {:ok, {:for, _for_meta, args}} ->
+        {_do_block, qualifiers} = List.pop_at(args, -1)
+
+        qualifiers
+        |> Enum.filter(&match?({:<-, _meta, [_pattern, _rhs]}, &1))
+        |> Enum.reduce(MapSet.new(), fn {:<-, _meta, [pattern, _rhs]}, acc ->
+          MapSet.union(acc, pattern_vars(pattern))
+        end)
+
+      _error ->
+        MapSet.new()
+    end
+  end
+
+  defp pattern_vars(ast) do
+    {_ast, vars} =
+      Macro.prewalk(ast, MapSet.new(), fn
+        {name, _meta, ctx} = node, acc when is_atom(name) and is_atom(ctx) and name != :_ ->
+          {node, MapSet.put(acc, name)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    vars
+  end
+
+  # Collects the plain-variable and module-attribute names an expression fragment references, for
+  # the same guard-list purpose as pattern_vars/1 above. Distinguishes a variable use from a
+  # 0-arity local call the same way single_plain_var_generator/1 already does: a variable's third
+  # AST element is a context atom, a call's is an (possibly empty) argument list.
+  defp collect_refs(ast) do
+    {_ast, {vars, attrs}} =
+      Macro.prewalk(ast, {MapSet.new(), MapSet.new()}, fn
+        {:@, _meta, [{name, _m2, ctx2}]} = node, {vars, attrs}
+        when is_atom(name) and is_atom(ctx2) ->
+          {node, {vars, MapSet.put(attrs, name)}}
+
+        {name, _meta, ctx} = node, {vars, attrs} when is_atom(name) and is_atom(ctx) ->
+          {node, {MapSet.put(vars, name), attrs}}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    {vars, attrs}
+  end
+
+  # Parses one brace-wrapped template expression fragment ("{item.name}", a $key value, a "for"
+  # generator, an "if" condition) and returns its referenced names. Never raises: an expression
+  # this pass can't parse (or that used the implicit-keyword-list shorthand differently than
+  # expected) just contributes no refs, which only costs guard-list precision, not correctness -
+  # the body still evaluates in full on every cache miss regardless of what the guard list omits.
+  defp parse_and_collect_refs(expr_str) do
+    content =
+      expr_str
+      |> normalize_implicit_keyword_list()
+      |> extract_expression_content()
+
+    case Code.string_to_quoted(content) do
+      {:ok, ast} -> collect_refs(ast)
+      _error -> {MapSet.new(), MapSet.new()}
+    end
+  end
+
+  # Folds a batch of expression fragments' refs into every "for" frame currently open - a name
+  # referenced anywhere inside a block's body (including a nested block's own body) is a
+  # dependency of that block's own memoized output, since the nested block's rendering is part of
+  # what the outer block caches.
+  defp add_expr_refs(state, []), do: state
+  defp add_expr_refs(%{for_stack: []} = state, _expr_strs), do: state
+
+  defp add_expr_refs(state, expr_strs) do
+    {vars, attrs} =
+      Enum.reduce(expr_strs, {MapSet.new(), MapSet.new()}, fn expr_str, {vacc, aacc} ->
+        {v, a} = parse_and_collect_refs(expr_str)
+        {MapSet.union(vacc, v), MapSet.union(aacc, a)}
+      end)
+
+    guard_refs =
+      Enum.reduce(state.for_stack, state.guard_refs, fn frame, acc ->
+        Map.update!(acc, frame.start_index, fn %{vars: fv, attrs: fa} ->
+          %{vars: MapSet.union(fv, vars), attrs: MapSet.union(fa, attrs)}
+        end)
+      end)
+
+    %{state | guard_refs: guard_refs}
+  end
+
+  defp add_tag_name_refs(state, {:expression, dyn_expr_str}),
+    do: add_expr_refs(state, [dyn_expr_str])
+
+  defp add_tag_name_refs(state, _tag_name), do: state
+
+  # "$key" itself is excluded: whatever it references already determines the item's cache key
+  # (render_item_key_source/1), so a change there already lands on a different cache entry -
+  # guarding on it too would only cost hit rate for no soundness gain.
+  defp add_attrs_refs(state, attrs) do
+    expr_strs =
+      attrs
+      |> Enum.reject(&match?({"$key", _value_parts}, &1))
+      |> Enum.flat_map(fn
+        {:spread, spread_expr} ->
+          [spread_expr]
+
+        {_name, value_parts} ->
+          Enum.flat_map(value_parts, fn
+            {:expression, expr_str} -> [expr_str]
+            _other -> []
+          end)
+      end)
+
+    add_expr_refs(state, expr_strs)
+  end
+
   defp scan_for_key_plan_tag({{:start_tag, {tag_name, attrs}}, index}, state) do
-    scanned_state = scan_key_attr(state, attrs, index)
+    scanned_state =
+      state
+      |> scan_key_attr(attrs, index)
+      |> add_tag_name_refs(tag_name)
+      |> add_attrs_refs(attrs)
 
     raw_state =
       if tag_name in ["script", "style"],
@@ -227,21 +358,43 @@ defmodule Hologram.Template.DOM do
   # raw_depth - a self-closing <script/> or <style/> has no body, so there is no "inside" to be
   # raw) unchanged. It is still eligible to carry a top-level $key, so it gets the same $key scan
   # as a start tag, just without the depth bookkeeping.
-  defp scan_for_key_plan_tag({{:self_closing_tag, {_tag_name, attrs}}, index}, state) do
-    scan_key_attr(state, attrs, index)
+  defp scan_for_key_plan_tag({{:self_closing_tag, {tag_name, attrs}}, index}, state) do
+    state
+    |> scan_key_attr(attrs, index)
+    |> add_tag_name_refs(tag_name)
+    |> add_attrs_refs(attrs)
+  end
+
+  defp scan_for_key_plan_tag({{:expression, expr_str}, _index}, state) do
+    add_expr_refs(state, [expr_str])
+  end
+
+  defp scan_for_key_plan_tag({{:block_start, {"if", expr_str}}, _index}, state) do
+    add_expr_refs(state, [expr_str])
   end
 
   defp scan_for_key_plan_tag({{:block_start, {"for", expr_str}}, index}, state) do
+    # The generator clause itself is evaluated once per render (outside any per-item guard), so
+    # its refs belong to the *enclosing* frames' guard lists, not this block's own - added before
+    # this frame is pushed.
+    state = add_expr_refs(state, [expr_str])
+
     auto_var = if state.raw_depth == 0, do: infer_auto_key_var(expr_str), else: nil
+
+    bound_vars =
+      if state.raw_depth == 0, do: collect_generator_bound_vars(expr_str), else: MapSet.new()
 
     frame = %{
       start_index: index,
       entry_depth: state.element_depth,
       key_expr: nil,
-      auto_var: auto_var
+      auto_var: auto_var,
+      bound_vars: bound_vars
     }
 
-    %{state | for_stack: [frame | state.for_stack]}
+    guard_refs = Map.put(state.guard_refs, index, %{vars: MapSet.new(), attrs: MapSet.new()})
+
+    %{state | for_stack: [frame | state.for_stack], guard_refs: guard_refs}
   end
 
   defp scan_for_key_plan_tag({{:block_end, "for"}, _index}, state) do
@@ -254,10 +407,37 @@ defmodule Hologram.Template.DOM do
         true -> :none
       end
 
-    %{state | for_stack: rest, plans: Map.put(state.plans, frame.start_index, key_plan)}
+    %{
+      state
+      | for_stack: rest,
+        plans: Map.put(state.plans, frame.start_index, key_plan),
+        guards: Map.put(state.guards, frame.start_index, resolve_guards(frame, rest, state))
+    }
   end
 
   defp scan_for_key_plan_tag(_indexed_tag, state), do: state
+
+  # A referenced name is a safe guard only if it's bound by this block's own generator or an
+  # enclosing "for" block's generator - see collect_refs/1's moduledoc-adjacent comment. Over-
+  # including a name that's out of scope at the memoized_item/5 call site would be a compile
+  # error, so there's no "include everything referenced" fallback; under-including only costs hit
+  # rate. Module attributes are always in scope (rewritten to `vars.foo` later by
+  # substitute_module_attributes/1) and always included.
+  defp resolve_guards(frame, enclosing_frames, state) do
+    in_scope_vars =
+      Enum.reduce(enclosing_frames, frame.bound_vars, fn ancestor, acc ->
+        MapSet.union(acc, ancestor.bound_vars)
+      end)
+
+    %{vars: ref_vars, attrs: ref_attrs} = Map.fetch!(state.guard_refs, frame.start_index)
+
+    guard_vars = MapSet.intersection(ref_vars, in_scope_vars)
+
+    var_sources = Enum.map(guard_vars, &Atom.to_string/1)
+    attr_sources = Enum.map(ref_attrs, &("@" <> Atom.to_string(&1)))
+
+    Enum.sort(var_sources ++ attr_sources)
+  end
 
   defp bump_raw_depth(state), do: %{state | raw_depth: state.raw_depth + 1}
   defp drop_raw_depth(state), do: %{state | raw_depth: max(state.raw_depth - 1, 0)}
@@ -371,8 +551,12 @@ defmodule Hologram.Template.DOM do
   # "for", not inside <script>/<style>: stamps this occurrence's hash and index onto the block's
   # own start tag, so render_code/1 can build the marker text for each item without needing the
   # fold state add_block_markers/1 carries but render_code/1 doesn't.
-  defp inject_block_markers({:block_start, {"for", expr_str, key_plan}}, {index, open, 0}, hash) do
-    tag = {:block_start, {"for", expr_str, key_plan, hash, index}}
+  defp inject_block_markers(
+         {:block_start, {"for", expr_str, key_plan, guards}},
+         {index, open, 0},
+         hash
+       ) do
+    tag = {:block_start, {"for", expr_str, key_plan, guards, hash, index}}
     {marker_tags(hash, index, "o", [tag]), {index + 1, [{index, key_plan} | open], 0}}
   end
 
@@ -384,9 +568,9 @@ defmodule Hologram.Template.DOM do
 
   # Inside <script>/<style>: the block still has to compile (it may render into the raw text), but
   # gets no markers - resolve_for_key_plans/1 already forces key_plan to :none here, so the start
-  # tag is left as the bare 3-tuple render_code/1's plain, unstamped "for" clause matches.
+  # tag is left as the bare 4-tuple render_code/1's plain, unstamped "for" clause matches.
   defp inject_block_markers(
-         {:block_start, {"for", _expr_str, _key_plan}} = tag,
+         {:block_start, {"for", _expr_str, _key_plan, _guards}} = tag,
          {index, open, depth},
          _hash
        ) do
@@ -485,29 +669,37 @@ defmodule Hologram.Template.DOM do
 
   # Unstamped (the block is inside <script>/<style>, so add_block_markers/1 never gave it a hash
   # and index) or stamped but ineligible for a key plan - both compile to the same plain
-  # comprehension as before this module existed.
-  defp render_code({:block_start, {"for", expr_str, :none}}) do
+  # comprehension as before this module existed. Neither is memoized: :none means positional
+  # diffing (no cross-render item identity to key a cache on), and unstamped content has no
+  # markers at all.
+  defp render_code({:block_start, {"for", expr_str, :none, _guards}}) do
     "(for #{extract_expression_content(expr_str)} do ["
   end
 
-  defp render_code({:block_start, {"for", expr_str, :none, _hash, _index}}) do
+  defp render_code({:block_start, {"for", expr_str, :none, _guards, _hash, _index}}) do
     "(for #{extract_expression_content(expr_str)} do ["
   end
 
-  # Wraps the body list (itself built exactly as in the plain case, comma-handling and all) as the
-  # middle element of a 3-element array bracketed by the item's open and close markers. Both
-  # renderers already walk a nested list recursively wherever they find one (the same mechanism
-  # that lets a "for" or "if" block's own per-iteration/per-branch list sit inside its parent's
-  # children list unflattened), so this needs no flattening of its own - the nesting resolves the
-  # same way it always has. Splicing markers into the body list directly, instead of wrapping it,
-  # would need to know whether the body list ends up empty to get comma placement right; wrapping
-  # makes that irrelevant.
-  defp render_code({:block_start, {"for", expr_str, key_plan, hash, index}}) do
+  # Wraps the body list in a call to Marker.memoized_item/5, itself the middle element of a
+  # 3-element array bracketed by the item's open and close markers. Both renderers already walk a
+  # nested list recursively wherever they find one (the same mechanism that lets a "for" or "if"
+  # block's own per-iteration/per-branch list sit inside its parent's children list unflattened),
+  # so this needs no flattening of its own - the nesting resolves the same way it always has.
+  #
+  # Elixir-side memoized_item/5 is a transparent `item_fun.()`, so server-rendered output is
+  # unchanged; the client twin (assets/js/elixir/hologram/template/marker.mjs) is where the actual
+  # per-item cache lives, guarded by `guards` - see PLANNING notes on resolve_guards/3 for why that
+  # list is restricted to names bound by this block or an enclosing "for", never "everything
+  # referenced": a name out of scope at this call site is a compile error, not just a missed cache
+  # hit.
+  defp render_code({:block_start, {"for", expr_str, key_plan, guards, hash, index}}) do
     key_source = render_item_key_source(key_plan)
+    guards_code = Enum.join(guards, ", ")
 
-    "(for #{extract_expression_content(expr_str)} do " <>
-      "holo__item_key__ = #{key_source}; " <>
-      "[Hologram.Template.Marker.item_node(holo__item_key__, \"#{hash}\", #{index}, \"o\"), ["
+    ~s{(for #{extract_expression_content(expr_str)} do } <>
+      ~s{holo__item_key__ = #{key_source}; } <>
+      ~s{[Hologram.Template.Marker.item_node(holo__item_key__, "#{hash}", #{index}, "o"), } <>
+      ~s{Hologram.Template.Marker.memoized_item(holo__item_key__, "#{hash}", #{index}, [#{guards_code}], fn -> [}
   end
 
   defp render_code({:block_end, "for"}) do
@@ -519,7 +711,7 @@ defmodule Hologram.Template.DOM do
   end
 
   defp render_code({:block_end, {"for", _key_plan, hash, index}}) do
-    "], Hologram.Template.Marker.item_node(holo__item_key__, \"#{hash}\", #{index}, \"c\")] end)"
+    "] end), Hologram.Template.Marker.item_node(holo__item_key__, \"#{hash}\", #{index}, \"c\")] end)"
   end
 
   defp render_code({:block_start, {"if", expr_str}}) do

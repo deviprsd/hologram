@@ -1499,7 +1499,7 @@ defmodule Hologram.Template.DOMTest do
       tags = [{:block_start, {"for", "{ item <- @items}"}}, {:text, "abc"}, {:block_end, "for"}]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:byf8s9:0:o]"]},
+               {:public_comment, [text: "[h:fm5bvr:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1527,19 +1527,31 @@ defmodule Hologram.Template.DOMTest do
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "byf8s9", 0, "o"]},
-                           [text: "abc"],
+                            [{:holo__item_key__, [line: 1], nil}, "fm5bvr", 0, "o"]},
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :memoized_item
+                             ]}, [line: 1],
+                            [
+                              {:holo__item_key__, [line: 1], nil},
+                              "fm5bvr",
+                              0,
+                              [],
+                              {:fn, [line: 1],
+                               [{:->, [line: 1], [[], {:__block__, [], [[text: "abc"]]}]}]}
+                            ]},
                            {{:., [line: 1],
                              [
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "byf8s9", 0, "c"]}
+                            [{:holo__item_key__, [line: 1], nil}, "fm5bvr", 0, "c"]}
                          ]
                        ]}
                   ]
                 ]},
-               {:public_comment, [text: "[h:byf8s9:0:c]"]}
+               {:public_comment, [text: "[h:fm5bvr:0:c]"]}
              ]
     end
 
@@ -1553,7 +1565,7 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:2zqn8:0:o]"]},
+               {:public_comment, [text: "[h:1emwegc:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1581,19 +1593,43 @@ defmodule Hologram.Template.DOMTest do
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "2zqn8", 0, "o"]},
-                           [{:text, "abc"}, {:{}, [line: 1], [:element, "div", [], []]}],
+                            [{:holo__item_key__, [line: 1], nil}, "1emwegc", 0, "o"]},
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :memoized_item
+                             ]}, [line: 1],
+                            [
+                              {:holo__item_key__, [line: 1], nil},
+                              "1emwegc",
+                              0,
+                              [],
+                              {:fn, [line: 1],
+                               [
+                                 {:->, [line: 1],
+                                  [
+                                    [],
+                                    {:__block__, [],
+                                     [
+                                       [
+                                         {:text, "abc"},
+                                         {:{}, [line: 1], [:element, "div", [], []]}
+                                       ]
+                                     ]}
+                                  ]}
+                               ]}
+                            ]},
                            {{:., [line: 1],
                              [
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "2zqn8", 0, "c"]}
+                            [{:holo__item_key__, [line: 1], nil}, "1emwegc", 0, "c"]}
                          ]
                        ]}
                   ]
                 ]},
-               {:public_comment, [text: "[h:2zqn8:0:c]"]}
+               {:public_comment, [text: "[h:1emwegc:0:c]"]}
              ]
     end
 
@@ -1640,14 +1676,14 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:f19r7d:0:o]"]},
+               {:public_comment, [text: "[h:hor91s:0:o]"]},
                {:if, [line: 1],
                 [
                   {{:., [line: 1], [{:vars, [line: 1], nil}, :aaa]}, [no_parens: true, line: 1],
                    []},
                   [
                     do: [
-                      {:public_comment, [text: "[h:f19r7d:1:o]"]},
+                      {:public_comment, [text: "[h:hor91s:1:o]"]},
                       {:for, [line: 1],
                        [
                          {:<-, [line: 1],
@@ -1675,23 +1711,35 @@ defmodule Hologram.Template.DOMTest do
                                       {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                       :item_node
                                     ]}, [line: 1],
-                                   [{:holo__item_key__, [line: 1], nil}, "f19r7d", 1, "o"]},
-                                  [text: "ccc"],
+                                   [{:holo__item_key__, [line: 1], nil}, "hor91s", 1, "o"]},
+                                  {{:., [line: 1],
+                                    [
+                                      {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                                      :memoized_item
+                                    ]}, [line: 1],
+                                   [
+                                     {:holo__item_key__, [line: 1], nil},
+                                     "hor91s",
+                                     1,
+                                     [],
+                                     {:fn, [line: 1],
+                                      [{:->, [line: 1], [[], {:__block__, [], [[text: "ccc"]]}]}]}
+                                   ]},
                                   {{:., [line: 1],
                                     [
                                       {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                       :item_node
                                     ]}, [line: 1],
-                                   [{:holo__item_key__, [line: 1], nil}, "f19r7d", 1, "c"]}
+                                   [{:holo__item_key__, [line: 1], nil}, "hor91s", 1, "c"]}
                                 ]
                               ]}
                          ]
                        ]},
-                      {:public_comment, [text: "[h:f19r7d:1:c]"]}
+                      {:public_comment, [text: "[h:hor91s:1:c]"]}
                     ]
                   ]
                 ]},
-               {:public_comment, [text: "[h:f19r7d:0:c]"]}
+               {:public_comment, [text: "[h:hor91s:0:c]"]}
              ]
     end
 
@@ -1707,7 +1755,7 @@ defmodule Hologram.Template.DOMTest do
       ]
 
       assert build_ast(tags) == [
-               {:public_comment, [text: "[h:f4kqgf:0:o]"]},
+               {:public_comment, [text: "[h:17lgblr:0:o]"]},
                {:for, [line: 1],
                 [
                   {:<-, [line: 1],
@@ -1735,27 +1783,39 @@ defmodule Hologram.Template.DOMTest do
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "f4kqgf", 0, "o"]},
-                           [text: "bbb"],
+                            [{:holo__item_key__, [line: 1], nil}, "17lgblr", 0, "o"]},
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :memoized_item
+                             ]}, [line: 1],
+                            [
+                              {:holo__item_key__, [line: 1], nil},
+                              "17lgblr",
+                              0,
+                              [],
+                              {:fn, [line: 1],
+                               [{:->, [line: 1], [[], {:__block__, [], [[text: "bbb"]]}]}]}
+                            ]},
                            {{:., [line: 1],
                              [
                                {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
                                :item_node
                              ]}, [line: 1],
-                            [{:holo__item_key__, [line: 1], nil}, "f4kqgf", 0, "c"]}
+                            [{:holo__item_key__, [line: 1], nil}, "17lgblr", 0, "c"]}
                          ]
                        ]}
                   ]
                 ]},
-               {:public_comment, [text: "[h:f4kqgf:0:c]"]},
-               {:public_comment, [text: "[h:f4kqgf:1:o]"]},
+               {:public_comment, [text: "[h:17lgblr:0:c]"]},
+               {:public_comment, [text: "[h:17lgblr:1:o]"]},
                {:if, [line: 1],
                 [
                   {{:., [line: 1], [{:vars, [line: 1], nil}, :ccc]}, [no_parens: true, line: 1],
                    []},
                   [do: [text: "ddd"]]
                 ]},
-               {:public_comment, [text: "[h:f4kqgf:1:c]"]}
+               {:public_comment, [text: "[h:17lgblr:1:c]"]}
              ]
     end
   end
@@ -1853,7 +1913,26 @@ defmodule Hologram.Template.DOMTest do
                           ]},
                          [
                            _open_item_node,
-                           [{:{}, [line: 1], [:element, "li", [], _li_children]}],
+                           {{:., [line: 1],
+                             [
+                               {:__aliases__, [line: 1], [:Hologram, :Template, :Marker]},
+                               :memoized_item
+                             ]}, [line: 1],
+                            [
+                              {:holo__item_key__, [line: 1], nil},
+                              _hash,
+                              0,
+                              [{:item, [line: 1], nil}],
+                              {:fn, [line: 1],
+                               [
+                                 {:->, [line: 1],
+                                  [
+                                    [],
+                                    {:__block__, [],
+                                     [[{:{}, [line: 1], [:element, "li", [], _li_children]}]]}
+                                  ]}
+                               ]}
+                            ]},
                            _close_item_node
                          ]
                        ]}
@@ -1929,6 +2008,142 @@ defmodule Hologram.Template.DOMTest do
       assert_raise Hologram.TemplateSyntaxError,
                    ~s'the "$key" attribute must be a single expression, e.g. $key={item.id}',
                    fn -> build_ast(tags) end
+    end
+  end
+
+  describe "build_ast/1, for block, keyed lists, memoization guards" do
+    # Collects the guards list argument of every Marker.memoized_item/5 call in an AST, in
+    # visiting (outer-to-inner) order - avoids hand-matching the surrounding
+    # do/holo__item_key__/marker boilerplate, which build_ast/1's other keyed-list tests already
+    # cover structurally.
+    defp all_guards(ast) do
+      {_ast, reversed_guards_list} =
+        Macro.prewalk(ast, [], fn
+          {{:., _dot_meta,
+            [{:__aliases__, _aliases_meta, [:Hologram, :Template, :Marker]}, :memoized_item]},
+           _call_meta, [_key, _hash, _index, guards, _item_fun]} = node,
+          acc ->
+            {node, [guards | acc]}
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      Enum.reverse(reversed_guards_list)
+    end
+
+    test "guard list includes only bound vars and module attributes actually referenced in the body" do
+      # {%for {idx, row} <- @rows}<div $key={row.id}>{idx}{row.name}{@label}</div>{/for}
+      tags = [
+        {:block_start, {"for", "{ {idx, row} <- @rows}"}},
+        {:start_tag, {"div", [{"$key", [expression: "{row.id}"]}]}},
+        {:expression, "{idx}"},
+        {:expression, "{row.name}"},
+        {:expression, "{@label}"},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert [guards] = all_guards(build_ast(tags))
+
+      assert guards == [
+               {{:., [line: 1], [{:vars, [line: 1], nil}, :label]}, [no_parens: true, line: 1],
+                []},
+               {:idx, [line: 1], nil},
+               {:row, [line: 1], nil}
+             ]
+    end
+
+    test "a var bound by the generator but never read in the body is not a guard" do
+      # {%for {idx, row} <- @rows}<div $key={row.id}>{row.name}</div>{/for}
+      tags = [
+        {:block_start, {"for", "{ {idx, row} <- @rows}"}},
+        {:start_tag, {"div", [{"$key", [expression: "{row.id}"]}]}},
+        {:expression, "{row.name}"},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      assert [guards] = all_guards(build_ast(tags))
+      assert guards == [{:row, [line: 1], nil}]
+    end
+
+    test "a 0-arity call is not mistaken for a variable reference" do
+      # {%for item <- @items}{item.name}{some_helper()}{/for}
+      tags = [
+        {:block_start, {"for", "{ item <- @items}"}},
+        {:expression, "{item.name}"},
+        {:expression, "{some_helper()}"},
+        {:block_end, "for"}
+      ]
+
+      assert [guards] = all_guards(build_ast(tags))
+      assert guards == [{:item, [line: 1], nil}]
+    end
+
+    test "a name referenced but bound by neither this nor an enclosing for is excluded" do
+      # would be a compile error if included as a bare identifier at the memoized_item/5 call
+      # site - {%for item <- @items}{item.name}{unrelated_var}{/for}
+      tags = [
+        {:block_start, {"for", "{ item <- @items}"}},
+        {:expression, "{item.name}"},
+        {:expression, "{unrelated_var}"},
+        {:block_end, "for"}
+      ]
+
+      assert [guards] = all_guards(build_ast(tags))
+      assert guards == [{:item, [line: 1], nil}]
+    end
+
+    test "a nested for block's references belong to the enclosing keyed block's guard list, filtered by scope" do
+      # {%for {idx, row} <- @rows}
+      #   <div $key={row.id}>
+      #     {%for %{} = col <- @columns}{Map.get(row, col.id)}{/for}
+      #   </div>
+      # {/for}
+      tags = [
+        {:block_start, {"for", "{ {idx, row} <- @rows}"}},
+        {:start_tag, {"div", [{"$key", [expression: "{row.id}"]}]}},
+        {:block_start, {"for", "{ %{} = col <- @columns}"}},
+        {:expression, "{Map.get(row, col.id)}"},
+        {:block_end, "for"},
+        {:end_tag, "div"},
+        {:block_end, "for"}
+      ]
+
+      # The nested "for" has no $key/auto-key (its generator is a match pattern, not a plain
+      # variable), so it isn't itself memoized - only the outer block's guard list shows up.
+      assert [outer_guards] = all_guards(build_ast(tags))
+
+      assert outer_guards == [
+               {{:., [line: 1], [{:vars, [line: 1], nil}, :columns]}, [no_parens: true, line: 1],
+                []},
+               {:row, [line: 1], nil}
+             ]
+    end
+
+    test "a body referencing nothing gets an empty guard list" do
+      # {%for item <- @items}<li $key={item.id}></li>{/for}
+      tags = [
+        {:block_start, {"for", "{ item <- @items}"}},
+        {:start_tag, {"li", [{"$key", [expression: "{item.id}"]}]}},
+        {:end_tag, "li"},
+        {:block_end, "for"}
+      ]
+
+      assert [guards] = all_guards(build_ast(tags))
+      assert guards == []
+    end
+
+    test "an unkeyed for block emits no memoized_item call at all" do
+      # {%for x <- @xs, y <- @ys}zzz{/for}
+      tags = [
+        {:block_start, {"for", "{ x <- @xs, y <- @ys}"}},
+        {:text, "zzz"},
+        {:block_end, "for"}
+      ]
+
+      assert all_guards(build_ast(tags)) == []
     end
   end
 

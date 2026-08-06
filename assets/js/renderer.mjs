@@ -11,6 +11,7 @@ import HologramInterpreterError from "./errors/interpreter_error.mjs";
 import HologramRuntimeError from "./errors/runtime_error.mjs";
 import InitActionQueue from "./init_action_queue.mjs";
 import Interpreter from "./interpreter.mjs";
+import ItemCache from "./item_cache.mjs";
 import KeyboardEvent from "./events/keyboard_event.mjs";
 import Once from "./once.mjs";
 import RenderCache from "./render_cache.mjs";
@@ -128,6 +129,7 @@ export default class Renderer {
     Renderer.resizeBindings = [];
     Renderer.formInputReplays = [];
     RenderCache.beginRender();
+    ItemCache.beginRender();
 
     const pageModuleProxy = Interpreter.moduleProxy(pageModule);
 
@@ -141,6 +143,7 @@ export default class Renderer {
     );
 
     RenderCache.endRender();
+    ItemCache.endRender();
 
     const htmlVnode = pageVdom.find((vnode) => vnode.sel === "html");
 

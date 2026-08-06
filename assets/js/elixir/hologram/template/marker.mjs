@@ -6,6 +6,7 @@
 
 import Bitstring from "../../../bitstring.mjs";
 import Erlang_Maps from "../../../erlang/maps.mjs";
+import ItemCache from "../../../item_cache.mjs";
 import Type from "../../../type.mjs";
 
 const MAX_KEY_LENGTH = 128;
@@ -80,6 +81,14 @@ const Elixir_Hologram_Template_Marker = {
     return Type.nil();
   },
   // End key_from_value/1
+  // Deps: []
+
+  // Start memoized_item/5
+  // guards arrives boxed (a compiled Elixir list literal) - unboxed to a plain array once here so
+  // ItemCache's comparisons don't need to know about the term representation.
+  "memoized_item/5": (key, hash, index, guards, itemFun) =>
+    ItemCache.memoizedItem(key, hash, index, guards.data, itemFun),
+  // End memoized_item/5
   // Deps: []
 };
 
