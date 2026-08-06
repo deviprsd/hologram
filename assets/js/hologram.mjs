@@ -433,6 +433,12 @@ export default class Hologram {
     EventListeners.recheckScrollEdges();
 
     console.log("Hologram: page rendered in", PerformanceTimer.diff(startTime));
+    console.log(
+      "Hologram: item cache hits/misses",
+      ItemCache.hits,
+      "/",
+      ItemCache.misses,
+    );
   }
 
   static run() {
