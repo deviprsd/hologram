@@ -65,6 +65,25 @@ const TEXT_ESCAPE_REGEX =
   // eslint-disable-next-line no-control-regex, no-misleading-character-class
   /#\{|[\x07-\x0D\x1B"\\\x7F\u00A0\u034F\u061C\u2000-\u200F\u2028-\u202E\u205F-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFC]/g;
 
+// #878: #hasUnresolvedVariablePattern(term) is only ever true when `term`
+// was built by embedding another matchOperator() call's still-unresolved
+// result inside a list/tuple/map literal (e.g. `{1, e = f} = {1, d = c}` -
+// see matchOperator()'s own "right may itself be a pattern" branch). Real
+// application data - a value read from state, deserialized, or built by
+// ordinary Map/List/Tuple construction - can never contain such a
+// sub-term. But nothing marks a term as "definitely real data" at
+// construction time, so the check still has to walk it at least once.
+// Terms are immutable once built (the same invariant #878's structural
+// sharing depends on), so caching the walk's result per instance is exact,
+// not an approximation: the same object identity will forever answer the
+// same way. Without this, a single case/cond/function-clause dispatch
+// against a large, unchanging subject - e.g. a virtualized grid's
+// accumulated row cache, matched repeatedly across every clause a multi-
+// clause function like Access.get/3 or Map.get/3 tries - re-walks the
+// entire subject on every attempt instead of once, at a cost that scales
+// with the subject's total size rather than the size of the change.
+const unresolvedVariablePatternCache = new WeakMap();
+
 export default class Interpreter {
   // Clause heads of manually ported functions, keyed by "Module.function/arity".
   static #functionClauseHeads = {};
@@ -2089,38 +2108,41 @@ export default class Interpreter {
       return true;
     }
 
-    if (termType === "cons_pattern") {
-      return (
-        Interpreter.#hasUnresolvedVariablePattern(term.head) ||
-        Interpreter.#hasUnresolvedVariablePattern(term.tail)
-      );
+    const cached = unresolvedVariablePatternCache.get(term);
+
+    if (cached !== undefined) {
+      return cached;
     }
 
-    if (termType === "list" || termType === "tuple") {
-      return term.data.some((item) =>
+    let result = false;
+
+    if (termType === "cons_pattern") {
+      result =
+        Interpreter.#hasUnresolvedVariablePattern(term.head) ||
+        Interpreter.#hasUnresolvedVariablePattern(term.tail);
+    } else if (termType === "list" || termType === "tuple") {
+      result = term.data.some((item) =>
         Interpreter.#hasUnresolvedVariablePattern(item),
       );
-    }
-
-    if (termType === "map") {
+    } else if (termType === "map") {
       for (const [key, value] of Object.values(term.data)) {
         if (
           Interpreter.#hasUnresolvedVariablePattern(key) ||
           Interpreter.#hasUnresolvedVariablePattern(value)
         ) {
-          return true;
+          result = true;
+          break;
         }
       }
-    }
-
-    if (termType === "match_pattern") {
-      return (
+    } else if (termType === "match_pattern") {
+      result =
         Interpreter.#hasUnresolvedVariablePattern(term.left) ||
-        Interpreter.#hasUnresolvedVariablePattern(term.right)
-      );
+        Interpreter.#hasUnresolvedVariablePattern(term.right);
     }
 
-    return false;
+    unresolvedVariablePatternCache.set(term, result);
+
+    return result;
   }
 
   static #inspectAnonymousFunction(term, _opts) {
