@@ -4,9 +4,11 @@ import {
   assert,
   defineRuntimeGlobals,
   initComponentRegistryEntry,
+  sinon,
 } from "./support/helpers.mjs";
 
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
+import RenderCache from "../../assets/js/render_cache.mjs";
 import Type from "../../assets/js/type.mjs";
 
 defineRuntimeGlobals();
@@ -110,7 +112,7 @@ describe("ComponentRegistry", () => {
         target: Type.bitstring("my_target"),
       });
 
-      const struct = Type.componentStruct({nextAction: action});
+      const struct = Type.componentStruct({ nextAction: action });
 
       const entry = Type.map([
         [Type.atom("module"), Type.alias("MyModule")],
@@ -127,6 +129,49 @@ describe("ComponentRegistry", () => {
         Erlang_Maps["get/2"](Type.atom("next_action"), updatedStruct),
         Type.nil(),
       );
+    });
+
+    it("marks the cid dirty in RenderCache (#878)", () => {
+      // Previously an in-place mutation of the struct that bypassed
+      // putComponentStruct entirely, so this never happened - a real
+      // (if narrow) correctness gap in the RenderCache.isReusable
+      // invariant it's supposed to be part of. Now routes through
+      // putComponentStruct like any other struct write.
+      const struct = Type.componentStruct({
+        nextAction: Type.actionStruct({ name: Type.atom("my_action") }),
+      });
+
+      const entry = Type.map([
+        [Type.atom("module"), Type.alias("MyModule")],
+        [Type.atom("struct"), struct],
+      ]);
+
+      ComponentRegistry.entries = Type.map([[cid3, entry]]);
+
+      const markDirtySpy = sinon.spy(RenderCache, "markDirty");
+
+      try {
+        ComponentRegistry.clearNextAction(cid3);
+
+        sinon.assert.calledWith(markDirtySpy, cid3);
+      } finally {
+        markDirtySpy.restore();
+      }
+    });
+
+    it("returns the same struct reference when next_action is already nil (identity fast path)", () => {
+      const struct = Type.componentStruct();
+
+      const entry = Type.map([
+        [Type.atom("module"), Type.alias("MyModule")],
+        [Type.atom("struct"), struct],
+      ]);
+
+      ComponentRegistry.entries = Type.map([[cid3, entry]]);
+
+      ComponentRegistry.clearNextAction(cid3);
+
+      assert.strictEqual(ComponentRegistry.getComponentStruct(cid3), struct);
     });
   });
 
@@ -225,5 +270,53 @@ describe("ComponentRegistry", () => {
     ComponentRegistry.putComponentStruct(cid4, componentStruct);
 
     assert.equal(ComponentRegistry.getComponentStruct(cid4), componentStruct);
+  });
+
+  describe("putComponentStruct() identity fast path (#878)", () => {
+    // #878's actual render-path payoff: an action that returns unchanged
+    // state hands this the exact same struct reference already stored
+    // (put/3's own identity fast path - see erlang/maps.mjs), so writing
+    // it back and marking the cid dirty would be pure waste. This is what
+    // turns "action ran but changed nothing" into zero re-render work,
+    // for this cid and every ancestor whose descendant-dirtiness check
+    // would otherwise trip on it.
+    it("skips the write and does not mark the cid dirty when the struct is reference-identical to what is already stored", () => {
+      initComponentRegistryEntry(cid4);
+
+      const componentStruct = Type.componentStruct();
+      ComponentRegistry.putComponentStruct(cid4, componentStruct);
+
+      const entriesAfterFirstPut = ComponentRegistry.entries;
+
+      const markDirtySpy = sinon.spy(RenderCache, "markDirty");
+
+      try {
+        ComponentRegistry.putComponentStruct(cid4, componentStruct);
+
+        sinon.assert.notCalled(markDirtySpy);
+      } finally {
+        markDirtySpy.restore();
+      }
+
+      // Not just "still equal" - the whole entries trie must be untouched,
+      // proving no path-copy happened either.
+      assert.strictEqual(ComponentRegistry.entries, entriesAfterFirstPut);
+    });
+
+    it("still writes and marks the cid dirty when the struct is a distinct-but-equal object", () => {
+      initComponentRegistryEntry(cid4);
+
+      ComponentRegistry.putComponentStruct(cid4, Type.componentStruct());
+
+      const markDirtySpy = sinon.spy(RenderCache, "markDirty");
+
+      try {
+        ComponentRegistry.putComponentStruct(cid4, Type.componentStruct());
+
+        sinon.assert.calledWith(markDirtySpy, cid4);
+      } finally {
+        markDirtySpy.restore();
+      }
+    });
   });
 });

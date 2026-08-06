@@ -11,12 +11,12 @@ import HologramInterpreterError from "./errors/interpreter_error.mjs";
 import HologramRuntimeError from "./errors/runtime_error.mjs";
 import InitActionQueue from "./init_action_queue.mjs";
 import Interpreter from "./interpreter.mjs";
+import ItemCache from "./item_cache.mjs";
 import KeyboardEvent from "./events/keyboard_event.mjs";
 import Once from "./once.mjs";
 import RenderCache from "./render_cache.mjs";
 import Throttler from "./throttler.mjs";
 import Type from "./type.mjs";
-import Utils from "./utils.mjs";
 import Vdom from "./vdom.mjs";
 
 import {h as vnode} from "./vendor/snabbdom/build/index.js";
@@ -129,6 +129,7 @@ export default class Renderer {
     Renderer.resizeBindings = [];
     Renderer.formInputReplays = [];
     RenderCache.beginRender();
+    ItemCache.beginRender();
 
     const pageModuleProxy = Interpreter.moduleProxy(pageModule);
 
@@ -142,6 +143,7 @@ export default class Renderer {
     );
 
     RenderCache.endRender();
+    ItemCache.endRender();
 
     const htmlVnode = pageVdom.find((vnode) => vnode.sel === "html");
 
@@ -986,20 +988,24 @@ export default class Renderer {
             ),
           )
         ) {
-          // Optimized (mutates map)
-          acc.data[Type.encodeMapKey(prop.data[0])] = [
+          // #878: acc is a TrieMap - in-place mutation of a materialized
+          // .data view (the old pattern here) silently diverges from the
+          // trie it was meant to represent, so this writes through
+          // Type.mapPut instead, same as component_registry.mjs's history
+          // with the same pattern.
+          return Type.mapPut(acc, Type.encodeMapKey(prop.data[0]), [
             prop.data[0],
             Erlang_Lists["keyfind/3"](
               Type.atom("default"),
               Type.integer(1),
               prop.data[2],
             ).data[1],
-          ];
+          ]);
         }
 
         return acc;
       },
-      Utils.shallowCloneObject(props),
+      props,
     );
   }
 

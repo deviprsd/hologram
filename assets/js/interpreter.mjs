@@ -65,6 +65,25 @@ const TEXT_ESCAPE_REGEX =
   // eslint-disable-next-line no-control-regex, no-misleading-character-class
   /#\{|[\x07-\x0D\x1B"\\\x7F\u00A0\u034F\u061C\u2000-\u200F\u2028-\u202E\u205F-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFC]/g;
 
+// #878: #hasUnresolvedVariablePattern(term) is only ever true when `term`
+// was built by embedding another matchOperator() call's still-unresolved
+// result inside a list/tuple/map literal (e.g. `{1, e = f} = {1, d = c}` -
+// see matchOperator()'s own "right may itself be a pattern" branch). Real
+// application data - a value read from state, deserialized, or built by
+// ordinary Map/List/Tuple construction - can never contain such a
+// sub-term. But nothing marks a term as "definitely real data" at
+// construction time, so the check still has to walk it at least once.
+// Terms are immutable once built (the same invariant #878's structural
+// sharing depends on), so caching the walk's result per instance is exact,
+// not an approximation: the same object identity will forever answer the
+// same way. Without this, a single case/cond/function-clause dispatch
+// against a large, unchanging subject - e.g. a virtualized grid's
+// accumulated row cache, matched repeatedly across every clause a multi-
+// clause function like Access.get/3 or Map.get/3 tries - re-walks the
+// entire subject on every attempt instead of once, at a cost that scales
+// with the subject's total size rather than the size of the change.
+const unresolvedVariablePatternCache = new WeakMap();
+
 export default class Interpreter {
   // Clause heads of manually ported functions, keyed by "Module.function/arity".
   static #functionClauseHeads = {};
@@ -471,11 +490,7 @@ export default class Interpreter {
   }
 
   static consOperator(head, tail) {
-    if (Type.isProperList(tail)) {
-      return Type.list([head].concat(tail.data));
-    } else {
-      return Type.improperList([head, tail]);
-    }
+    return Type.cons(head, tail);
   }
 
   static defineElixirFunction(
@@ -1601,9 +1616,13 @@ export default class Interpreter {
     const data1 = map1.data;
     const data2 = map2.data;
 
-    if (data1.length !== data2.length) return false;
-
     const keys = Object.keys(data1);
+
+    // map.data is a plain object, not an array, so it has no .length -
+    // comparing sizes needs an explicit key count. Without this, a map that
+    // is a strict subset of the other (e.g. %{a: 1} vs %{a: 1, b: 2}) would
+    // incorrectly compare equal, since the loop below only walks map1's keys.
+    if (keys.length !== Object.keys(data2).length) return false;
 
     for (let i = 0; i < keys.length; ++i) {
       const key = keys[i];
@@ -2089,38 +2108,41 @@ export default class Interpreter {
       return true;
     }
 
-    if (termType === "cons_pattern") {
-      return (
-        Interpreter.#hasUnresolvedVariablePattern(term.head) ||
-        Interpreter.#hasUnresolvedVariablePattern(term.tail)
-      );
+    const cached = unresolvedVariablePatternCache.get(term);
+
+    if (cached !== undefined) {
+      return cached;
     }
 
-    if (termType === "list" || termType === "tuple") {
-      return term.data.some((item) =>
+    let result = false;
+
+    if (termType === "cons_pattern") {
+      result =
+        Interpreter.#hasUnresolvedVariablePattern(term.head) ||
+        Interpreter.#hasUnresolvedVariablePattern(term.tail);
+    } else if (termType === "list" || termType === "tuple") {
+      result = term.data.some((item) =>
         Interpreter.#hasUnresolvedVariablePattern(item),
       );
-    }
-
-    if (termType === "map") {
+    } else if (termType === "map") {
       for (const [key, value] of Object.values(term.data)) {
         if (
           Interpreter.#hasUnresolvedVariablePattern(key) ||
           Interpreter.#hasUnresolvedVariablePattern(value)
         ) {
-          return true;
+          result = true;
+          break;
         }
       }
-    }
-
-    if (termType === "match_pattern") {
-      return (
+    } else if (termType === "match_pattern") {
+      result =
         Interpreter.#hasUnresolvedVariablePattern(term.left) ||
-        Interpreter.#hasUnresolvedVariablePattern(term.right)
-      );
+        Interpreter.#hasUnresolvedVariablePattern(term.right);
     }
 
-    return false;
+    unresolvedVariablePatternCache.set(term, result);
+
+    return result;
   }
 
   static #inspectAnonymousFunction(term, _opts) {
@@ -2356,10 +2378,31 @@ export default class Interpreter {
 
   // Returns the nonempty list formed by the list's items from the given
   // index on, preserving an improper tail.
+  //
+  // #878: when list is a cons-cell chain, walks tail pointers instead of
+  // slicing an array - the returned remainder is the shared tail node
+  // itself, not a copy, and costs O(fromIndex) regardless of the list's
+  // total length (the case that mattered most: destructuring a small fixed
+  // prefix like `[a, b | rest]` off an arbitrarily long list). A chain
+  // always bottoms out in a packed list (see Type.cons), so if fromIndex
+  // hops run out mid-chain, the remaining hops fall back to slicing just
+  // that shorter packed tail, not the original list.
   static #listRemainder(list, fromIndex) {
-    const data = list.data.slice(fromIndex);
+    let node = list;
+    let remaining = fromIndex;
 
-    return list.isProper ? Type.list(data) : Type.improperList(data);
+    while (remaining > 0 && Type.isConsCell(node)) {
+      node = node.tail;
+      --remaining;
+    }
+
+    if (remaining === 0) {
+      return node;
+    }
+
+    const data = node.data.slice(remaining);
+
+    return node.isProper ? Type.list(data) : Type.improperList(data);
   }
 
   // TODO: reenable when debug mode is implemented
@@ -2494,7 +2537,9 @@ export default class Interpreter {
 
   // Deps: [:erlang.hd/1, :erlang.tl/1]
   static #matchConsPattern(right, left, context, raiseMatchError) {
-    if (!Type.isList(right) || right.data.length === 0) {
+    // #878: Type.listIsEmpty avoids materializing a cons cell just to check
+    // it's non-empty (it always is, by construction).
+    if (!Type.isList(right) || Type.listIsEmpty(right)) {
       return $.#handleMatchFail(right, raiseMatchError);
     }
 
@@ -2539,10 +2584,18 @@ export default class Interpreter {
   }
 
   static #matchMap(right, left, context, raiseMatchError) {
-    for (const [key, value] of Object.entries(left.data)) {
+    // left is the pattern (typically a handful of keys) - iterating its
+    // .data is fine. right is the value actually being matched, which can
+    // be arbitrarily large, so each check against it goes through
+    // Type.mapGet (#878) rather than right.data[key] - a point lookup on a
+    // trie-backed map that would otherwise force a full O(n log n)
+    // materialization just to check one or two keys.
+    for (const [encodedKey, [, patternValue]] of Object.entries(left.data)) {
+      const rightPair = Type.mapGet(right, encodedKey);
+
       if (
-        typeof right.data[key] === "undefined" ||
-        !Interpreter.isMatched(value[1], right.data[key][1], context)
+        rightPair === undefined ||
+        !Interpreter.isMatched(patternValue, rightPair[1], context)
       ) {
         return $.#handleMatchFail(right, raiseMatchError);
       }

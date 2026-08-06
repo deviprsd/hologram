@@ -14,13 +14,9 @@ const Erlang_Maps = {
       Interpreter.raiseBifError(["badmap", map], "maps", "find", [key, map]);
     }
 
-    const encodedKey = Type.encodeMapKey(key);
+    const pair = Type.mapGet(map, Type.encodeMapKey(key));
 
-    if (map.data[encodedKey]) {
-      return map.data[encodedKey][1];
-    }
-
-    return Type.atom("error");
+    return pair === undefined ? Type.atom("error") : pair[1];
   },
   // End find/2
   // Deps: []
@@ -91,10 +87,10 @@ const Erlang_Maps = {
       ]);
     }
 
-    const encodedKey = Type.encodeMapKey(key);
+    const pair = Type.mapGet(map, Type.encodeMapKey(key));
 
-    if (map.data[encodedKey]) {
-      return map.data[encodedKey][1];
+    if (pair !== undefined) {
+      return pair[1];
     }
 
     Interpreter.raiseBifError(["badkey", key], "erlang", "map_get", [key, map]);
@@ -108,13 +104,9 @@ const Erlang_Maps = {
       Interpreter.raiseFramelessError(["badmap", map]);
     }
 
-    const encodedKey = Type.encodeMapKey(key);
+    const pair = Type.mapGet(map, Type.encodeMapKey(key));
 
-    if (map.data[encodedKey]) {
-      return map.data[encodedKey][1];
-    }
-
-    return defaultValue;
+    return pair === undefined ? defaultValue : pair[1];
   },
   // End get/3
   // Deps: []
@@ -135,11 +127,16 @@ const Erlang_Maps = {
       ]);
     }
 
-    const result = Type.map();
+    // Iteration over map1.data/map2.data rides the .data compatibility
+    // view - correct and cheap enough here since intersect is inherently
+    // O(n) either way (every key needs checking). Only the writes go
+    // through Type.mapPut - direct mutation of a frozen .data snapshot
+    // would throw.
+    let result = Type.map();
 
     for (const encodedKey of Object.keys(map1.data)) {
       if (encodedKey in map2.data) {
-        result.data[encodedKey] = map2.data[encodedKey];
+        result = Type.mapPut(result, encodedKey, map2.data[encodedKey]);
       }
     }
 
@@ -174,18 +171,18 @@ const Erlang_Maps = {
       ]);
     }
 
-    const result = Type.map();
+    let result = Type.map();
 
     for (const [encodedKey, [key, value]] of Object.entries(map1.data)) {
       if (encodedKey in map2.data) {
-        result.data[encodedKey] = [
+        result = Type.mapPut(result, encodedKey, [
           key,
           Interpreter.callAnonymousFunction(fun, [
             key,
             value,
             map2.data[encodedKey][1],
           ]),
-        ];
+        ]);
       }
     }
 
@@ -231,7 +228,7 @@ const Erlang_Maps = {
       ]);
     }
 
-    return Type.boolean(Type.encodeMapKey(key) in map.data);
+    return Type.boolean(Type.mapHas(map, Type.encodeMapKey(key)));
   },
   // End is_key/2
   // Deps: []
@@ -298,7 +295,44 @@ const Erlang_Maps = {
       ]);
     }
 
-    return {type: "map", data: {...map1.data, ...map2.data}};
+    // Identity fast paths (#878). This is the hottest structural copy in the
+    // framework: transformer.ex compiles `%{m | k: v}` to Map.merge/2, so
+    // this runs once per put_state action plus twice more per stateful
+    // component per render (props+state, context+emitted_context). Uses
+    // Type.mapSize/mapGet, not .data - a size or point-access check that
+    // materialized either map's full contents just to answer "is this
+    // empty" or "is this key already there" would turn an O(log32 n) check
+    // into the O(n log n) full-map copy it exists to avoid.
+    if (Type.mapSize(map2) === 0) {
+      return map1;
+    }
+
+    if (Type.mapSize(map1) === 0) {
+      return map2;
+    }
+
+    // If every key map2 would write already holds a reference-identical
+    // value in map1, the merge changes nothing - return map1 unchanged
+    // rather than paying the copy. Reference identity only, same reasoning
+    // as Type.mapPut. Short-circuits on the first real change, so the
+    // common single-key `%{state | k: v}` case costs one Type.mapGet, not a
+    // full pass over map2.
+    let isNoOp = true;
+
+    for (const [encodedKey, pair] of Type.mapEntries(map2)) {
+      const existing = Type.mapGet(map1, encodedKey);
+
+      if (existing === undefined || existing[1] !== pair[1]) {
+        isNoOp = false;
+        break;
+      }
+    }
+
+    if (isNoOp) {
+      return map1;
+    }
+
+    return Type.mapMerge(map1, map2);
   },
   // End merge/2
   // Deps: []
@@ -329,17 +363,27 @@ const Erlang_Maps = {
       ]);
     }
 
-    const result = Type.cloneMap(map1);
+    // map2.data drives the iteration (an O(n) traversal regardless of
+    // representation), but the accumulating result is read/written via
+    // Type.mapGet/mapPut, not .data - re-materializing result's whole .data
+    // view on every iteration just to look up one key would make this
+    // O(n^2) instead of O(n log32 n).
+    let result = map1;
 
-    Object.entries(map2.data).forEach(([encodedKey, [key, value2]]) => {
-      const value1 = result.data[encodedKey]?.[1];
+    for (const [encodedKey, [key, value2]] of Object.entries(map2.data)) {
+      const existingPair = Type.mapGet(result, encodedKey);
 
-      const newValue = value1
-        ? Interpreter.callAnonymousFunction(combiner, [key, value1, value2])
-        : value2;
+      const newValue =
+        existingPair !== undefined
+          ? Interpreter.callAnonymousFunction(combiner, [
+              key,
+              existingPair[1],
+              value2,
+            ])
+          : value2;
 
-      result.data[encodedKey] = [key, newValue];
-    });
+      result = Type.mapPut(result, encodedKey, [key, newValue]);
+    }
 
     return result;
   },
@@ -391,10 +435,11 @@ const Erlang_Maps = {
       ]);
     }
 
-    const newMap = Type.cloneMap(map);
-    newMap.data[Type.encodeMapKey(key)] = [key, value];
-
-    return newMap;
+    // Identity fast path (#878, see Type.mapPut): a struct write that
+    // doesn't actually change anything returns the same map, so it stays
+    // cheap to detect downstream (ComponentRegistry.putComponentStruct/
+    // RenderCache).
+    return Type.mapPut(map, Type.encodeMapKey(key), [key, value]);
   },
   // End put/3
   // Deps: []
@@ -405,10 +450,9 @@ const Erlang_Maps = {
       Interpreter.raiseBifError(["badmap", map], "maps", "remove", [key, map]);
     }
 
-    const newMap = Type.cloneMap(map);
-    delete newMap.data[Type.encodeMapKey(key)];
-
-    return newMap;
+    // Identity fast path (#878, see Type.mapRemove): removing an absent
+    // key is a no-op.
+    return Type.mapRemove(map, Type.encodeMapKey(key));
   },
   // End remove/2
   // Deps: []

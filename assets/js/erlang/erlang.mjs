@@ -114,6 +114,21 @@ const Erlang = {
       Interpreter.raiseBifError("badarg", "erlang", "++", [left, right]);
     }
 
+    // Identity fast paths (#878): appending onto/into an empty list is a
+    // no-op that can return the other operand unchanged instead of copying.
+    // Gated on Type.isList(right) rather than being unconditional: when
+    // right isn't a list at all, the pre-existing (unrelated to #878) path
+    // below already raises on a 1-item improper list, and this fast path
+    // intentionally preserves that behavior rather than silently changing
+    // it.
+    if (left.data.length === 0 && Type.isList(right)) {
+      return right;
+    }
+
+    if (Type.isProperList(right) && right.data.length === 0) {
+      return left;
+    }
+
     const data = left.data.concat(Type.isList(right) ? right.data : [right]);
 
     return Type.isProperList(right) ? Type.list(data) : Type.improperList(data);
@@ -2173,11 +2188,12 @@ const Erlang = {
 
   // Start hd/1
   "hd/1": (list) => {
-    if (!Type.isList(list) || list.data.length === 0) {
+    if (!Type.isList(list) || Type.listIsEmpty(list)) {
       Interpreter.raiseBifError("badarg", "erlang", "hd", [list]);
     }
 
-    return list.data[0];
+    // #878: reads the cons cell's own head field, no materialization.
+    return Type.isConsCell(list) ? list.head : list.data[0];
   },
   // End hd/1
   // Deps: []
@@ -2933,7 +2949,9 @@ const Erlang = {
       Interpreter.raiseBadMapError(map);
     }
 
-    return Type.integer(Object.keys(map.data).length);
+    // #878: Type.mapSize is O(1); Object.keys(map.data).length would force
+    // a full trie materialization just to count.
+    return Type.integer(Type.mapSize(map));
   },
   // End map_size/1
   // Deps: []
@@ -3192,9 +3210,17 @@ const Erlang = {
       raiseBadarg();
     }
 
-    const data = [...tuple.data];
     // The tuple index is one-based, so we need to compensate
-    data[Number(index.value) - 1] = value;
+    const zeroBasedIndex = Number(index.value) - 1;
+
+    // Identity fast path (#878): setting an element to its current,
+    // reference-identical value is a no-op.
+    if (tuple.data[zeroBasedIndex] === value) {
+      return tuple;
+    }
+
+    const data = [...tuple.data];
+    data[zeroBasedIndex] = value;
 
     return Type.tuple(data);
   },
@@ -3337,8 +3363,16 @@ const Erlang = {
 
   // Start tl/1
   "tl/1": (list) => {
-    if (!Type.isList(list) || list.data.length === 0) {
+    if (!Type.isList(list) || Type.listIsEmpty(list)) {
       Interpreter.raiseBifError("badarg", "erlang", "tl", [list]);
+    }
+
+    // #878: the cons cell's own tail is already the correct result value
+    // (another cons cell, or the packed list it bottoms out in) - no
+    // materialization, no allocation, and it's shared with whatever else
+    // holds a reference to this tail.
+    if (Type.isConsCell(list)) {
+      return list.tail;
     }
 
     const length = list.data.length;
