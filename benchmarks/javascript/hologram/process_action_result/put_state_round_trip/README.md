@@ -64,6 +64,19 @@ After stage 1 (incl. interning `Type.nil()` - see below):
   </tr>
 </table>
 
+After stage 3 (HAMT wired into Type.map):
+
+<table>
+  <tr>
+    <th>Average Cold Execution Time</th>
+    <td>119.58 μs</td>
+  </tr>
+  <tr>
+    <th>Average Warm Execution Time</th>
+    <td>3.03 μs</td>
+  </tr>
+</table>
+
 End-to-end shape of the four map copies one `put_state/3` action costs today
 (state put, struct merge, nil next_action put, nil next_command put - see
 run.mjs for the full breakdown with source line references). Only a small
@@ -86,3 +99,16 @@ in the runtime compares atoms by reference or mutates a boxed atom in place;
 every other equality check already goes by `.value`. This is exactly the gap
 stage 5's "next_action/next_command stop allocating on the already-nil path"
 goal depends on, so it's pulled into stage 1 rather than left implicit.
+
+Stage 3's total is flat versus stage 1 (3.03 μs vs. 3.01 μs) even though the
+underlying map put/merge ops the trie targets did improve individually (see
+`maps/put_new_key` and `maps/merge/single_key_into_20`) - both showed their
+biggest gains on maps around 20-100 keys, but the complexity-class win
+(O(n) -> O(log32 n)) is small in absolute terms at those sizes, same as
+`maps/merge/single_key_into_20`'s own note about its modest drop; and the two
+no-op puts, whose stage-1 win already accounted for most of this composite
+number's improvement, get very slightly *more* expensive on a trie (see
+`maps/put_no_op`'s own stage 3 entry) - the two effects roughly cancel out
+here. The complexity-class win is real and shows up directly in the
+isolated map benchmarks; this end-to-end number just isn't the right place
+to see it at this struct/state size.
