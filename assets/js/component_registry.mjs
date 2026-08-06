@@ -117,6 +117,7 @@ export default class ComponentRegistry {
       entry !== null &&
       Erlang_Maps["get/3"](Type.atom("struct"), entry, null) === componentStruct
     ) {
+      console.log("WIP DIAGNOSTIC: putComponentStruct identity no-op fired for cid", cid);
       return;
     }
 
