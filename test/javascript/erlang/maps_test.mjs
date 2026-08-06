@@ -1230,6 +1230,56 @@ describe("Erlang_Maps", () => {
         mapsErrorFrame("merge", Type.list([atomA, atomB])),
       ]);
     });
+
+    describe("identity fast path (#878)", () => {
+      it("returns map1 when map2 is empty", () => {
+        const map1 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = merge(map1, Type.map());
+
+        assert.strictEqual(result, map1);
+      });
+
+      it("returns map2 when map1 is empty", () => {
+        const map2 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = merge(Type.map(), map2);
+
+        assert.strictEqual(result, map2);
+      });
+
+      it("returns map1 unchanged when every key in map2 already maps to a reference-identical value in map1", () => {
+        const value = Type.integer(1);
+        const map1 = Type.map([
+          [Type.atom("a"), value],
+          [Type.atom("b"), Type.integer(2)],
+        ]);
+        const map2 = Type.map([[Type.atom("a"), value]]);
+
+        const result = merge(map1, map2);
+
+        assert.strictEqual(result, map1);
+      });
+
+      it("still copies when map2 has a value that's only equal, not reference-identical", () => {
+        const map1 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+        const map2 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = merge(map1, map2);
+
+        assert.notStrictEqual(result, map1);
+        assert.deepStrictEqual(result, map1);
+      });
+
+      it("still copies when map2 introduces a new key", () => {
+        const map1 = Type.map([[Type.atom("a"), Type.integer(1)]]);
+        const map2 = Type.map([[Type.atom("b"), Type.integer(2)]]);
+
+        const result = merge(map1, map2);
+
+        assert.notStrictEqual(result, map1);
+      });
+    });
   });
 
   describe("merge_with/3", () => {
@@ -1592,6 +1642,37 @@ describe("Erlang_Maps", () => {
         mapsErrorFrame("put", Type.list([atomA, integer1, atomB])),
       ]);
     });
+
+    describe("identity fast path (#878)", () => {
+      it("returns the same map when putting back the already-stored, reference-identical value", () => {
+        const value = Type.integer(2);
+        const map = Type.map([
+          [Type.atom("a"), Type.integer(1)],
+          [Type.atom("b"), value],
+        ]);
+
+        const result = put(Type.atom("b"), value, map);
+
+        assert.strictEqual(result, map);
+      });
+
+      it("still copies when the new value is only equal, not reference-identical", () => {
+        const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = put(Type.atom("a"), Type.integer(1), map);
+
+        assert.notStrictEqual(result, map);
+        assert.deepStrictEqual(result, map);
+      });
+
+      it("still copies when the key is new", () => {
+        const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = put(Type.atom("b"), Type.integer(2), map);
+
+        assert.notStrictEqual(result, map);
+      });
+    });
   });
 
   describe("remove/2", () => {
@@ -1666,6 +1747,24 @@ describe("Erlang_Maps", () => {
       assert.deepStrictEqual(caught.stacktrace, [
         mapsErrorFrame("remove", Type.list([atomA, atomB])),
       ]);
+    });
+
+    describe("identity fast path (#878)", () => {
+      it("returns the same map when the key is absent", () => {
+        const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = remove(Type.atom("b"), map);
+
+        assert.strictEqual(result, map);
+      });
+
+      it("still copies when the key is present", () => {
+        const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        const result = remove(Type.atom("a"), map);
+
+        assert.notStrictEqual(result, map);
+      });
     });
   });
 

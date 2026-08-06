@@ -22,7 +22,10 @@ for (let i = 0; i < 100; ++i) {
 const map = Type.map(entries);
 
 const key = Type.atom("key_50");
-const value = Type.integer(50);
+// Reuse the exact value object already stored under this key - constructing
+// a fresh equal-value term here would defeat the reference-identity check
+// the fast path relies on and silently fall through to the full copy.
+const value = map.data[Type.encodeMapKey(key)][1];
 
 benchmark(() => {
   Erlang_Maps["put/3"](key, value, map);

@@ -298,6 +298,32 @@ const Erlang_Maps = {
       ]);
     }
 
+    // Identity fast paths (#878). This is the hottest structural copy in the
+    // framework: transformer.ex compiles `%{m | k: v}` to Map.merge/2, so
+    // this runs once per put_state action plus twice more per stateful
+    // component per render (props+state, context+emitted_context).
+    const map2Keys = Object.keys(map2.data);
+
+    if (map2Keys.length === 0) {
+      return map1;
+    }
+
+    if (Object.keys(map1.data).length === 0) {
+      return map2;
+    }
+
+    // If every key map2 would write already holds a reference-identical
+    // value in map1, the merge changes nothing - return map1 unchanged
+    // rather than paying the O(n) copy. Reference identity only, same
+    // reasoning as put/3 above.
+    const isNoOp = map2Keys.every(
+      (encodedKey) => map1.data[encodedKey]?.[1] === map2.data[encodedKey][1],
+    );
+
+    if (isNoOp) {
+      return map1;
+    }
+
     return {type: "map", data: {...map1.data, ...map2.data}};
   },
   // End merge/2
@@ -391,8 +417,22 @@ const Erlang_Maps = {
       ]);
     }
 
+    const encodedKey = Type.encodeMapKey(key);
+
+    // Identity fast path (#878): putting a value that's already there,
+    // reference-identical, is a no-op - return the same map so a struct
+    // write that doesn't actually change anything stays cheap to detect
+    // downstream (see ComponentRegistry.putComponentStruct/RenderCache).
+    // Reference identity only, never isStrictlyEqual - that deep-walks and
+    // would cost more than the copy it's meant to save.
+    const existing = map.data[encodedKey];
+
+    if (existing !== undefined && existing[1] === value) {
+      return map;
+    }
+
     const newMap = Type.cloneMap(map);
-    newMap.data[Type.encodeMapKey(key)] = [key, value];
+    newMap.data[encodedKey] = [key, value];
 
     return newMap;
   },
@@ -405,8 +445,15 @@ const Erlang_Maps = {
       Interpreter.raiseBifError(["badmap", map], "maps", "remove", [key, map]);
     }
 
+    const encodedKey = Type.encodeMapKey(key);
+
+    // Identity fast path (#878): removing an absent key is a no-op.
+    if (!(encodedKey in map.data)) {
+      return map;
+    }
+
     const newMap = Type.cloneMap(map);
-    delete newMap.data[Type.encodeMapKey(key)];
+    delete newMap.data[encodedKey];
 
     return newMap;
   },
