@@ -13,6 +13,7 @@ import InitActionQueue from "./init_action_queue.mjs";
 import Interpreter from "./interpreter.mjs";
 import KeyboardEvent from "./events/keyboard_event.mjs";
 import Once from "./once.mjs";
+import RenderCache from "./render_cache.mjs";
 import Throttler from "./throttler.mjs";
 import Type from "./type.mjs";
 import Utils from "./utils.mjs";
@@ -40,6 +41,13 @@ export default class Renderer {
   // patch, so the binding is held here until resolveResizeBindings turns it into a registry binding
   // once `.elm` exists. renderPage() resets this.
   static resizeBindings = [];
+
+  // Controlled-input vnodes belonging to memoized subtrees this render replayed from RenderCache
+  // instead of rendering fresh. patchVnode()'s identity short-circuit (see render_cache.mjs) skips
+  // those subtrees entirely, so their hook.update never fires and their DOM value/checked state would
+  // silently stop tracking state changes. replayFormInputs() re-syncs them after patch, mirroring
+  // what the hook would have done. renderPage() resets this.
+  static formInputReplays = [];
 
   // Based on render_dom/3
   static renderDom(dom, context, slots, defaultTarget, parentTagName) {
@@ -119,6 +127,8 @@ export default class Renderer {
     Renderer.listenerBindings = [];
     Renderer.reachBindings = [];
     Renderer.resizeBindings = [];
+    Renderer.formInputReplays = [];
+    RenderCache.beginRender();
 
     const pageModuleProxy = Interpreter.moduleProxy(pageModule);
 
@@ -130,6 +140,8 @@ export default class Renderer {
       pageParams,
       pageComponentStruct,
     );
+
+    RenderCache.endRender();
 
     const htmlVnode = pageVdom.find((vnode) => vnode.sel === "html");
 
@@ -145,9 +157,10 @@ export default class Renderer {
   // Resolves this render's <window>/<document> listener bindings, dropping any spent once binding so
   // reconcile detaches its real listener through the same path that removes a vanished binding. The
   // fired-state is keyed by the binding's target and slot, both carried on the binding. The drop is
-  // gated on the binding's own once flag: a listener slot is positional across this render's listener
-  // bindings, so a non-once binding can reuse a spent once binding's slot on the shared target, and
-  // the gate keeps it from inheriting that permanent fired-state.
+  // gated on the binding's own once flag: a slot is keyed by template site (see
+  // #collectListenerBindings), not render position, so a non-once binding only shares a slot with a
+  // spent once binding when they are the same template site whose own modifier changed between
+  // renders - and the gate keeps that binding from inheriting its former, permanent fired-state.
   static resolveListenerBindings() {
     return $.listenerBindings.filter(
       ({target, slotKey, once}) => !(once && Once.hasFired(target, slotKey)),
@@ -267,8 +280,8 @@ export default class Renderer {
   // Builds one event binding from a "$"-prefixed attribute, shared by element and window bindings.
   // Returns an {eventName, handler} descriptor (the handler runs modifier matching, dispatch, and
   // debounce/throttle), or null when the attribute is not an event binding. slotKey identifies the
-  // binding for debounce/throttle windows - the attribute index for elements, the binding index for
-  // window bindings, which all share the same currentTarget.
+  // binding for debounce/throttle windows - the attribute index for elements, a component+event+index
+  // template-site key for window bindings, which all share the same currentTarget.
   static #buildEventBinding(
     attrDom,
     slotKey,
@@ -494,7 +507,11 @@ export default class Renderer {
         key,
         attach,
         handler,
-        slotKey: $.listenerBindings.length,
+        // Derived from the binding's template site (component + attribute index), not from this
+        // render's push order - see #collectListenerBindings for why a render-positional slot is
+        // unsound. Unused today (once is always false below, so resolveListenerBindings's gate never
+        // reads it), kept in the same stable form for consistency should that change.
+        slotKey: `${Bitstring.toText(defaultTarget)}:click_outside:${attrIndex}`,
         // click_outside once is keyed on the bound element and torn down when that element is
         // removed (its handler drops out of the shared document listener), not proactively filtered
         // here - so resolveListenerBindings must never drop it for a reused positional slot.
@@ -504,13 +521,20 @@ export default class Renderer {
   }
 
   // Records a <window>/<document> tag's event bindings into the per-render accumulator, tagged with
-  // the target the listener attaches to. Each binding is keyed by its position across all listener
-  // bindings this render, so debounce/throttle windows stay independent even though listeners on one
-  // target share a currentTarget. A bare tag (no attributes) records nothing. A listener target has
-  // no element tag name, so event-name mapping is skipped (passed null).
+  // the target the listener attaches to. Each binding is keyed by its template site - the enclosing
+  // component and the attribute's index on this tag - rather than its position across all listener
+  // bindings this render. A render-positional slot would drift whenever a sibling binding earlier in
+  // the render (a conditional <window> tag, a component appearing) changes count: the same slot would
+  // then belong to a different binding on the next render, letting a spent once fired-state leak onto
+  // an unrelated binding, or an in-flight debounce/throttle timer fire against a stale handler. The
+  // template-site key stays put across such renders, so debounce/throttle windows and once state track
+  // the binding they were recorded for, not whichever binding currently occupies that slot. A bare tag
+  // (no attributes) records nothing. A listener target has no element tag name, so event-name mapping
+  // is skipped (passed null).
   static #collectListenerBindings(target, attrsDom, defaultTarget) {
-    attrsDom.data.forEach((attrDom) => {
-      const slotKey = $.listenerBindings.length;
+    attrsDom.data.forEach((attrDom, attrIndex) => {
+      const eventAttributeName = $.#eventAttributeName(attrDom);
+      const slotKey = `${Bitstring.toText(defaultTarget)}:${eventAttributeName}:${attrIndex}`;
 
       const binding = $.#buildEventBinding(
         attrDom,
@@ -1507,6 +1531,8 @@ export default class Renderer {
 
     const elementVnode = vnode(currentTagName, data, childrenVdom);
 
+    RenderCache.noteFormInput(elementVnode);
+
     Renderer.#collectClickOutsideBindings(
       attrsDom,
       elementVnode,
@@ -1680,6 +1706,13 @@ export default class Renderer {
 
   // Based on render_stateful_component/4
   // Deps: [:maps.get/2, :maps.merge/2]
+  //
+  // Memoizes reuse by cid through RenderCache: on a hit, returns the cached vnode array unchanged, so
+  // snabbdom's oldVnode === vnode identity check (vendor/snabbdom/build/init.js patchVnode) skips
+  // diffing that whole subtree, on top of skipping its interpreted template evaluation here. The
+  // layout component is excluded - #renderPageInsideLayout passes the entire page DOM as its
+  // childrenDom, so it is always on the spine of any action and comparing that would cost a full
+  // page-DOM walk for a check that can never hit.
   static #renderStatefulComponent(
     moduleProxy,
     props,
@@ -1688,6 +1721,41 @@ export default class Renderer {
     parentTagName,
   ) {
     const cid = Erlang_Maps["get/2"](Type.atom("cid"), props);
+    const cidKey = Type.encodeMapKey(cid);
+    const isLayout = Bitstring.toText(cid) === "layout";
+
+    RenderCache.noteEncountered(cidKey);
+
+    if (!isLayout) {
+      const cached = RenderCache.get(cidKey);
+
+      if (
+        cached !== undefined &&
+        RenderCache.isReusable(
+          cached,
+          moduleProxy,
+          props,
+          childrenDom,
+          context,
+          parentTagName,
+        )
+      ) {
+        const entry = RenderCache.replay(cached);
+
+        Renderer.listenerBindings.push(...entry.listenerBindings);
+        Renderer.reachBindings.push(...entry.reachBindings);
+        Renderer.resizeBindings.push(...entry.resizeBindings);
+        Renderer.formInputReplays.push(...entry.formInputVnodes);
+
+        return entry.vdom;
+      }
+    }
+
+    const listenerMark = Renderer.listenerBindings.length;
+    const reachMark = Renderer.reachBindings.length;
+    const resizeMark = Renderer.resizeBindings.length;
+    const cidMark = RenderCache.cidMark();
+    const formInputMark = RenderCache.formInputMark();
 
     const [componentState, componentEmittedContext] =
       Renderer.#maybeInitComponent(cid, moduleProxy, props);
@@ -1698,7 +1766,7 @@ export default class Renderer {
       componentEmittedContext,
     );
 
-    return Renderer.#renderTemplate(
+    const vdom = Renderer.#renderTemplate(
       moduleProxy,
       vars,
       childrenDom,
@@ -1706,6 +1774,27 @@ export default class Renderer {
       cid,
       parentTagName,
     );
+
+    if (!isLayout) {
+      RenderCache.put(cidKey, {
+        cidKey,
+        cid,
+        moduleProxy,
+        props,
+        childrenDom,
+        context,
+        parentTagName,
+        struct: ComponentRegistry.getComponentStruct(cid),
+        vdom,
+        listenerBindings: Renderer.listenerBindings.slice(listenerMark),
+        reachBindings: Renderer.reachBindings.slice(reachMark),
+        resizeBindings: Renderer.resizeBindings.slice(resizeMark),
+        descendantCids: RenderCache.descendantsSince(cidMark),
+        formInputVnodes: RenderCache.formInputsSince(formInputMark),
+      });
+    }
+
+    return vdom;
   }
 
   // Based on render_template/4
@@ -1771,6 +1860,26 @@ export default class Renderer {
     );
 
     return throttle === null ? null : Number(throttle.value);
+  }
+
+  // Re-syncs controlled-input DOM state for vnodes RenderCache replayed from a memoized subtree this
+  // render, whose hook.update never ran because patchVnode()'s identity check skipped that subtree
+  // entirely. Called after Vdom.patchVirtualDocument(), matching the hook's own timing, so `.elm`
+  // is populated the same way it is for a freshly-patched vnode.
+  static replayFormInputs() {
+    for (const inputVnode of Renderer.formInputReplays) {
+      if (inputVnode.data.hologramFormInputValue !== undefined) {
+        Renderer.#updateFormInputValue(
+          inputVnode.elm,
+          inputVnode.data.hologramFormInputValue,
+        );
+      } else if (inputVnode.data.hologramFormInputChecked !== undefined) {
+        Renderer.#updateFormInputChecked(
+          inputVnode.elm,
+          inputVnode.data.hologramFormInputChecked,
+        );
+      }
+    }
   }
 
   static #updateFormInputChecked(element, newChecked) {

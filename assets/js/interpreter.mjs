@@ -780,6 +780,13 @@ export default class Interpreter {
   static isStrictlyEqual(left, right) {
     const leftType = left.type;
 
+    // Identity fast path. Skipped for floats so that a boxed NaN compared
+    // with itself keeps returning false, matching left.value === right.value
+    // below (Erlang arithmetic raises badarith rather than producing NaN, so
+    // this is expected to be unreachable in practice, but the type is
+    // excluded to avoid silently changing NaN semantics).
+    if (left === right && leftType !== "float") return true;
+
     if (leftType !== right.type) return false;
 
     // Cases ordered by expected frequency (most common first)
@@ -1731,9 +1738,8 @@ export default class Interpreter {
           startTime = performance.now();
         }
 
-        const mfa = `${moduleExName}.${functionName}/${arity}`;
-
         // TODO: remove on release
+        // const mfa = `${moduleExName}.${functionName}/${arity}`;
         // Interpreter.#logFunctionCall(mfa, arguments);
 
         const args = Type.list([...arguments]);
@@ -1759,7 +1765,7 @@ export default class Interpreter {
 
               if (globalThis.Hologram.isProfilingEnabled) {
                 console.log(
-                  `Hologram: function ${mfa} executed in`,
+                  `Hologram: function ${moduleExName}.${functionName}/${arity} executed in`,
                   PerformanceTimer.diff(startTime),
                 );
               }

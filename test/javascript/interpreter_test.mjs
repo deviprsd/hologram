@@ -4951,6 +4951,32 @@ describe("Interpreter", () => {
   describe("isStrictlyEqual()", () => {
     const isStrictlyEqual = Interpreter.isStrictlyEqual;
 
+    describe("identity fast path", () => {
+      it("returns true for the same map object without deep comparison", () => {
+        const map = Type.map([[Type.atom("a"), Type.integer(1)]]);
+
+        assert.isTrue(isStrictlyEqual(map, map));
+      });
+
+      it("returns true for the same list object", () => {
+        const list = Type.list([Type.integer(1), Type.integer(2)]);
+
+        assert.isTrue(isStrictlyEqual(list, list));
+      });
+
+      it("returns true for the same bitstring object", () => {
+        const bitstring = Type.bitstring("abc");
+
+        assert.isTrue(isStrictlyEqual(bitstring, bitstring));
+      });
+
+      it("is excluded for floats, so a NaN float compared with itself is still not equal", () => {
+        const float = Type.float(NaN);
+
+        assert.isFalse(isStrictlyEqual(float, float));
+      });
+    });
+
     describe("atoms", () => {
       it("equal", () => {
         const atom1 = Type.atom("abc");

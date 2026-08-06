@@ -1,5 +1,6 @@
 "use strict";
 
+import RenderCache from "./render_cache.mjs";
 import Type from "./type.mjs";
 
 export default class ComponentRegistry {
@@ -7,6 +8,7 @@ export default class ComponentRegistry {
 
   static clear() {
     ComponentRegistry.entries = Type.map();
+    RenderCache.clear();
   }
 
   // Optimized (mutates next_action field in-place)
@@ -69,6 +71,7 @@ export default class ComponentRegistry {
 
   static populate(entries) {
     ComponentRegistry.entries = entries;
+    RenderCache.clear();
   }
 
   // Optimized (mutates entries/struct field in-place)
@@ -76,10 +79,13 @@ export default class ComponentRegistry {
     ComponentRegistry.entries.data[Type.encodeMapKey(cid)][1].data[
       "atom(struct)"
     ][1] = componentStruct;
+
+    RenderCache.markDirty(cid);
   }
 
   // Optimized (mutates entries field in-place)
   static putEntry(cid, entry) {
     ComponentRegistry.entries.data[Type.encodeMapKey(cid)] = [cid, entry];
+    RenderCache.markDirty(cid);
   }
 }
