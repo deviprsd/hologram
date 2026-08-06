@@ -95,8 +95,27 @@ export default class ComponentRegistry {
   // "Optimized" in the sense the old in-place version was: maps:put/3 ->
   // Type.mapPut path-copies only the O(log32 n) nodes on the changed cid,
   // not the whole entries registry.
+  //
+  // #878 identity fast path: if the incoming struct is reference-identical
+  // to what is already stored, nothing about this cid changed - skip both
+  // the write and markDirty entirely. This is the payoff #878 exists for:
+  // an action that returns unchanged state gets put/3's own identity
+  // no-op (see erlang/maps.mjs), so the struct handed back here is the
+  // exact same object already in the registry, and the render this cid
+  // (and every ancestor whose descendant-dirtiness check would otherwise
+  // trip on it) would have caused becomes zero work instead of a
+  // path-copy plus a re-render. Only safe for the struct field - see
+  // putEntry below, which can legitimately swap `module` under the same
+  // cid and must not skip on a struct/state match alone.
   static putComponentStruct(cid, componentStruct) {
     const entry = ComponentRegistry.getEntry(cid);
+
+    if (
+      entry !== null &&
+      Erlang_Maps["get/3"](Type.atom("struct"), entry, null) === componentStruct
+    ) {
+      return;
+    }
 
     const updatedEntry = Erlang_Maps["put/3"](
       Type.atom("struct"),
