@@ -77,4 +77,36 @@ describe("vendored snabbdom", () => {
       assert.isNull(after.elm.querySelector(".hint"));
     });
   });
+
+  describe("moving a fragment during a keyed reorder", () => {
+    // A fragment's DocumentFragment elm empties itself into the page on its first insertion
+    // (native browser behavior). Moving the same fragment again - a pure reorder, no items
+    // added or removed - hands that now-empty DocumentFragment back as newNode. Without the
+    // htmldomapi.js HOLOGRAM PATCH, inserting an empty DocumentFragment moves nothing: the
+    // patch runs, but the DOM silently keeps its old order.
+    it("relocates the fragment's live DOM range instead of no-op'ing", () => {
+      const item = (key, label) =>
+        blockFragment(key, [
+          marker(key),
+          h("li", {attrs: {"data-label": label}}, [label]),
+          marker(`${key}c`),
+        ]);
+
+      const before = render([item("a", "A"), item("b", "B"), item("c", "C")]);
+      const labelsBefore = Array.from(before.elm.querySelectorAll("li")).map(
+        (li) => li.dataset.label,
+      );
+
+      const after = patch(
+        before,
+        h("div", {}, [item("a", "A"), item("c", "C"), item("b", "B")]),
+      );
+      const labelsAfter = Array.from(after.elm.querySelectorAll("li")).map(
+        (li) => li.dataset.label,
+      );
+
+      assert.deepEqual(labelsBefore, ["A", "B", "C"]);
+      assert.deepEqual(labelsAfter, ["A", "C", "B"]);
+    });
+  });
 });

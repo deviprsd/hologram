@@ -35,6 +35,12 @@ fails there rather than in a browser.
   passed in. Inside a fragment the parent passed in is that fragment's `DocumentFragment`, which
   emptied itself into the page on insertion, so removal throws. The element branch already
   resolves the parent this way, through `createRmCb`.
+- `build/htmldomapi.js` - `insertBefore`, when its `newNode` is a fragment already emptied by a
+  prior insertion, moves the live sibling range between the fragment's stamped
+  `firstChildNode`/`lastChildNode` by hand instead of handing the (now childless) `DocumentFragment`
+  to the native `insertBefore`. A keyed reorder (not an add/remove) hands back that same emptied
+  fragment as the vnode being moved; inserting it natively at that point moves nothing, so the
+  reorder silently no-ops - the diff runs, reports success, and the DOM never changes.
 
 ## Updating
 
