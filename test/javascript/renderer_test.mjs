@@ -15,68 +15,68 @@ import {
   vnode,
 } from "./support/helpers.mjs";
 
-import {defineLayoutFixture} from "./support/fixtures/layout_fixture.mjs";
-import {defineModule1Fixture} from "./support/fixtures/renderer/module_1.mjs";
-import {defineModule10Fixture} from "./support/fixtures/renderer/module_10.mjs";
-import {defineModule11Fixture} from "./support/fixtures/renderer/module_11.mjs";
-import {defineModule12Fixture} from "./support/fixtures/renderer/module_12.mjs";
-import {defineModule14Fixture} from "./support/fixtures/renderer/module_14.mjs";
-import {defineModule15Fixture} from "./support/fixtures/renderer/module_15.mjs";
-import {defineModule16Fixture} from "./support/fixtures/renderer/module_16.mjs";
-import {defineModule17Fixture} from "./support/fixtures/renderer/module_17.mjs";
-import {defineModule18Fixture} from "./support/fixtures/renderer/module_18.mjs";
-import {defineModule2Fixture} from "./support/fixtures/renderer/module_2.mjs";
-import {defineModule21Fixture} from "./support/fixtures/renderer/module_21.mjs";
-import {defineModule23Fixture} from "./support/fixtures/renderer/module_23.mjs";
-import {defineModule24Fixture} from "./support/fixtures/renderer/module_24.mjs";
-import {defineModule25Fixture} from "./support/fixtures/renderer/module_25.mjs";
-import {defineModule26Fixture} from "./support/fixtures/renderer/module_26.mjs";
-import {defineModule27Fixture} from "./support/fixtures/renderer/module_27.mjs";
-import {defineModule3Fixture} from "./support/fixtures/renderer/module_3.mjs";
-import {defineModule31Fixture} from "./support/fixtures/renderer/module_31.mjs";
-import {defineModule32Fixture} from "./support/fixtures/renderer/module_32.mjs";
-import {defineModule33Fixture} from "./support/fixtures/renderer/module_33.mjs";
-import {defineModule34Fixture} from "./support/fixtures/renderer/module_34.mjs";
-import {defineModule35Fixture} from "./support/fixtures/renderer/module_35.mjs";
-import {defineModule36Fixture} from "./support/fixtures/renderer/module_36.mjs";
-import {defineModule37Fixture} from "./support/fixtures/renderer/module_37.mjs";
-import {defineModule38Fixture} from "./support/fixtures/renderer/module_38.mjs";
-import {defineModule39Fixture} from "./support/fixtures/renderer/module_39.mjs";
-import {defineModule4Fixture} from "./support/fixtures/renderer/module_4.mjs";
-import {defineModule40Fixture} from "./support/fixtures/renderer/module_40.mjs";
-import {defineModule41Fixture} from "./support/fixtures/renderer/module_41.mjs";
-import {defineModule42Fixture} from "./support/fixtures/renderer/module_42.mjs";
-import {defineModule43Fixture} from "./support/fixtures/renderer/module_43.mjs";
-import {defineModule44Fixture} from "./support/fixtures/renderer/module_44.mjs";
-import {defineModule45Fixture} from "./support/fixtures/renderer/module_45.mjs";
-import {defineModule46Fixture} from "./support/fixtures/renderer/module_46.mjs";
-import {defineModule47Fixture} from "./support/fixtures/renderer/module_47.mjs";
-import {defineModule51Fixture} from "./support/fixtures/renderer/module_51.mjs";
-import {defineModule52Fixture} from "./support/fixtures/renderer/module_52.mjs";
-import {defineModule55Fixture} from "./support/fixtures/renderer/module_55.mjs";
-import {defineModule56Fixture} from "./support/fixtures/renderer/module_56.mjs";
-import {defineModule57Fixture} from "./support/fixtures/renderer/module_57.mjs";
-import {defineModule58Fixture} from "./support/fixtures/renderer/module_58.mjs";
-import {defineModule59Fixture} from "./support/fixtures/renderer/module_59.mjs";
-import {defineModule60Fixture} from "./support/fixtures/renderer/module_60.mjs";
-import {defineModule61Fixture} from "./support/fixtures/renderer/module_61.mjs";
-import {defineModule62Fixture} from "./support/fixtures/renderer/module_62.mjs";
-import {defineModule63Fixture} from "./support/fixtures/renderer/module_63.mjs";
-import {defineModule64Fixture} from "./support/fixtures/renderer/module_64.mjs";
-import {defineModule65Fixture} from "./support/fixtures/renderer/module_65.mjs";
-import {defineModule66Fixture} from "./support/fixtures/renderer/module_66.mjs";
-import {defineModule67Fixture} from "./support/fixtures/renderer/module_67.mjs";
-import {defineModule68Fixture} from "./support/fixtures/renderer/module_68.mjs";
-import {defineModule7Fixture} from "./support/fixtures/renderer/module_7.mjs";
-import {defineModule76Fixture} from "./support/fixtures/renderer/module_76.mjs";
-import {defineModule77Fixture} from "./support/fixtures/renderer/module_77.mjs";
-import {defineModule78Fixture} from "./support/fixtures/renderer/module_78.mjs";
-import {defineModule86Fixture} from "./support/fixtures/renderer/module_86.mjs";
-import {defineModule87Fixture} from "./support/fixtures/renderer/module_87.mjs";
-import {defineModule8Fixture} from "./support/fixtures/renderer/module_8.mjs";
-import {defineModule9Fixture} from "./support/fixtures/renderer/module_9.mjs";
-import {defineClientOnlyModule1Fixture} from "./support/fixtures/renderer/client_only/module_1.mjs";
-import {defineClientOnlyModule2Fixture} from "./support/fixtures/renderer/client_only/module_2.mjs";
+import { defineLayoutFixture } from "./support/fixtures/layout_fixture.mjs";
+import { defineModule1Fixture } from "./support/fixtures/renderer/module_1.mjs";
+import { defineModule10Fixture } from "./support/fixtures/renderer/module_10.mjs";
+import { defineModule11Fixture } from "./support/fixtures/renderer/module_11.mjs";
+import { defineModule12Fixture } from "./support/fixtures/renderer/module_12.mjs";
+import { defineModule14Fixture } from "./support/fixtures/renderer/module_14.mjs";
+import { defineModule15Fixture } from "./support/fixtures/renderer/module_15.mjs";
+import { defineModule16Fixture } from "./support/fixtures/renderer/module_16.mjs";
+import { defineModule17Fixture } from "./support/fixtures/renderer/module_17.mjs";
+import { defineModule18Fixture } from "./support/fixtures/renderer/module_18.mjs";
+import { defineModule2Fixture } from "./support/fixtures/renderer/module_2.mjs";
+import { defineModule21Fixture } from "./support/fixtures/renderer/module_21.mjs";
+import { defineModule23Fixture } from "./support/fixtures/renderer/module_23.mjs";
+import { defineModule24Fixture } from "./support/fixtures/renderer/module_24.mjs";
+import { defineModule25Fixture } from "./support/fixtures/renderer/module_25.mjs";
+import { defineModule26Fixture } from "./support/fixtures/renderer/module_26.mjs";
+import { defineModule27Fixture } from "./support/fixtures/renderer/module_27.mjs";
+import { defineModule3Fixture } from "./support/fixtures/renderer/module_3.mjs";
+import { defineModule31Fixture } from "./support/fixtures/renderer/module_31.mjs";
+import { defineModule32Fixture } from "./support/fixtures/renderer/module_32.mjs";
+import { defineModule33Fixture } from "./support/fixtures/renderer/module_33.mjs";
+import { defineModule34Fixture } from "./support/fixtures/renderer/module_34.mjs";
+import { defineModule35Fixture } from "./support/fixtures/renderer/module_35.mjs";
+import { defineModule36Fixture } from "./support/fixtures/renderer/module_36.mjs";
+import { defineModule37Fixture } from "./support/fixtures/renderer/module_37.mjs";
+import { defineModule38Fixture } from "./support/fixtures/renderer/module_38.mjs";
+import { defineModule39Fixture } from "./support/fixtures/renderer/module_39.mjs";
+import { defineModule4Fixture } from "./support/fixtures/renderer/module_4.mjs";
+import { defineModule40Fixture } from "./support/fixtures/renderer/module_40.mjs";
+import { defineModule41Fixture } from "./support/fixtures/renderer/module_41.mjs";
+import { defineModule42Fixture } from "./support/fixtures/renderer/module_42.mjs";
+import { defineModule43Fixture } from "./support/fixtures/renderer/module_43.mjs";
+import { defineModule44Fixture } from "./support/fixtures/renderer/module_44.mjs";
+import { defineModule45Fixture } from "./support/fixtures/renderer/module_45.mjs";
+import { defineModule46Fixture } from "./support/fixtures/renderer/module_46.mjs";
+import { defineModule47Fixture } from "./support/fixtures/renderer/module_47.mjs";
+import { defineModule51Fixture } from "./support/fixtures/renderer/module_51.mjs";
+import { defineModule52Fixture } from "./support/fixtures/renderer/module_52.mjs";
+import { defineModule55Fixture } from "./support/fixtures/renderer/module_55.mjs";
+import { defineModule56Fixture } from "./support/fixtures/renderer/module_56.mjs";
+import { defineModule57Fixture } from "./support/fixtures/renderer/module_57.mjs";
+import { defineModule58Fixture } from "./support/fixtures/renderer/module_58.mjs";
+import { defineModule59Fixture } from "./support/fixtures/renderer/module_59.mjs";
+import { defineModule60Fixture } from "./support/fixtures/renderer/module_60.mjs";
+import { defineModule61Fixture } from "./support/fixtures/renderer/module_61.mjs";
+import { defineModule62Fixture } from "./support/fixtures/renderer/module_62.mjs";
+import { defineModule63Fixture } from "./support/fixtures/renderer/module_63.mjs";
+import { defineModule64Fixture } from "./support/fixtures/renderer/module_64.mjs";
+import { defineModule65Fixture } from "./support/fixtures/renderer/module_65.mjs";
+import { defineModule66Fixture } from "./support/fixtures/renderer/module_66.mjs";
+import { defineModule67Fixture } from "./support/fixtures/renderer/module_67.mjs";
+import { defineModule68Fixture } from "./support/fixtures/renderer/module_68.mjs";
+import { defineModule7Fixture } from "./support/fixtures/renderer/module_7.mjs";
+import { defineModule76Fixture } from "./support/fixtures/renderer/module_76.mjs";
+import { defineModule77Fixture } from "./support/fixtures/renderer/module_77.mjs";
+import { defineModule78Fixture } from "./support/fixtures/renderer/module_78.mjs";
+import { defineModule86Fixture } from "./support/fixtures/renderer/module_86.mjs";
+import { defineModule87Fixture } from "./support/fixtures/renderer/module_87.mjs";
+import { defineModule8Fixture } from "./support/fixtures/renderer/module_8.mjs";
+import { defineModule9Fixture } from "./support/fixtures/renderer/module_9.mjs";
+import { defineClientOnlyModule1Fixture } from "./support/fixtures/renderer/client_only/module_1.mjs";
+import { defineClientOnlyModule2Fixture } from "./support/fixtures/renderer/client_only/module_2.mjs";
 
 import Bitstring from "../../assets/js/bitstring.mjs";
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
@@ -270,7 +270,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]");
+      const expected = vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]");
 
       assert.deepStrictEqual(result, expected);
     });
@@ -300,7 +300,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "!",
-        {key: "[h:1a2b3c:0:42:o]"},
+        { key: "[h:1a2b3c:0:42:o]" },
         "[h:1a2b3c:0:42:o]",
       );
 
@@ -517,7 +517,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {}, on: {}}, []);
+      const expected = vnode("div", { attrs: {}, on: {} }, []);
 
       assert.deepStrictEqual(result, expected);
     });
@@ -559,7 +559,10 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "div",
-        {attrs: {attr_1: "aaa", attr_2: "123", attr_3: "ccc987eee"}, on: {}},
+        {
+          attrs: { attr_1: "aaa", attr_2: "123", attr_3: "ccc987eee" },
+          on: {},
+        },
         [],
       );
 
@@ -590,8 +593,8 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {}, on: {}}, [
-        vnode("span", {attrs: {}, on: {}}, ["abc"]),
+      const expected = vnode("div", { attrs: {}, on: {} }, [
+        vnode("span", { attrs: {}, on: {} }, ["abc"]),
         "xyz",
       ]);
 
@@ -614,7 +617,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("img", {attrs: {}, on: {}}, []);
+      const expected = vnode("img", { attrs: {}, on: {} }, []);
 
       assert.deepStrictEqual(result, expected);
     });
@@ -656,7 +659,10 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "img",
-        {attrs: {attr_1: "aaa", attr_2: "123", attr_3: "ccc987eee"}, on: {}},
+        {
+          attrs: { attr_1: "aaa", attr_2: "123", attr_3: "ccc987eee" },
+          on: {},
+        },
         [],
       );
 
@@ -687,7 +693,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "img",
-        {attrs: {attr_1: true, attr_2: true}, on: {}},
+        { attrs: { attr_1: true, attr_2: true }, on: {} },
         [],
       );
 
@@ -727,7 +733,11 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("img", {attrs: {attr_2: "value_2"}, on: {}}, []);
+      const expected = vnode(
+        "img",
+        { attrs: { attr_2: "value_2" }, on: {} },
+        [],
+      );
 
       assert.deepStrictEqual(result, expected);
     });
@@ -765,7 +775,11 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("img", {attrs: {attr_2: "value_2"}, on: {}}, []);
+      const expected = vnode(
+        "img",
+        { attrs: { attr_2: "value_2" }, on: {} },
+        [],
+      );
 
       assert.deepStrictEqual(result, expected);
     });
@@ -908,9 +922,9 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {attr: "value"}, on: {}}, [
-          vnode("div", {attrs: {}, on: {}}, ["state_a = 1, state_b = 2"]),
-          vnode("div", {attrs: {}, on: {}}, ["state_c = 3, state_d = 4"]),
+        vnode("div", { attrs: { attr: "value" }, on: {} }, [
+          vnode("div", { attrs: {}, on: {} }, ["state_a = 1, state_b = 2"]),
+          vnode("div", { attrs: {}, on: {} }, ["state_c = 3, state_d = 4"]),
         ]),
       );
 
@@ -1453,11 +1467,11 @@ describe("Renderer", () => {
               .callsFake(() => null);
 
             // The key filter gates - a non-matching key never reaches handleUiEvent.
-            vdom.data.on.keydown({key: "Escape", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Escape", currentTarget: {} });
             sinon.assert.notCalled(stub);
 
             // A matching key reaches handleUiEvent synchronously with allowDefault set.
-            vdom.data.on.keydown({key: "Enter", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Enter", currentTarget: {} });
             sinon.assert.calledOnce(stub);
             assert.isTrue(stub.getCall(0).args[4]);
 
@@ -1513,8 +1527,8 @@ describe("Renderer", () => {
             });
 
             const element = {};
-            const firstEvent = {currentTarget: element};
-            const lastEvent = {currentTarget: element};
+            const firstEvent = { currentTarget: element };
+            const lastEvent = { currentTarget: element };
 
             vdom.data.on.click(firstEvent);
             vdom.data.on.click(lastEvent);
@@ -1577,11 +1591,11 @@ describe("Renderer", () => {
             });
 
             // A non-matching key is gated out before anything is scheduled.
-            vdom.data.on.keydown({key: "Escape", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Escape", currentTarget: {} });
             sinon.assert.notCalled(Hologram.handleUiEvent);
 
             // A matching key schedules a debounced dispatch.
-            vdom.data.on.keydown({key: "Enter", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Enter", currentTarget: {} });
             sinon.assert.notCalled(dispatch);
 
             clock.tick(200);
@@ -1635,7 +1649,7 @@ describe("Renderer", () => {
               parentTagName,
             );
 
-            vdom1.data.on.click({currentTarget: element});
+            vdom1.data.on.click({ currentTarget: element });
 
             // A re-render with a changed param must reuse the same slot, so the next event
             // cancels the pending timer instead of scheduling a second one.
@@ -1647,7 +1661,7 @@ describe("Renderer", () => {
               parentTagName,
             );
 
-            vdom2.data.on.click({currentTarget: element});
+            vdom2.data.on.click({ currentTarget: element });
 
             clock.tick(250);
 
@@ -1702,15 +1716,15 @@ describe("Renderer", () => {
               );
 
             // A non-matching key is gated out - the handler never dispatches.
-            vdom.data.on.keydown({key: "Escape"});
+            vdom.data.on.keydown({ key: "Escape" });
             sinon.assert.notCalled(stub);
 
-            vdom.data.on.keydown({key: "Enter"});
+            vdom.data.on.keydown({ key: "Enter" });
             sinon.assert.calledOnce(stub);
 
             sinon.assert.calledWith(
               stub,
-              {key: "Enter"},
+              { key: "Enter" },
               "keydown",
               Type.list([
                 Type.tuple([Type.atom("text"), Type.bitstring("my_action")]),
@@ -1776,12 +1790,12 @@ describe("Renderer", () => {
                   null,
               );
 
-            vdom.data.on.keydown({key: "Enter"});
+            vdom.data.on.keydown({ key: "Enter" });
             sinon.assert.calledOnce(stub);
 
             sinon.assert.calledWith(
               stub,
-              {key: "Enter"},
+              { key: "Enter" },
               "keydown",
               Type.list([
                 Type.tuple([
@@ -1794,12 +1808,12 @@ describe("Renderer", () => {
 
             stub.resetHistory();
 
-            vdom.data.on.keydown({key: "Escape"});
+            vdom.data.on.keydown({ key: "Escape" });
             sinon.assert.calledOnce(stub);
 
             sinon.assert.calledWith(
               stub,
-              {key: "Escape"},
+              { key: "Escape" },
               "keydown",
               Type.list([
                 Type.tuple([
@@ -1862,8 +1876,8 @@ describe("Renderer", () => {
 
             const element = {};
 
-            vdom.data.on.click({currentTarget: element});
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
+            vdom.data.on.click({ currentTarget: element });
 
             // handleUiEvent runs on both events, so a spent binding still applies preventDefault /
             // stop_propagation - only the re-dispatch is suppressed.
@@ -1891,9 +1905,9 @@ describe("Renderer", () => {
             const element = {};
 
             // The first event is ignored (null dispatch), so once is not consumed.
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
             // The second event dispatches and spends the binding.
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
 
             sinon.assert.calledOnce(dispatch);
 
@@ -1923,8 +1937,8 @@ describe("Renderer", () => {
 
             const element = {};
 
-            vdom.data.on.click({currentTarget: element});
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
+            vdom.data.on.click({ currentTarget: element });
             clock.tick(250);
 
             // Trailing edge: only the last event in the burst dispatches.
@@ -1932,7 +1946,7 @@ describe("Renderer", () => {
             sinon.assert.calledOnce(dispatches[1]);
 
             // A later event finds the binding spent, so nothing further is scheduled or dispatched.
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
             clock.tick(250);
             assert.strictEqual(dispatches.length, 3);
             sinon.assert.notCalled(dispatches[2]);
@@ -1964,11 +1978,11 @@ describe("Renderer", () => {
             const element = {};
 
             // Leading edge dispatches and spends the binding.
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
             sinon.assert.calledOnce(dispatches[0]);
 
             // A second event within the window finds the binding spent, so nothing is held.
-            vdom.data.on.click({currentTarget: element});
+            vdom.data.on.click({ currentTarget: element });
             sinon.assert.notCalled(dispatches[1]);
 
             // The window closes with nothing held, so the trailing edge never fires.
@@ -2083,11 +2097,11 @@ describe("Renderer", () => {
               .callsFake(() => null);
 
             // The key filter gates - a non-matching key never reaches handleUiEvent.
-            vdom.data.on.keydown({key: "Escape", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Escape", currentTarget: {} });
             sinon.assert.notCalled(stub);
 
             // A matching key reaches handleUiEvent synchronously with forcePreventDefault set.
-            vdom.data.on.keydown({key: "Enter", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Enter", currentTarget: {} });
             sinon.assert.calledOnce(stub);
             assert.isTrue(stub.getCall(0).args[6]);
 
@@ -2199,11 +2213,11 @@ describe("Renderer", () => {
               .callsFake(() => null);
 
             // The key filter gates - a non-matching key never reaches handleUiEvent.
-            vdom.data.on.keydown({key: "Escape", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Escape", currentTarget: {} });
             sinon.assert.notCalled(stub);
 
             // A matching key reaches handleUiEvent synchronously with both flags set.
-            vdom.data.on.keydown({key: "Enter", currentTarget: {}});
+            vdom.data.on.keydown({ key: "Enter", currentTarget: {} });
             sinon.assert.calledOnce(stub);
             assert.isTrue(stub.getCall(0).args[4]);
             assert.isTrue(stub.getCall(0).args[5]);
@@ -2259,8 +2273,8 @@ describe("Renderer", () => {
             });
 
             const element = {};
-            const firstEvent = {currentTarget: element};
-            const lastEvent = {currentTarget: element};
+            const firstEvent = { currentTarget: element };
+            const lastEvent = { currentTarget: element };
 
             vdom.data.on.click(firstEvent);
             vdom.data.on.click(lastEvent);
@@ -2324,13 +2338,13 @@ describe("Renderer", () => {
             const element = {};
 
             // A non-matching key is gated out before anything is scheduled.
-            vdom.data.on.keydown({key: "Escape", currentTarget: element});
+            vdom.data.on.keydown({ key: "Escape", currentTarget: element });
             sinon.assert.notCalled(Hologram.handleUiEvent);
 
             // Matching keys are throttled: the first dispatches on the leading edge, a second is
             // held and dispatches on the trailing edge.
-            vdom.data.on.keydown({key: "Enter", currentTarget: element});
-            vdom.data.on.keydown({key: "Enter", currentTarget: element});
+            vdom.data.on.keydown({ key: "Enter", currentTarget: element });
+            vdom.data.on.keydown({ key: "Enter", currentTarget: element });
             sinon.assert.calledOnce(dispatches[0]);
             sinon.assert.notCalled(dispatches[1]);
 
@@ -2625,7 +2639,11 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("a", {attrs: {href: "my_href"}, on: {}}, []);
+          const expected = vnode(
+            "a",
+            { attrs: { href: "my_href" }, on: {} },
+            [],
+          );
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2655,7 +2673,7 @@ describe("Renderer", () => {
 
           const expected = vnode(
             "link",
-            {attrs: {rel: "stylesheet"}, on: {}},
+            { attrs: { rel: "stylesheet" }, on: {} },
             [],
           );
 
@@ -2683,7 +2701,7 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("link", {attrs: {href: true}, on: {}}, []);
+          const expected = vnode("link", { attrs: { href: true }, on: {} }, []);
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2706,7 +2724,7 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("link", {attrs: {href: true}, on: {}}, []);
+          const expected = vnode("link", { attrs: { href: true }, on: {} }, []);
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2738,7 +2756,7 @@ describe("Renderer", () => {
             "link",
             {
               key: "__hologramLink__:my_href",
-              attrs: {href: "my_href"},
+              attrs: { href: "my_href" },
               on: {},
             },
             [],
@@ -2772,7 +2790,11 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("img", {attrs: {src: "my_src"}, on: {}}, []);
+          const expected = vnode(
+            "img",
+            { attrs: { src: "my_src" }, on: {} },
+            [],
+          );
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2802,7 +2824,7 @@ describe("Renderer", () => {
 
           const expected = vnode(
             "script",
-            {attrs: {type: "text/javascript"}, on: {}},
+            { attrs: { type: "text/javascript" }, on: {} },
             [],
           );
 
@@ -2830,7 +2852,11 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("script", {attrs: {src: true}, on: {}}, []);
+          const expected = vnode(
+            "script",
+            { attrs: { src: true }, on: {} },
+            [],
+          );
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2853,7 +2879,11 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("script", {attrs: {src: true}, on: {}}, []);
+          const expected = vnode(
+            "script",
+            { attrs: { src: true }, on: {} },
+            [],
+          );
 
           assert.deepStrictEqual(result, expected);
         });
@@ -2885,7 +2915,7 @@ describe("Renderer", () => {
             "script",
             {
               key: "__hologramScript__:my_src",
-              attrs: {src: "my_src"},
+              attrs: { src: "my_src" },
               on: {},
             },
             [],
@@ -2941,7 +2971,7 @@ describe("Renderer", () => {
             parentTagName,
           );
 
-          const expected = vnode("script", {attrs: {}, on: {}}, []);
+          const expected = vnode("script", { attrs: {}, on: {} }, []);
 
           assert.deepStrictEqual(result, expected);
         });
@@ -3189,7 +3219,7 @@ describe("Renderer", () => {
             );
 
             // Call the create hook with mock vnode
-            const mockVnode = {elm: mockInput};
+            const mockVnode = { elm: mockInput };
             result.data.hook.create(null, mockVnode);
 
             // Should set the value
@@ -3225,7 +3255,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputValue: "new_value"},
+              data: { hologramFormInputValue: "new_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3265,7 +3295,7 @@ describe("Renderer", () => {
             // Call the update hook with a new programmatic value
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputValue: "new_programmatic_value"},
+              data: { hologramFormInputValue: "new_programmatic_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3302,7 +3332,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputValue: "new_value"},
+              data: { hologramFormInputValue: "new_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3339,7 +3369,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputValue: "first_value"},
+              data: { hologramFormInputValue: "first_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3385,10 +3415,10 @@ describe("Renderer", () => {
             });
 
             // Call the update hook with same value (to test no change)
-            const oldVnode = {data: {hologramFormInputValue: "same_value"}};
+            const oldVnode = { data: { hologramFormInputValue: "same_value" } };
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputValue: "same_value"},
+              data: { hologramFormInputValue: "same_value" },
             };
             result.data.hook.update(oldVnode, mockVnode);
 
@@ -3599,7 +3629,7 @@ describe("Renderer", () => {
             );
 
             // Call the create hook with mock vnode
-            const mockVnode = {elm: mockTextarea};
+            const mockVnode = { elm: mockTextarea };
             result.data.hook.create(null, mockVnode);
 
             // Should set the value
@@ -3635,7 +3665,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockTextarea,
-              data: {hologramFormInputValue: "new_value"},
+              data: { hologramFormInputValue: "new_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3675,7 +3705,7 @@ describe("Renderer", () => {
             // Call the update hook with a new programmatic value
             const mockVnode = {
               elm: mockTextarea,
-              data: {hologramFormInputValue: "new_programmatic_value"},
+              data: { hologramFormInputValue: "new_programmatic_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3712,7 +3742,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockTextarea,
-              data: {hologramFormInputValue: "new_value"},
+              data: { hologramFormInputValue: "new_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3749,7 +3779,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockTextarea,
-              data: {hologramFormInputValue: "first_value"},
+              data: { hologramFormInputValue: "first_value" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -3795,10 +3825,10 @@ describe("Renderer", () => {
             });
 
             // Call the update hook with same value (to test no change)
-            const oldVnode = {data: {hologramFormInputValue: "same_value"}};
+            const oldVnode = { data: { hologramFormInputValue: "same_value" } };
             const mockVnode = {
               elm: mockTextarea,
-              data: {hologramFormInputValue: "same_value"},
+              data: { hologramFormInputValue: "same_value" },
             };
             result.data.hook.update(oldVnode, mockVnode);
 
@@ -4079,7 +4109,7 @@ describe("Renderer", () => {
             // Call the create hook
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputChecked: true},
+              data: { hologramFormInputChecked: true },
             };
             result.data.hook.create(null, mockVnode);
 
@@ -4122,7 +4152,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputChecked: true},
+              data: { hologramFormInputChecked: true },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -4174,10 +4204,10 @@ describe("Renderer", () => {
             });
 
             // Call the update hook with same checked state (to test no change)
-            const oldVnode = {data: {hologramFormInputChecked: true}};
+            const oldVnode = { data: { hologramFormInputChecked: true } };
             const mockVnode = {
               elm: mockInput,
-              data: {hologramFormInputChecked: true},
+              data: { hologramFormInputChecked: true },
             };
             result.data.hook.update(oldVnode, mockVnode);
 
@@ -4594,7 +4624,7 @@ describe("Renderer", () => {
             );
 
             // Call the create hook with mock vnode
-            const mockVnode = {elm: mockSelect};
+            const mockVnode = { elm: mockSelect };
             result.data.hook.create(null, mockVnode);
 
             // Should set the value
@@ -4630,7 +4660,7 @@ describe("Renderer", () => {
             // Call the update hook
             const mockVnode = {
               elm: mockSelect,
-              data: {hologramFormInputValue: "option2"},
+              data: { hologramFormInputValue: "option2" },
             };
             result.data.hook.update(null, mockVnode);
 
@@ -4724,7 +4754,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_id"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -4740,7 +4770,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {class: "my_class", id: "my_id"}, on: {}}, []),
+        vnode("div", { attrs: { class: "my_class", id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -4756,7 +4786,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {class: "my_class", id: "my_id"}, on: {}}, []),
+        vnode("div", { attrs: { class: "my_class", id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -4767,7 +4797,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_id"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -4787,7 +4817,7 @@ describe("Renderer", () => {
         vnode(
           "div",
           {
-            attrs: {"my-key-1": "a", "my-key-2": "b", "my-key-3": "c"},
+            attrs: { "my-key-1": "a", "my-key-2": "b", "my-key-3": "c" },
             on: {},
           },
           [],
@@ -4837,7 +4867,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"my-key": "my_value"}, on: {}}, []),
+        vnode("div", { attrs: { "my-key": "my_value" }, on: {} }, []),
       );
     });
 
@@ -4850,7 +4880,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"my-key": "my_value"}, on: {}}, []),
+        vnode("div", { attrs: { "my-key": "my_value" }, on: {} }, []),
       );
     });
 
@@ -4868,7 +4898,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"data-user-id": "1"}, on: {}}, []),
+        vnode("div", { attrs: { "data-user-id": "1" }, on: {} }, []),
       );
     });
 
@@ -4886,7 +4916,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"data-user-id": "1"}, on: {}}, []),
+        vnode("div", { attrs: { "data-user-id": "1" }, on: {} }, []),
       );
     });
 
@@ -4904,7 +4934,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"data-user-id": "1"}, on: {}}, []),
+        vnode("div", { attrs: { "data-user-id": "1" }, on: {} }, []),
       );
     });
 
@@ -4922,7 +4952,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"data-user-id": "1"}, on: {}}, []),
+        vnode("div", { attrs: { "data-user-id": "1" }, on: {} }, []),
       );
     });
 
@@ -4945,7 +4975,11 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {"data-my-group-my-key": "my_value"}, on: {}}, []),
+        vnode(
+          "div",
+          { attrs: { "data-my-group-my-key": "my_value" }, on: {} },
+          [],
+        ),
       );
     });
 
@@ -4962,7 +4996,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_value_2"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_value_2" }, on: {} }, []),
       );
     });
 
@@ -4978,7 +5012,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {class: "my_class"}, on: {}}, []),
+        vnode("div", { attrs: { class: "my_class" }, on: {} }, []),
       );
     });
 
@@ -4994,7 +5028,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {class: "my_class"}, on: {}}, []),
+        vnode("div", { attrs: { class: "my_class" }, on: {} }, []),
       );
     });
 
@@ -5005,7 +5039,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "true"}, on: {}}, []),
+        vnode("div", { attrs: { id: "true" }, on: {} }, []),
       );
     });
 
@@ -5016,7 +5050,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: true}, on: {}}, []),
+        vnode("div", { attrs: { id: true }, on: {} }, []),
       );
     });
 
@@ -5032,7 +5066,7 @@ describe("Renderer", () => {
         vnode(
           "div",
           {
-            attrs: {"my-key": "Dummy String.Chars protocol result"},
+            attrs: { "my-key": "Dummy String.Chars protocol result" },
             on: {},
           },
           [],
@@ -5043,14 +5077,14 @@ describe("Renderer", () => {
     it("empty map value renders no attributes", () => {
       assert.deepStrictEqual(
         renderElement("div", [spread(Type.map())]),
-        vnode("div", {attrs: {}, on: {}}, []),
+        vnode("div", { attrs: {}, on: {} }, []),
       );
     });
 
     it("empty keyword list value renders no attributes", () => {
       assert.deepStrictEqual(
         renderElement("div", [spread(Type.keywordList())]),
-        vnode("div", {attrs: {}, on: {}}, []),
+        vnode("div", { attrs: {}, on: {} }, []),
       );
     });
 
@@ -5061,7 +5095,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("img", attrsDom),
-        vnode("img", {attrs: {id: "my_id"}, on: {}}, []),
+        vnode("img", { attrs: { id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -5073,7 +5107,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_value_2"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_value_2" }, on: {} }, []),
       );
     });
 
@@ -5085,7 +5119,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_value_2"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_value_2" }, on: {} }, []),
       );
     });
 
@@ -5097,7 +5131,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {id: "my_value_2"}, on: {}}, []),
+        vnode("div", { attrs: { id: "my_value_2" }, on: {} }, []),
       );
     });
 
@@ -5111,7 +5145,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         renderElement("div", attrsDom),
-        vnode("div", {attrs: {}, on: {}}, []),
+        vnode("div", { attrs: {}, on: {} }, []),
       );
     });
 
@@ -5304,7 +5338,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = ["aaa", vnode("div", {attrs: {}, on: {}}, []), "bbb"];
+      const expected = ["aaa", vnode("div", { attrs: {}, on: {} }, []), "bbb"];
 
       assert.deepStrictEqual(result, expected);
     });
@@ -5444,9 +5478,9 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(result, [
         "abc",
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 1, state_b = 2"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 1, state_b = 2"]),
         "xyz",
-        vnode("div", {attrs: {}, on: {}}, ["state_c = 3, state_d = 4"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_c = 3, state_d = 4"]),
       ]);
 
       assert.deepStrictEqual(
@@ -5519,11 +5553,11 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(result, [
         "abc",
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 1"]),
-        vnode("div", {attrs: {}, on: {}}, ["state_b = 2"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 1"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_b = 2"]),
         "xyz",
-        vnode("div", {attrs: {}, on: {}}, ["state_c = 3"]),
-        vnode("div", {attrs: {}, on: {}}, ["state_d = 4"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_c = 3"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_d = 4"]),
       ]);
 
       assert.deepStrictEqual(
@@ -6011,7 +6045,7 @@ describe("Renderer", () => {
       const propsDom = [spread(Type.map([[Type.atom("cid"), cid]]))];
 
       assert.deepStrictEqual(renderComponent(module3, propsDom), [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 11, state_b = 22"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 11, state_b = 22"]),
       ]);
 
       assert.deepStrictEqual(
@@ -6124,7 +6158,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = [vnode("div", {attrs: {}, on: {}}, ["abc"])];
+      const expected = [vnode("div", { attrs: {}, on: {} }, ["abc"])];
 
       assert.deepStrictEqual(result, expected);
 
@@ -6167,7 +6201,7 @@ describe("Renderer", () => {
       );
 
       const expected = [
-        vnode("div", {attrs: {}, on: {}}, [
+        vnode("div", { attrs: {}, on: {} }, [
           "prop_a = ddd, prop_b = 222, prop_c = fff333hhh",
         ]),
       ];
@@ -6240,7 +6274,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expectedVdom = [vnode("div", {attrs: {}, on: {}}, ["abc"])];
+      const expectedVdom = [vnode("div", { attrs: {}, on: {} }, ["abc"])];
       assert.deepStrictEqual(resultVDom, expectedVdom);
 
       const expectedComponentRegistryEntries = Type.map([
@@ -6305,7 +6339,7 @@ describe("Renderer", () => {
       );
 
       const expectedVdom = [
-        vnode("div", {attrs: {}, on: {}}, [
+        vnode("div", { attrs: {}, on: {} }, [
           "prop_a = ddd, prop_b = 222, prop_c = fff333hhh",
         ]),
       ];
@@ -6361,7 +6395,7 @@ describe("Renderer", () => {
       );
 
       const expectedVdom = [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 1, state_b = 2"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 1, state_b = 2"]),
       ];
 
       assert.deepStrictEqual(resultVDom, expectedVdom);
@@ -6397,7 +6431,7 @@ describe("Renderer", () => {
       );
 
       const expectedVdom = [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 11, state_b = 22"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 11, state_b = 22"]),
       ];
 
       assert.deepStrictEqual(resultVDom, expectedVdom);
@@ -6459,7 +6493,7 @@ describe("Renderer", () => {
       );
 
       const expectedVdom = [
-        vnode("div", {attrs: {}, on: {}}, [
+        vnode("div", { attrs: {}, on: {} }, [
           "var_a = state_a, var_b = state_b, var_c = prop_c",
         ]),
       ];
@@ -6625,7 +6659,7 @@ describe("Renderer", () => {
 
       // Module3's init/2 puts %{a: 11, b: 22}, so the state of the swapped-out module is gone.
       assert.deepStrictEqual(resultVdom, [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 11, state_b = 22"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 11, state_b = 22"]),
       ]);
 
       assert.deepStrictEqual(
@@ -6662,7 +6696,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(resultVdom, [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 1, state_b = 2"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 1, state_b = 2"]),
       ]);
 
       assert.deepStrictEqual(
@@ -6727,7 +6761,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(resultVdom, [
-        vnode("div", {attrs: {}, on: {}}, ["state_a = 11, state_b = 22"]),
+        vnode("div", { attrs: {}, on: {} }, ["state_a = 11, state_b = 22"]),
       ]);
 
       assert.deepStrictEqual(
@@ -7004,7 +7038,7 @@ describe("Renderer", () => {
       // <{"div"}></{"div"}>
       const result = render(dynamicTag(Type.bitstring("div")));
 
-      assert.deepStrictEqual(result, vnode("div", {attrs: {}, on: {}}, []));
+      assert.deepStrictEqual(result, vnode("div", { attrs: {}, on: {} }, []));
     });
 
     it("with attributes", () => {
@@ -7025,7 +7059,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {attr_1: "aaa", attr_2: "123"}, on: {}}, []),
+        vnode("div", { attrs: { attr_1: "aaa", attr_2: "123" }, on: {} }, []),
       );
     });
 
@@ -7046,8 +7080,8 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {}, on: {}}, [
-          vnode("span", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, [
+          vnode("span", { attrs: {}, on: {} }, ["abc"]),
           "xyz",
         ]),
       );
@@ -7065,7 +7099,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("img", {attrs: {attr_1: "aaa"}, on: {}}, []),
+        vnode("img", { attrs: { attr_1: "aaa" }, on: {} }, []),
       );
     });
 
@@ -7080,7 +7114,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("my-widget", {attrs: {}, on: {}}, ["abc"]),
+        vnode("my-widget", { attrs: {}, on: {} }, ["abc"]),
       );
     });
 
@@ -7098,7 +7132,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {cid: "my_component"}, on: {}}, []),
+        vnode("div", { attrs: { cid: "my_component" }, on: {} }, []),
       );
     });
 
@@ -7151,7 +7185,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {class: "my_class", id: "my_id"}, on: {}}, []),
+        vnode("div", { attrs: { class: "my_class", id: "my_id" }, on: {} }, []),
       );
     });
 
@@ -7181,8 +7215,8 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(
         result,
-        vnode("div", {attrs: {}, on: {}}, [
-          vnode("div", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, [
+          vnode("div", { attrs: {}, on: {} }, ["abc"]),
         ]),
       );
 
@@ -7227,7 +7261,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(result, [
-        vnode("div", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, ["abc"]),
       ]);
       assert.deepStrictEqual(ComponentRegistry.entries, Type.map());
     });
@@ -7262,7 +7296,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(result, [
-        vnode("div", {attrs: {}, on: {}}, [
+        vnode("div", { attrs: {}, on: {} }, [
           "prop_a = ddd, prop_b = 222, prop_c = fff333hhh",
         ]),
       ]);
@@ -7289,7 +7323,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(result, [
-        vnode("div", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, ["abc"]),
       ]);
 
       assert.deepStrictEqual(
@@ -7323,7 +7357,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(result, [
-        vnode("div", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, ["abc"]),
       ]);
     });
 
@@ -7385,7 +7419,7 @@ describe("Renderer", () => {
       );
 
       assert.deepStrictEqual(result, [
-        vnode("div", {attrs: {}, on: {}}, [
+        vnode("div", { attrs: {}, on: {} }, [
           "prop_a = ddd, prop_b = 222, prop_c = fff",
         ]),
       ]);
@@ -7411,7 +7445,7 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(result, [
         "87a,32a,87b,",
-        vnode("div", {attrs: {}, on: {}}, ["abc"]),
+        vnode("div", { attrs: {}, on: {} }, ["abc"]),
         ",87x,32z,87z",
       ]);
     });
@@ -7621,7 +7655,7 @@ describe("Renderer", () => {
 
       // A window binding keys once on the window target and a template-site slot (the enclosing
       // component, the event name, and the attribute's index on this tag).
-      const {target, slotKey} = Renderer.listenerBindings[0];
+      const { target, slotKey } = Renderer.listenerBindings[0];
       Once.markFired(target, slotKey);
 
       // Now it is dropped, so reconcile detaches its real listener.
@@ -7815,7 +7849,7 @@ describe("Renderer", () => {
       // Snabbdom sets `.elm` during patch; emulate the bound element's containment here.
       const insideTarget = {};
       const outsideTarget = {};
-      vdom.elm = {contains: (target) => target === insideTarget};
+      vdom.elm = { contains: (target) => target === insideTarget };
 
       const stub = sinon
         .stub(Hologram, "handleUiEvent")
@@ -7825,10 +7859,10 @@ describe("Renderer", () => {
 
       const handler = Renderer.listenerBindings[0].handler;
 
-      handler({target: insideTarget});
+      handler({ target: insideTarget });
       sinon.assert.notCalled(stub);
 
-      const outsideEvent = {target: outsideTarget};
+      const outsideEvent = { target: outsideTarget };
       handler(outsideEvent);
 
       sinon.assert.calledOnceWithExactly(
@@ -7866,8 +7900,8 @@ describe("Renderer", () => {
       const innerVdom = outerVdom.children[0];
 
       // A click inside the outer element but outside the inner one.
-      outerVdom.elm = {contains: () => true};
-      innerVdom.elm = {contains: () => false};
+      outerVdom.elm = { contains: () => true };
+      innerVdom.elm = { contains: () => false };
 
       const stub = sinon
         .stub(Hologram, "handleUiEvent")
@@ -7875,7 +7909,7 @@ describe("Renderer", () => {
           (_event, _eventType, _operationSpecVdom, _defaultTarget) => null,
         );
 
-      const event = {target: {}};
+      const event = { target: {} };
       Renderer.listenerBindings.forEach((binding) => binding.handler(event));
 
       // Only the inner binding (whose subtree excludes the target) dispatches.
@@ -7914,23 +7948,23 @@ describe("Renderer", () => {
       );
 
       // Every click lands outside the bound element. once keys on the element, read live from `.elm`.
-      vdom.elm = {contains: () => false};
+      vdom.elm = { contains: () => false };
 
       const dispatch = sinon.spy();
       sinon.stub(Hologram, "handleUiEvent").returns(dispatch);
 
       const handler = Renderer.listenerBindings[0].handler;
 
-      handler({target: {}});
-      handler({target: {}});
-      handler({target: {}});
+      handler({ target: {} });
+      handler({ target: {} });
+      handler({ target: {} });
 
       // Spent after the first outside click; later ones are no-ops.
       sinon.assert.calledOnce(dispatch);
 
       // A re-created element is a new node with no fired-state, so the binding re-arms.
-      vdom.elm = {contains: () => false};
-      handler({target: {}});
+      vdom.elm = { contains: () => false };
+      handler({ target: {} });
 
       sinon.assert.calledTwice(dispatch);
 
@@ -7989,7 +8023,7 @@ describe("Renderer", () => {
           (_event, _eventType, _operationSpecVdom, _defaultTarget) => null,
         );
 
-      const event = {target: {}};
+      const event = { target: {} };
 
       Renderer.reachBindings[0].handler(event);
 
@@ -8057,7 +8091,7 @@ describe("Renderer", () => {
 
       const stub = sinon
         .stub(EventListeners, "scrollEdge")
-        .returns({key: "scroll-edge:bottom", attach: () => {}});
+        .returns({ key: "scroll-edge:bottom", attach: () => {} });
 
       try {
         Renderer.resolveReachBindings();
@@ -8161,7 +8195,7 @@ describe("Renderer", () => {
 
       const entry = {
         target: {},
-        borderBoxSize: [{blockSize: 10, inlineSize: 20}],
+        borderBoxSize: [{ blockSize: 10, inlineSize: 20 }],
       };
 
       Renderer.resizeBindings[0].handler(entry);
@@ -8292,8 +8326,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["prop_aaa = 123"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["prop_aaa = 123"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8322,8 +8356,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["prop_aaa = 123"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["prop_aaa = 123"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8352,8 +8386,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["prop_aaa = 123"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["prop_aaa = 123"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8382,8 +8416,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["prop_aaa = 123"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["prop_aaa = 123"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8412,8 +8446,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["prop_aaa = 123"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["prop_aaa = 123"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8474,8 +8508,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, [
           "layout template start, page template, layout template end",
         ]),
       ]);
@@ -8501,8 +8535,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, [
           'layout vars = %{cid: "layout", prop_1: "prop_value_1", prop_3: "prop_value_3"}',
         ]),
       ]);
@@ -8532,8 +8566,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, [
           'layout vars = %{cid: "layout", prop_1: "prop_value_1", prop_3: "prop_value_3"}',
         ]),
       ]);
@@ -8565,8 +8599,8 @@ describe("Renderer", () => {
         ]),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, [
           'page vars = %{key_1: "param_value_1", key_2: "state_value_2", key_3: "state_value_3"}',
         ]),
       ]);
@@ -8595,8 +8629,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, [
           'layout vars = %{cid: "layout", key_1: "prop_value_1", key_2: "state_value_2", key_3: "state_value_3"}',
         ]),
       ]);
@@ -8619,9 +8653,9 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
+      const expected = vnode("html", { attrs: {}, on: {} }, [
         "\n  ",
-        vnode("body", {attrs: {}, on: {}}, ["\n    Module62\n  "]),
+        vnode("body", { attrs: {}, on: {} }, ["\n    Module62\n  "]),
         "\n",
       ]);
 
@@ -8643,8 +8677,8 @@ describe("Renderer", () => {
         Type.map(),
       );
 
-      const expected = vnode("html", {attrs: {}, on: {}}, [
-        vnode("body", {attrs: {}, on: {}}, ["abc"]),
+      const expected = vnode("html", { attrs: {}, on: {} }, [
+        vnode("body", { attrs: {}, on: {} }, ["abc"]),
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -8682,7 +8716,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {}, on: {}}, ["abc < xyz"]);
+      const expected = vnode("div", { attrs: {}, on: {} }, ["abc < xyz"]);
 
       assert.deepStrictEqual(result, expected);
     });
@@ -8708,7 +8742,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "script",
-        {attrs: {}, key: "__hologramScript__:abc < xyz", on: {}},
+        { attrs: {}, key: "__hologramScript__:abc < xyz", on: {} },
         ["abc < xyz"],
       );
 
@@ -8763,7 +8797,11 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {class: "abc < xyz"}, on: {}}, []);
+      const expected = vnode(
+        "div",
+        { attrs: { class: "abc < xyz" }, on: {} },
+        [],
+      );
 
       assert.deepStrictEqual(result, expected);
     });
@@ -8791,7 +8829,7 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {}, on: {}}, ["abc < xyz"]);
+      const expected = vnode("div", { attrs: {}, on: {} }, ["abc < xyz"]);
 
       assert.deepStrictEqual(result, expected);
     });
@@ -8821,7 +8859,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "script",
-        {attrs: {}, key: "__hologramScript__:abc < xyz", on: {}},
+        { attrs: {}, key: "__hologramScript__:abc < xyz", on: {} },
         ["abc < xyz"],
       );
 
@@ -8884,7 +8922,11 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("div", {attrs: {class: "abc < xyz"}, on: {}}, []);
+      const expected = vnode(
+        "div",
+        { attrs: { class: "abc < xyz" }, on: {} },
+        [],
+      );
 
       assert.deepStrictEqual(result, expected);
     });
@@ -8923,7 +8965,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "input",
-        {attrs: {class: "abc < xyz", type: "text"}, on: {}},
+        { attrs: { class: "abc < xyz", type: "text" }, on: {} },
         [],
       );
 
@@ -8959,7 +9001,7 @@ describe("Renderer", () => {
 
       const expected = vnode(
         "div",
-        {attrs: {class: "a < b < c < d < e"}, on: {}},
+        { attrs: { class: "a < b < c < d < e" }, on: {} },
         [],
       );
 
@@ -9631,6 +9673,52 @@ describe("Renderer", () => {
 
       assert.strictEqual(first, second);
       assert.deepStrictEqual(first, ["10,11,10,12,10"]);
+    });
+
+    // #878's actual render-path payoff: an action that writes back state
+    // equal to what is already there stays reference-stable all the way
+    // through - maps:put/3's identity fast path (stage 1) means the
+    // "updated" state/struct handed to putComponentStruct is the exact
+    // same object already stored, so putComponentStruct's own identity
+    // guard (component_registry.mjs) skips both the write and
+    // RenderCache.markDirty, and this render is served from cache exactly
+    // like the untouched-idle case above - even though a real "action ran"
+    // step happened in between.
+    it("returns the identical vnode array after an action writes back unchanged state via put/3", () => {
+      seedModule10Tree();
+
+      const first = renderOnce(module10Node);
+
+      const struct = ComponentRegistry.getComponentStruct(cid11);
+      const state = Erlang_Maps["get/2"](Type.atom("state"), struct);
+      const currentA = Erlang_Maps["get/2"](Type.atom("a"), state);
+
+      const updatedState = Erlang_Maps["put/3"](
+        Type.atom("a"),
+        currentA,
+        state,
+      );
+      const updatedStruct = Erlang_Maps["put/3"](
+        Type.atom("state"),
+        updatedState,
+        struct,
+      );
+
+      assert.strictEqual(updatedStruct, struct);
+
+      const markDirtySpy = sinon.spy(RenderCache, "markDirty");
+      let second;
+
+      try {
+        ComponentRegistry.putComponentStruct(cid11, updatedStruct);
+        sinon.assert.notCalled(markDirtySpy);
+
+        second = renderOnce(module10Node);
+      } finally {
+        markDirtySpy.restore();
+      }
+
+      assert.strictEqual(first, second);
     });
 
     it("re-renders and reflects new state, at both the descendant and the ancestor, when a nested descendant's struct changes", () => {
