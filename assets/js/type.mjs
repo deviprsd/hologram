@@ -7,6 +7,25 @@ import Interpreter from "./interpreter.mjs";
 import MapData from "./map_data.mjs";
 import Serializer from "./serializer.mjs";
 
+// #878: TrieMap._order is a prepend-only chain of {key, next} nodes - see
+// TrieMap's own doc comment for why. head is the most recently inserted key,
+// so walking head->tail and collecting visits keys newest-first; reversing
+// that once at the end restores true (oldest-first) insertion order. O(n),
+// same as the array version - this is the cold path (.data/mapEntries),
+// not the hot put/merge path the chain shape exists to keep O(1)/O(size(map2)).
+function materializeOrder(node) {
+  const keys = [];
+
+  while (node !== null) {
+    keys.push(node.key);
+    node = node.next;
+  }
+
+  keys.reverse();
+
+  return keys;
+}
+
 // #878 (structural sharing): a proper-list cons cell built by Type.cons().
 // Kept as its own class (rather than a plain object literal like every
 // other boxed term) specifically so `data` can be a *prototype* getter -
@@ -86,17 +105,31 @@ class TrieMap {
   #data;
 
   // _order: encoded keys in insertion order (first-occurrence position,
-  // matching a plain {} object literal's semantics), tracked as a plain
-  // array separate from the trie itself. map_data.mjs's trie is
-  // deliberately order-agnostic - see that module's doc - so insertion
-  // order, which callers (keys/1, to_list/1, inspect, ...) genuinely
-  // observe, lives here instead. Keeping it out of the trie's own node
-  // shape is what makes two independently-built maps with identical
-  // entries in the identical order come out byte-reproducible: an earlier
-  // version baked a seq number into every leaf to get the same effect, and
-  // that made the trie's shape depend on unrelated global state, breaking
-  // deepStrictEqual for logically-identical maps built via different code
-  // paths.
+  // matching a plain {} object literal's semantics), tracked separately
+  // from the trie itself - map_data.mjs's trie is deliberately
+  // order-agnostic (see that module's doc), so insertion order, which
+  // callers (keys/1, to_list/1, inspect, ...) genuinely observe, lives
+  // here instead. Keeping it out of the trie's own node shape is what
+  // makes two independently-built maps with identical entries in the
+  // identical order come out byte-reproducible: an earlier version baked a
+  // seq number into every leaf to get the same effect, and that made the
+  // trie's shape depend on unrelated global state, breaking deepStrictEqual
+  // for logically-identical maps built via different code paths.
+  //
+  // A singly-linked chain ({key, next} nodes, null-terminated), NOT a flat
+  // array - a real (if rare, all real-world load-bearing on Setu's
+  // Holoprint.Workspace grid) perf bug the array version had: mapMerge's
+  // map1._order.slice() copied map1's *entire* order array on every merge
+  // call, no matter how few keys map2 actually added - O(size(map1)) on
+  // exactly the operation (%{state | k: v} merging a small delta into a
+  // large, ever-growing map) the HAMT itself is O(log32 n) for. The chain
+  // is prepend-only (head = most recently inserted key), so mapPut/mapMerge
+  // adding N new keys costs O(N) total for the order side, regardless of
+  // how large the map already is - see materializeOrder() below for how
+  // this reconstructs true insertion order (oldest-first) on the cold
+  // .data/mapEntries path, and mapRemove for the one place removing a key
+  // still costs O(size) (unavoidable for a singly-linked structure without
+  // giving up O(1) prepend - removes are rare and cold, unlike merge).
   constructor(trie, size, order) {
     this.type = "map";
     this._trie = trie;
@@ -128,7 +161,7 @@ class TrieMap {
 
     const obj = {};
 
-    for (const encodedKey of this._order) {
+    for (const encodedKey of materializeOrder(this._order)) {
       obj[encodedKey] = MapData.get(this._trie, encodedKey);
     }
 
@@ -605,16 +638,19 @@ export default class Type {
     ]);
 
     const {root, size} = MapData.fromEntries(pairs);
-    const order = [];
+    let order = null;
     const seen = new Set();
 
     // Mirrors fromEntries()'s own dedup semantics: first occurrence's
     // position, last occurrence's value (the value already landed in the
-    // trie above; here we only need to not double-list a duplicate key).
+    // trie above; here we only need to not double-prepend a duplicate
+    // key). Prepending in forward (pairs) order builds the chain with the
+    // last first-occurrence key at the head, matching mapPut/mapMerge's
+    // own orientation - see materializeOrder().
     for (const [encodedKey] of pairs) {
       if (!seen.has(encodedKey)) {
         seen.add(encodedKey);
-        order.push(encodedKey);
+        order = {key: encodedKey, next: order};
       }
     }
 
@@ -642,7 +678,7 @@ export default class Type {
   // insertion order - see TrieMap's _order field - so this walks _order and
   // does one point-read per key rather than delegating to MapData.entries().
   static mapEntries(map) {
-    return map._order.map((encodedKey) => [
+    return materializeOrder(map._order).map((encodedKey) => [
       encodedKey,
       MapData.get(map._trie, encodedKey),
     ]);
@@ -671,10 +707,18 @@ export default class Type {
       return new TrieMap(root, map._size, map._order);
     }
 
-    return new TrieMap(root, map._size + 1, [...map._order, encodedKey]);
+    // O(1): prepend to the chain, share the rest - see TrieMap's _order doc.
+    return new TrieMap(root, map._size + 1, {
+      key: encodedKey,
+      next: map._order,
+    });
   }
 
-  // #878: no-op (same map reference) if encodedKey is absent.
+  // #878: no-op (same map reference) if encodedKey is absent. O(size(map)):
+  // removing an arbitrary key from a singly-linked chain needs rebuilding
+  // every node from the head down to (and past) the removed one - the one
+  // place this representation doesn't beat the old array, but removes are
+  // rare/cold, unlike merge (see TrieMap's _order doc).
   static mapRemove(map, encodedKey) {
     const {root, removed} = MapData.remove(map._trie, encodedKey);
 
@@ -682,22 +726,39 @@ export default class Type {
       return map;
     }
 
-    return new TrieMap(
-      root,
-      map._size - 1,
-      map._order.filter((k) => k !== encodedKey),
-    );
+    const newestFirst = [];
+    let node = map._order;
+
+    while (node !== null) {
+      if (node.key !== encodedKey) {
+        newestFirst.push(node.key);
+      }
+
+      node = node.next;
+    }
+
+    let order = null;
+
+    for (let i = newestFirst.length - 1; i >= 0; --i) {
+      order = {key: newestFirst[i], next: order};
+    }
+
+    return new TrieMap(root, map._size - 1, order);
   }
 
   // #878: map2's keys overwrite map1's at their *shared* trie positions -
-  // O(size(map2) * log32 size(map1)), not a full O(n) rebuild. Matches
+  // O(size(map2) * log32 size(map1)) for the trie, O(size(map2)) for order
+  // tracking - not a full O(size(map1)) rebuild of either. Matches
   // {...map1.data, ...map2.data}'s old semantics exactly: an overwritten
   // key keeps map1's insertion position, a genuinely new key from map2 is
-  // appended in map2's own order.
+  // appended in map2's own order. Critically, `order` starts as map1._order
+  // *by reference* (no copy) - see TrieMap's _order doc for why copying it
+  // here was a real O(size(map1))-per-merge perf bug on exactly the
+  // large-map-plus-small-delta shape merge/2 exists for.
   static mapMerge(map1, map2) {
     let trie = map1._trie;
     let size = map1._size;
-    const order = map1._order.slice();
+    let order = map1._order;
 
     for (const [encodedKey, pair] of Type.mapEntries(map2)) {
       const result = MapData.put(trie, encodedKey, pair);
@@ -705,7 +766,7 @@ export default class Type {
 
       if (result.added) {
         ++size;
-        order.push(encodedKey);
+        order = {key: encodedKey, next: order};
       }
     }
 
