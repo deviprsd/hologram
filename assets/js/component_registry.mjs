@@ -7,8 +7,18 @@ import Type from "./type.mjs";
 export default class ComponentRegistry {
   static entries = Type.map();
 
+  // Bug #1002: a cid's action dispatches used to read-then-commit with no
+  // exclusion, so a tight synchronous burst of dispatches against the same
+  // cid (fast key-repeat, rapid clicks) all read the same pre-burst struct
+  // and only the last commit survived - see runExclusive(). Keyed by
+  // Type.encodeMapKey(cid) (the same idiom RenderCache.markDirty uses for a
+  // cid-keyed native Map), mapping to a Promise that never rejects - see
+  // runExclusive()'s #occupy.
+  static #actionChains = new Map();
+
   static clear() {
     ComponentRegistry.entries = Type.map();
+    ComponentRegistry.#actionChains = new Map();
     RenderCache.clear();
     ItemCache.clear();
   }
@@ -87,6 +97,7 @@ export default class ComponentRegistry {
 
   static populate(entries) {
     ComponentRegistry.entries = entries;
+    ComponentRegistry.#actionChains = new Map();
     RenderCache.clear();
     ItemCache.clear();
   }
@@ -144,5 +155,86 @@ export default class ComponentRegistry {
     );
 
     RenderCache.markDirty(cid);
+  }
+
+  // Bug #1002: serializes read-then-commit cycles against the same cid, so a
+  // burst of dispatches against one cid can't all read the same pre-burst
+  // struct. fn is a thunk: return null/undefined once it has already
+  // committed synchronously, or a Promise that settles once its commit has
+  // landed.
+  //
+  // Idle cid (no action in flight - the overwhelming common case): fn()
+  // runs synchronously, right here, with nothing new wrapped around it - a
+  // synchronous throw propagates synchronously out of runExclusive exactly
+  // as it would have out of a bare fn() call. This is load-bearing: making
+  // every dispatch async would turn every action error into a rejected
+  // Promise, which is exactly what hologram.mjs's executeAction comment
+  // says must not happen (ChromeDriver/Wallaby's synchronous "error" event
+  // detection).
+  //
+  // Busy cid: queues behind the in-flight chain instead of racing it. By
+  // the time the queued fn() runs, the prior occupant's commit has already
+  // landed, because #occupy's gate is derived from the SAME promise
+  // executeAction's own .then() chains off of registered first - see
+  // #executeActionNow.
+  static runExclusive(cid, fn) {
+    const key = Type.encodeMapKey(cid);
+    const pending = ComponentRegistry.#actionChains.get(key);
+
+    if (pending === undefined) {
+      const result = fn();
+      return result instanceof Promise
+        ? ComponentRegistry.#occupy(key, result)
+        : null;
+    }
+
+    const ran = pending.then(() => {
+      // The cid's page may have navigated away while this was queued
+      // (populate()/clear() already dropped the chain entry that gated us,
+      // but that can't cancel a continuation already attached to it) -
+      // running against a cid the current registry no longer knows about
+      // would crash callNamedFunction on a null module. No-op instead.
+      if (!ComponentRegistry.isCidRegistered(cid)) {
+        return null;
+      }
+
+      try {
+        return fn();
+      } catch (error) {
+        // Can no longer throw synchronously out of runExclusive - this is
+        // inside a microtask reaction. Re-surface on the next microtask
+        // instead of swallowing it, so it still reaches the window "error"
+        // listener Hologram.#init() installs, same reporting channel the
+        // idle-cid path uses.
+        queueMicrotask(() => {
+          throw error;
+        });
+
+        return null;
+      }
+    });
+
+    return ComponentRegistry.#occupy(key, ran);
+  }
+
+  // Stores a never-rejecting gate for `key` derived from `settleSignal`, and
+  // arranges for the entry to be dropped once it settles - unless a later
+  // call has already replaced it with its own gate, in which case that
+  // later call owns the teardown.
+  static #occupy(key, settleSignal) {
+    const gate = settleSignal.then(
+      () => {},
+      () => {},
+    );
+
+    ComponentRegistry.#actionChains.set(key, gate);
+
+    gate.then(() => {
+      if (ComponentRegistry.#actionChains.get(key) === gate) {
+        ComponentRegistry.#actionChains.delete(key);
+      }
+    });
+
+    return gate;
   }
 }
