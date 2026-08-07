@@ -644,6 +644,7 @@ defmodule Hologram.Compiler.CallGraph do
     |> maybe_add_struct_call_graph_edges(module)
     |> maybe_add_ecto_schema_call_graph_edges(module)
     |> maybe_add_exception_call_graph_edges(module)
+    |> maybe_add_client_mfa_whitelist_call_graph_edges(module)
     |> build(body, module)
   end
 
@@ -1573,6 +1574,16 @@ defmodule Hologram.Compiler.CallGraph do
         _falback -> false
       end
     end)
+  end
+
+  defp maybe_add_client_mfa_whitelist_call_graph_edges(call_graph, module) do
+    module
+    |> Reflection.client_mfa_whitelist()
+    |> Enum.each(fn {function, arity} ->
+      add_edge(call_graph, module, {module, function, arity})
+    end)
+
+    call_graph
   end
 
   defp maybe_add_ecto_schema_call_graph_edges(call_graph, module) do

@@ -133,10 +133,6 @@ defmodule HologramFeatureTests.JavaScriptInterop.AsyncPage do
   end
 
   def action(:async_dynamic_call, _params, component) do
-    # Explicit call to trick Hologram into including ModuleFixture3.is_integer/1 in the bundle.
-    # TODO: replace with MFA whitelisting once it's supported in Hologram.
-    ModuleFixture3.is_integer(0)
-
     result =
       :helpers
       |> JS.call(:asyncSum, [17, 16])

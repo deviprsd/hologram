@@ -46,6 +46,7 @@ defmodule Hologram.Compiler.CallGraphTest do
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module4
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module40
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module41
+  alias Hologram.Test.Fixtures.Compiler.CallGraph.Module42
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module5
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module6
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module7
@@ -691,6 +692,19 @@ defmodule Hologram.Compiler.CallGraphTest do
 
       assert has_edge?(call_graph, Module25, {Module25, :__struct__, 0})
       assert has_edge?(call_graph, Module25, {Module25, :__struct__, 1})
+    end
+
+    test "module definition IR, module with @hologram_client_mfa adds whitelist-specific edges",
+         %{
+           empty_call_graph: call_graph
+         } do
+      module_42_ir = IR.for_module(Module42)
+      result = build(call_graph, module_42_ir)
+
+      assert result == call_graph
+
+      assert has_vertex?(call_graph, {Module42, :my_fun, 1})
+      assert has_edge?(call_graph, Module42, {Module42, :my_fun, 1})
     end
 
     test "module definition IR, Ecto schema module adds Ecto schema-specific edges", %{

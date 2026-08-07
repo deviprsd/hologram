@@ -213,10 +213,6 @@ defmodule HologramFeatureTests.OperatorsPage do
   end
 
   def action(:". (remote call)", _params, component) do
-    # Explicit call to trick Hologram into including ModuleFixture3.reverse/1 in the bundle.
-    # TODO: replace with MFA whitelisting once it's supported in Hologram.
-    ModuleFixture3.reverse([])
-
     module = ModuleFixture3
     result = module.reverse([@integer_c, @integer_b, @integer_a])
 
