@@ -2,6 +2,8 @@ defmodule Hologram.ReflectionTest do
   use Hologram.Test.BasicCase, async: false
   import Hologram.Reflection
 
+  alias Hologram.Test.Fixtures.ClientMFA.Module1, as: ClientMFAModule1
+  alias Hologram.Test.Fixtures.ClientMFA.Module2, as: ClientMFAModule2
   alias Hologram.Test.Fixtures.Reflection.Module1
   alias Hologram.Test.Fixtures.Reflection.Module2
   alias Hologram.Test.Fixtures.Reflection.Module3
@@ -187,6 +189,25 @@ defmodule Hologram.ReflectionTest do
 
   test "compiler_lock_file_name/0" do
     assert String.length(compiler_lock_file_name()) > 0
+  end
+
+  describe "client_mfa_whitelist/1" do
+    test "module which declares @hologram_client_mfa" do
+      assert Enum.sort(client_mfa_whitelist(ClientMFAModule1)) ==
+               Enum.sort(bar: 2, baz: 0, foo: 1)
+    end
+
+    test "module which uses Hologram.ClientMFA but declares no @hologram_client_mfa" do
+      assert client_mfa_whitelist(ClientMFAModule2) == []
+    end
+
+    test "module which doesn't use Hologram.ClientMFA" do
+      assert client_mfa_whitelist(Calendar.ISO) == []
+    end
+
+    test "non-module" do
+      assert client_mfa_whitelist(123) == []
+    end
   end
 
   describe "component?" do

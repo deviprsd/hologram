@@ -3990,7 +3990,6 @@ Our development roadmap is organized by timeline, with colors representing proxi
 - **Advanced Bitstring Support** - Add support for the remaining bitstring capabilities: dynamic and computed segment sizes in patterns, UTF pattern matching, and UTF16/UTF32 encodings.
 - **Advanced Routing** - Add support for multi-tenant routing (subdomain-based) and catch-all (wildcard) routes for dynamic path segments of arbitrary depth.
 - **Auth** - Built-in authentication, authorization, and access control system for managing user identities and protecting resources.
-- **Client MFAs Whitelisting** - Create a mechanism to explicitly whitelist Module-Function-Arity combinations that should be compiled for client-side execution when not automatically detected by the compiler.
 - **Command Failure Handling Control** - Add more granular control over how command failures are handled, allowing developers to customize error handling strategies, retry logic, and failure recovery mechanisms.
 - **Internationalization** - Built-in i18n: locale detection and management, locale-aware routing, translation resolution across server and client, and locale-aware date, number, and currency formatting.
 - **Keyed Lists** - Reconcile rendered comprehension lists by key rather than position, auto-keying items by their `:id` with an explicit `$key` override, so reordered items reuse the correct DOM nodes.

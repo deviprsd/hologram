@@ -125,6 +125,20 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
+  Returns the list of `{function, arity}` pairs declared with `@hologram_client_mfa`
+  in the given module (see `Hologram.ClientMFA`), or an empty list if the module
+  doesn't declare any.
+  """
+  @spec client_mfa_whitelist(module) :: list({atom, arity})
+  def client_mfa_whitelist(module) do
+    if elixir_module?(module) && has_function?(module, :__hologram_client_mfas__, 0) do
+      module.__hologram_client_mfas__()
+    else
+      []
+    end
+  end
+
+  @doc """
   Returns true if the given term is a component module (a module that has a "use Hologram.Component" directive)
   Otherwise false is returned.
 
