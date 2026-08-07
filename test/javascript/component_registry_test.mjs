@@ -441,6 +441,44 @@ describe("ComponentRegistry", () => {
       assert.deepEqual(order, [1, 2, 3]);
     });
 
+    it("serializes a reentrant call made synchronously from inside another call's callback, for the same cid", async () => {
+      // Matches a JS.exec loop that synchronously dispatches further
+      // native events from inside an action's own body (bartblast/
+      // hologram#1002's actual reported symptom - the reentrant dispatch
+      // must queue exactly like an external one, not race the call it was
+      // fired from inside of).
+      initComponentRegistryEntry(cid3);
+      ComponentRegistry.putComponentStruct(cid3, Type.integer(0));
+
+      const outerDeferred = createDeferred();
+      let innerGate;
+
+      const outerGate = ComponentRegistry.runExclusive(cid3, () => {
+        innerGate = ComponentRegistry.runExclusive(cid3, () => {
+          const current = ComponentRegistry.getComponentStruct(cid3);
+          ComponentRegistry.putComponentStruct(
+            cid3,
+            Type.integer(Number(current.value) + 1),
+          );
+        });
+
+        return outerDeferred.promise.then(() => {
+          ComponentRegistry.putComponentStruct(cid3, Type.integer(1));
+        });
+      });
+
+      assert.instanceOf(innerGate, Promise);
+
+      outerDeferred.resolve();
+      await outerGate;
+      await innerGate;
+
+      assert.deepStrictEqual(
+        ComponentRegistry.getComponentStruct(cid3),
+        Type.integer(2),
+      );
+    });
+
     it("does not block a call for a different cid behind an in-flight call", () => {
       const deferred = createDeferred();
       ComponentRegistry.runExclusive(cid1, () => deferred.promise);

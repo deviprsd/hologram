@@ -163,10 +163,19 @@ export default class ComponentRegistry {
   // committed synchronously, or a Promise that settles once its commit has
   // landed.
   //
-  // Idle cid (no action in flight - the overwhelming common case): fn()
-  // runs synchronously, right here, with nothing new wrapped around it - a
-  // synchronous throw propagates synchronously out of runExclusive exactly
-  // as it would have out of a bare fn() call. This is load-bearing: making
+  // The cid is claimed SYNCHRONOUSLY, before fn() runs - not only once fn()
+  // returns. That ordering is load-bearing: fn() itself can synchronously
+  // trigger further dispatches against the same cid (e.g. a JS.exec loop
+  // that fires a burst of native dispatchEvent calls from inside an
+  // action's own body) - claiming late would let every one of those
+  // reentrant dispatches see the cid as idle too, racing each other and
+  // the outer dispatch exactly like the bug this exists to fix.
+  //
+  // Idle cid (no action already in flight - the overwhelming common case):
+  // fn() still runs synchronously, right here, with the claim already
+  // written but nothing else new wrapped around the call - a synchronous
+  // throw propagates synchronously out of runExclusive exactly as it would
+  // have out of a bare fn() call. This is load-bearing on its own:  making
   // every dispatch async would turn every action error into a rejected
   // Promise, which is exactly what hologram.mjs's executeAction comment
   // says must not happen (ChromeDriver/Wallaby's synchronous "error" event
@@ -174,32 +183,52 @@ export default class ComponentRegistry {
   //
   // Busy cid: queues behind the in-flight chain instead of racing it. By
   // the time the queued fn() runs, the prior occupant's commit has already
-  // landed, because #occupy's gate is derived from the SAME promise
-  // executeAction's own .then() chains off of registered first - see
-  // #executeActionNow.
+  // landed, because the claim it queues behind only settles once that
+  // occupant's own commit does - see #settle.
   static runExclusive(cid, fn) {
     const key = Type.encodeMapKey(cid);
     const pending = ComponentRegistry.#actionChains.get(key);
+    const idle = pending === undefined;
 
-    if (pending === undefined) {
-      const result = fn();
-      return result instanceof Promise
-        ? ComponentRegistry.#occupy(key, result)
-        : null;
-    }
+    let claimSettled;
+    const claim = new Promise((resolve) => {
+      claimSettled = resolve;
+    });
+    ComponentRegistry.#actionChains.set(key, claim);
 
-    const ran = pending.then(() => {
+    const runFn = () => {
       // The cid's page may have navigated away while this was queued
-      // (populate()/clear() already dropped the chain entry that gated us,
+      // (populate()/clear() already dropped the chain entry that gated it,
       // but that can't cancel a continuation already attached to it) -
       // running against a cid the current registry no longer knows about
-      // would crash callNamedFunction on a null module. No-op instead.
-      if (!ComponentRegistry.isCidRegistered(cid)) {
+      // would crash callNamedFunction on a null module. No-op instead. Only
+      // reachable once queued - an idle dispatch against a genuinely
+      // unregistered cid is a real bug and should keep crashing loudly.
+      if (!idle && !ComponentRegistry.isCidRegistered(cid)) {
         return null;
       }
 
+      return fn();
+    };
+
+    if (idle) {
+      let result;
+
       try {
-        return fn();
+        result = runFn();
+      } catch (error) {
+        ComponentRegistry.#settle(key, claim, claimSettled);
+        throw error;
+      }
+
+      return ComponentRegistry.#finish(key, claim, claimSettled, result);
+    }
+
+    pending.then(() => {
+      let result;
+
+      try {
+        result = runFn();
       } catch (error) {
         // Can no longer throw synchronously out of runExclusive - this is
         // inside a microtask reaction. Re-surface on the next microtask
@@ -210,31 +239,54 @@ export default class ComponentRegistry {
           throw error;
         });
 
-        return null;
+        ComponentRegistry.#settle(key, claim, claimSettled);
+        return;
       }
+
+      ComponentRegistry.#finish(key, claim, claimSettled, result);
     });
 
-    return ComponentRegistry.#occupy(key, ran);
+    return claim;
   }
 
-  // Stores a never-rejecting gate for `key` derived from `settleSignal`, and
-  // arranges for the entry to be dropped once it settles - unless a later
-  // call has already replaced it with its own gate, in which case that
-  // later call owns the teardown.
-  static #occupy(key, settleSignal) {
-    const gate = settleSignal.then(
+  // fn() committed synchronously (result is not a Promise) or is still
+  // in flight (result is a Promise) - either way, replaces `claim` in the
+  // chain with something that reflects fn()'s actual completion, so a call
+  // that queued behind `claim` while fn() was running observes fn()'s
+  // commit rather than just fn() having been invoked.
+  static #finish(key, claim, claimSettled, result) {
+    if (!(result instanceof Promise)) {
+      ComponentRegistry.#settle(key, claim, claimSettled);
+      return null;
+    }
+
+    const gate = result.then(
       () => {},
       () => {},
     );
 
-    ComponentRegistry.#actionChains.set(key, gate);
+    if (ComponentRegistry.#actionChains.get(key) === claim) {
+      ComponentRegistry.#actionChains.set(key, gate);
+    }
 
     gate.then(() => {
       if (ComponentRegistry.#actionChains.get(key) === gate) {
         ComponentRegistry.#actionChains.delete(key);
       }
+
+      claimSettled();
     });
 
     return gate;
+  }
+
+  // Drops `claim` from the chain (unless a later call already replaced it
+  // with its own) and resolves it, releasing whatever queued behind it.
+  static #settle(key, claim, claimSettled) {
+    if (ComponentRegistry.#actionChains.get(key) === claim) {
+      ComponentRegistry.#actionChains.delete(key);
+    }
+
+    claimSettled();
   }
 }
