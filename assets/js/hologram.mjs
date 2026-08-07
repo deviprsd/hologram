@@ -119,9 +119,27 @@ export default class Hologram {
   // Promises, breaking ChromeDriver/Wallaby error detection which relies on the
   // synchronous "error" event. Async action errors are caught separately via the
   // "unhandledrejection" event listener in #init().
+  //
+  // Bug #1002: dispatch is serialized per target through
+  // ComponentRegistry.runExclusive - when the target has no action in
+  // flight (the common case) #executeActionNow below runs synchronously and
+  // this behaves exactly as it always has. Only when the same target
+  // already has an uncommitted action does a new dispatch queue behind it,
+  // so it reads state after that commit lands instead of racing it. See
+  // runExclusive's own comment for why this preserves the synchronous-throw
+  // contract above.
   // TODO: make private (tested implicitely in feature tests)
   // Deps: [:maps.get/2]
   static executeAction(action) {
+    const target = Erlang_Maps["get/2"](Type.atom("target"), action);
+
+    return ComponentRegistry.runExclusive(target, () =>
+      Hologram.#executeActionNow(action),
+    );
+  }
+
+  // Deps: [:maps.get/2]
+  static #executeActionNow(action) {
     const startTime = performance.now();
     globalThis.Hologram.isProfilingEnabled = true;
 
@@ -149,14 +167,22 @@ export default class Hologram {
       resultComponentStruct.then((resolved) =>
         Hologram.#processActionResult(resolved, name, target, startTime),
       );
-    } else {
-      Hologram.#processActionResult(
-        resultComponentStruct,
-        name,
-        target,
-        startTime,
-      );
+
+      // Handed back so runExclusive can attach its own tracking reaction
+      // after the .then() above - registered first, it's guaranteed to run
+      // (and thus commit via putComponentStruct) before runExclusive's gate
+      // is considered settled.
+      return resultComponentStruct;
     }
+
+    Hologram.#processActionResult(
+      resultComponentStruct,
+      name,
+      target,
+      startTime,
+    );
+
+    return null;
   }
 
   // Made public to make tests easier

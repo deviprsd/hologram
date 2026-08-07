@@ -34,6 +34,184 @@ const cid1 = Type.bitstring("my_component_1");
 const module7 = Type.alias("Hologram.Test.Fixtures.Module7");
 
 describe("Hologram", () => {
+  // Bug #1002: a component's whole action/3 is compiled async if ANY clause
+  // in it transitively reaches Task.await/1, even a sibling clause never
+  // invoked by a given dispatch. Before this fix, executeAction() read a
+  // target's struct and committed the result with no exclusion between
+  // separate dispatches - a synchronous burst of dispatches against the
+  // same target all read the same pre-burst struct, and only the last
+  // commit survived. These tests exercise executeAction() directly (it was
+  // previously only ever stubbed, see the "TODO: make private" comment on
+  // it) via a hand-defined action/3 with both a sync-returning and an
+  // async-returning clause, matching the two shapes real compiled code
+  // produces per clause.
+  describe("executeAction()", () => {
+    const actionModuleName = "Hologram.Test.Fixtures.ActionRaceModule";
+    const actionModule = Type.alias(actionModuleName);
+
+    function buildStruct(count) {
+      return Type.componentStruct({
+        state: Type.map([[Type.atom("count"), Type.integer(count)]]),
+      });
+    }
+
+    function buildAction(name, target) {
+      return Type.actionStruct({
+        name: Type.atom(name),
+        params: Type.map(),
+        target,
+      });
+    }
+
+    function registerCid(cid, count) {
+      ComponentRegistry.putEntry(
+        cid,
+        Type.map([
+          [Type.atom("module"), actionModule],
+          [Type.atom("struct"), buildStruct(count)],
+        ]),
+      );
+    }
+
+    function countOf(cid) {
+      const state = Erlang_Maps["get/2"](
+        Type.atom("state"),
+        ComponentRegistry.getComponentStruct(cid),
+      );
+
+      return Number(Erlang_Maps["get/2"](Type.atom("count"), state).value);
+    }
+
+    beforeEach(() => {
+      ComponentRegistry.clear();
+      sinon.stub(Hologram, "render");
+
+      // :throw - synchronous throw, no Task.await anywhere.
+      // :bump - synchronous increment, no Task.await anywhere.
+      // :bump_async - async-returning clause (as if this were the sibling
+      // clause of :bump in a component whose whole action/3 got compiled
+      // async because of an unrelated Task.await elsewhere), but its body
+      // does the same synchronous increment - no real await inside it.
+      Interpreter.defineElixirFunction(actionModuleName, "action", 3, "public", [
+        {
+          params: (_context) => [
+            Type.atom("throw"),
+            Type.matchPlaceholder(),
+            Type.variablePattern("struct"),
+          ],
+          guards: [],
+          body: (_context) => {
+            throw new Error("boom");
+          },
+        },
+        {
+          params: (_context) => [
+            Type.atom("bump"),
+            Type.matchPlaceholder(),
+            Type.variablePattern("struct"),
+          ],
+          guards: [],
+          body: (context) => {
+            const state = Erlang_Maps["get/2"](
+              Type.atom("state"),
+              context.vars.struct,
+            );
+
+            const count = Erlang_Maps["get/2"](Type.atom("count"), state);
+
+            const newState = Erlang_Maps["put/3"](
+              Type.atom("count"),
+              Type.integer(Number(count.value) + 1),
+              state,
+            );
+
+            return Erlang_Maps["put/3"](
+              Type.atom("state"),
+              newState,
+              context.vars.struct,
+            );
+          },
+        },
+        {
+          params: (_context) => [
+            Type.atom("bump_async"),
+            Type.matchPlaceholder(),
+            Type.variablePattern("struct"),
+          ],
+          guards: [],
+          body: async (context) => {
+            const state = Erlang_Maps["get/2"](
+              Type.atom("state"),
+              context.vars.struct,
+            );
+
+            const count = Erlang_Maps["get/2"](Type.atom("count"), state);
+
+            const newState = Erlang_Maps["put/3"](
+              Type.atom("count"),
+              Type.integer(Number(count.value) + 1),
+              state,
+            );
+
+            return Erlang_Maps["put/3"](
+              Type.atom("state"),
+              newState,
+              context.vars.struct,
+            );
+          },
+        },
+      ]);
+    });
+
+    afterEach(() => sinon.restore());
+
+    it("propagates a synchronous action error synchronously to the caller", () => {
+      registerCid(cid1, 0);
+
+      assert.throws(() => {
+        Hologram.executeAction(buildAction("throw", cid1));
+      }, "boom");
+    });
+
+    it("does not wrap a synchronous action's result in a Promise when the target is idle", () => {
+      registerCid(cid1, 0);
+
+      const result = Hologram.executeAction(buildAction("bump", cid1));
+
+      assert.isNull(result);
+      assert.equal(countOf(cid1), 1);
+    });
+
+    it("makes a second dispatch to the same target observe the first dispatch's committed struct", async () => {
+      registerCid(cid1, 0);
+
+      const gate1 = Hologram.executeAction(buildAction("bump_async", cid1));
+      assert.instanceOf(gate1, Promise);
+
+      const gate2 = Hologram.executeAction(buildAction("bump_async", cid1));
+      assert.instanceOf(gate2, Promise);
+
+      await gate1;
+      await gate2;
+
+      assert.equal(countOf(cid1), 2);
+    });
+
+    it("does not delay a dispatch to a different target behind an in-flight one", () => {
+      registerCid(cid1, 0);
+
+      const cid2 = Type.bitstring("my_component_2");
+      registerCid(cid2, 0);
+
+      Hologram.executeAction(buildAction("bump_async", cid1));
+
+      const result = Hologram.executeAction(buildAction("bump", cid2));
+
+      assert.isNull(result);
+      assert.equal(countOf(cid2), 1);
+    });
+  });
+
   describe("executeLoadPrefetchedPageAction()", () => {
     let eventTargetNode, loadNewPageStub;
 
