@@ -10,8 +10,11 @@ defineRuntimeGlobals();
 describe("MouseEvent", () => {
   it("buildOperationParam()", () => {
     const event = {
+      altKey: true,
       clientX: 10,
       clientY: 20,
+      ctrlKey: false,
+      metaKey: true,
       movementX: 5,
       movementY: 15,
       offsetX: 30,
@@ -20,6 +23,7 @@ describe("MouseEvent", () => {
       pageY: 2,
       screenX: 100,
       screenY: 200,
+      shiftKey: false,
     };
 
     const result = MouseEvent.buildOperationParam(event);
@@ -27,8 +31,11 @@ describe("MouseEvent", () => {
     assert.deepStrictEqual(
       result,
       Type.map([
+        [Type.atom("alt_key"), Type.boolean(true)],
         [Type.atom("client_x"), Type.float(10)],
         [Type.atom("client_y"), Type.float(20)],
+        [Type.atom("ctrl_key"), Type.boolean(false)],
+        [Type.atom("meta_key"), Type.boolean(true)],
         [Type.atom("movement_x"), Type.float(5)],
         [Type.atom("movement_y"), Type.float(15)],
         [Type.atom("offset_x"), Type.float(30)],
@@ -37,6 +44,7 @@ describe("MouseEvent", () => {
         [Type.atom("page_y"), Type.float(2)],
         [Type.atom("screen_x"), Type.float(100)],
         [Type.atom("screen_y"), Type.float(200)],
+        [Type.atom("shift_key"), Type.boolean(false)],
       ]),
     );
   });

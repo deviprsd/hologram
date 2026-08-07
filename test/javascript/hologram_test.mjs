@@ -342,8 +342,11 @@ describe("Hologram", () => {
     const eventType = "click";
 
     const notIgnoredEvent = {
+      altKey: false,
       clientX: 10,
       clientY: 20,
+      ctrlKey: false,
+      metaKey: false,
       movementX: 5,
       movementY: 15,
       offsetX: 30,
@@ -353,6 +356,7 @@ describe("Hologram", () => {
       pointerType: "mouse",
       screenX: 100,
       screenY: 200,
+      shiftKey: false,
       preventDefault: () => null,
       target: {id: "dummy_node"},
     };
@@ -438,8 +442,11 @@ describe("Hologram", () => {
           [
             Type.atom("event"),
             Type.map([
+              [Type.atom("alt_key"), Type.boolean(false)],
               [Type.atom("client_x"), Type.float(10)],
               [Type.atom("client_y"), Type.float(20)],
+              [Type.atom("ctrl_key"), Type.boolean(false)],
+              [Type.atom("meta_key"), Type.boolean(false)],
               [Type.atom("movement_x"), Type.float(5)],
               [Type.atom("movement_y"), Type.float(15)],
               [Type.atom("offset_x"), Type.float(30)],
@@ -449,6 +456,7 @@ describe("Hologram", () => {
               [Type.atom("pointer_type"), Type.atom("mouse")],
               [Type.atom("screen_x"), Type.float(100)],
               [Type.atom("screen_y"), Type.float(200)],
+              [Type.atom("shift_key"), Type.boolean(false)],
             ]),
           ],
         ]),
@@ -491,8 +499,11 @@ describe("Hologram", () => {
           [
             Type.atom("event"),
             Type.map([
+              [Type.atom("alt_key"), Type.boolean(false)],
               [Type.atom("client_x"), Type.float(10)],
               [Type.atom("client_y"), Type.float(20)],
+              [Type.atom("ctrl_key"), Type.boolean(false)],
+              [Type.atom("meta_key"), Type.boolean(false)],
               [Type.atom("movement_x"), Type.float(5)],
               [Type.atom("movement_y"), Type.float(15)],
               [Type.atom("offset_x"), Type.float(30)],
@@ -502,6 +513,7 @@ describe("Hologram", () => {
               [Type.atom("pointer_type"), Type.atom("mouse")],
               [Type.atom("screen_x"), Type.float(100)],
               [Type.atom("screen_y"), Type.float(200)],
+              [Type.atom("shift_key"), Type.boolean(false)],
             ]),
           ],
         ]),
@@ -552,8 +564,11 @@ describe("Hologram", () => {
           [
             Type.atom("event"),
             Type.map([
+              [Type.atom("alt_key"), Type.boolean(false)],
               [Type.atom("client_x"), Type.float(10)],
               [Type.atom("client_y"), Type.float(20)],
+              [Type.atom("ctrl_key"), Type.boolean(false)],
+              [Type.atom("meta_key"), Type.boolean(false)],
               [Type.atom("movement_x"), Type.float(5)],
               [Type.atom("movement_y"), Type.float(15)],
               [Type.atom("offset_x"), Type.float(30)],
@@ -563,6 +578,7 @@ describe("Hologram", () => {
               [Type.atom("pointer_type"), Type.atom("mouse")],
               [Type.atom("screen_x"), Type.float(100)],
               [Type.atom("screen_y"), Type.float(200)],
+              [Type.atom("shift_key"), Type.boolean(false)],
             ]),
           ],
         ]),
@@ -615,8 +631,11 @@ describe("Hologram", () => {
           [
             Type.atom("event"),
             Type.map([
+              [Type.atom("alt_key"), Type.boolean(false)],
               [Type.atom("client_x"), Type.float(10)],
               [Type.atom("client_y"), Type.float(20)],
+              [Type.atom("ctrl_key"), Type.boolean(false)],
+              [Type.atom("meta_key"), Type.boolean(false)],
               [Type.atom("movement_x"), Type.float(5)],
               [Type.atom("movement_y"), Type.float(15)],
               [Type.atom("offset_x"), Type.float(30)],
@@ -626,6 +645,7 @@ describe("Hologram", () => {
               [Type.atom("pointer_type"), Type.atom("mouse")],
               [Type.atom("screen_x"), Type.float(100)],
               [Type.atom("screen_y"), Type.float(200)],
+              [Type.atom("shift_key"), Type.boolean(false)],
             ]),
           ],
         ]),
@@ -672,8 +692,11 @@ describe("Hologram", () => {
           [
             Type.atom("event"),
             Type.map([
+              [Type.atom("alt_key"), Type.boolean(false)],
               [Type.atom("client_x"), Type.float(10)],
               [Type.atom("client_y"), Type.float(20)],
+              [Type.atom("ctrl_key"), Type.boolean(false)],
+              [Type.atom("meta_key"), Type.boolean(false)],
               [Type.atom("movement_x"), Type.float(5)],
               [Type.atom("movement_y"), Type.float(15)],
               [Type.atom("offset_x"), Type.float(30)],
@@ -683,6 +706,7 @@ describe("Hologram", () => {
               [Type.atom("pointer_type"), Type.atom("mouse")],
               [Type.atom("screen_x"), Type.float(100)],
               [Type.atom("screen_y"), Type.float(200)],
+              [Type.atom("shift_key"), Type.boolean(false)],
             ]),
           ],
         ]),

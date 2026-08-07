@@ -12,8 +12,11 @@ describe("PointerEvent", () => {
   describe("buildOperationParam()", () => {
     it("known pointer type", () => {
       const event = {
+        altKey: true,
         clientX: 10,
         clientY: 20,
+        ctrlKey: false,
+        metaKey: true,
         movementX: 5,
         movementY: 15,
         offsetX: 30,
@@ -23,13 +26,17 @@ describe("PointerEvent", () => {
         pointerType: "mouse",
         screenX: 100,
         screenY: 200,
+        shiftKey: false,
       };
 
       const result = PointerEvent.buildOperationParam(event);
 
       const expected = Type.map([
+        [Type.atom("alt_key"), Type.boolean(true)],
         [Type.atom("client_x"), Type.float(10)],
         [Type.atom("client_y"), Type.float(20)],
+        [Type.atom("ctrl_key"), Type.boolean(false)],
+        [Type.atom("meta_key"), Type.boolean(true)],
         [Type.atom("movement_x"), Type.float(5)],
         [Type.atom("movement_y"), Type.float(15)],
         [Type.atom("offset_x"), Type.float(30)],
@@ -39,6 +46,7 @@ describe("PointerEvent", () => {
         [Type.atom("pointer_type"), Type.atom("mouse")],
         [Type.atom("screen_x"), Type.float(100)],
         [Type.atom("screen_y"), Type.float(200)],
+        [Type.atom("shift_key"), Type.boolean(false)],
       ]);
 
       assert.deepStrictEqual(result, expected);
@@ -46,8 +54,11 @@ describe("PointerEvent", () => {
 
     it("unknown pointer type", () => {
       const event = {
+        altKey: false,
         clientX: 10,
         clientY: 20,
+        ctrlKey: true,
+        metaKey: false,
         movementX: 5,
         movementY: 15,
         offsetX: 30,
@@ -57,13 +68,17 @@ describe("PointerEvent", () => {
         pointerType: "",
         screenX: 100,
         screenY: 200,
+        shiftKey: true,
       };
 
       const result = PointerEvent.buildOperationParam(event);
 
       const expected = Type.map([
+        [Type.atom("alt_key"), Type.boolean(false)],
         [Type.atom("client_x"), Type.float(10)],
         [Type.atom("client_y"), Type.float(20)],
+        [Type.atom("ctrl_key"), Type.boolean(true)],
+        [Type.atom("meta_key"), Type.boolean(false)],
         [Type.atom("movement_x"), Type.float(5)],
         [Type.atom("movement_y"), Type.float(15)],
         [Type.atom("offset_x"), Type.float(30)],
@@ -73,6 +88,7 @@ describe("PointerEvent", () => {
         [Type.atom("pointer_type"), Type.nil()],
         [Type.atom("screen_x"), Type.float(100)],
         [Type.atom("screen_y"), Type.float(200)],
+        [Type.atom("shift_key"), Type.boolean(true)],
       ]);
 
       assert.deepStrictEqual(result, expected);

@@ -10,8 +10,11 @@ export default class MouseEvent {
 
   static buildOperationParam(event) {
     return Type.map([
+      [Type.atom("alt_key"), Type.boolean(event.altKey)],
       [Type.atom("client_x"), Type.float(event.clientX)],
       [Type.atom("client_y"), Type.float(event.clientY)],
+      [Type.atom("ctrl_key"), Type.boolean(event.ctrlKey)],
+      [Type.atom("meta_key"), Type.boolean(event.metaKey)],
       [Type.atom("movement_x"), Type.float(event.movementX)],
       [Type.atom("movement_y"), Type.float(event.movementY)],
       [Type.atom("offset_x"), Type.float(event.offsetX)],
@@ -20,6 +23,7 @@ export default class MouseEvent {
       [Type.atom("page_y"), Type.float(event.pageY)],
       [Type.atom("screen_x"), Type.float(event.screenX)],
       [Type.atom("screen_y"), Type.float(event.screenY)],
+      [Type.atom("shift_key"), Type.boolean(event.shiftKey)],
     ]);
   }
 

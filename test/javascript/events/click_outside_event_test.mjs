@@ -10,8 +10,11 @@ defineRuntimeGlobals();
 describe("ClickOutsideEvent", () => {
   it("buildOperationParam()", () => {
     const event = {
+      altKey: false,
       clientX: 10,
       clientY: 20,
+      ctrlKey: false,
+      metaKey: false,
       movementX: 5,
       movementY: 15,
       offsetX: 30,
@@ -21,6 +24,7 @@ describe("ClickOutsideEvent", () => {
       pointerType: "mouse",
       screenX: 100,
       screenY: 200,
+      shiftKey: false,
     };
 
     assert.deepStrictEqual(
