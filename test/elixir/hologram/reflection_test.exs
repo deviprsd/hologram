@@ -193,8 +193,9 @@ defmodule Hologram.ReflectionTest do
 
   describe "client_mfa_whitelist/1" do
     test "module which declares @hologram_client_mfa" do
-      assert Enum.sort(client_mfa_whitelist(ClientMFAModule1)) ==
-               Enum.sort(bar: 2, baz: 0, foo: 1)
+      assert ClientMFAModule1
+             |> client_mfa_whitelist()
+             |> Enum.sort() == Enum.sort(bar: 2, baz: 0, foo: 1)
     end
 
     test "module which uses Hologram.ClientMFA but declares no @hologram_client_mfa" do
