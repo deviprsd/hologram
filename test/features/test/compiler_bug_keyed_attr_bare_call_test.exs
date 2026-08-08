@@ -5,6 +5,13 @@ defmodule HologramFeatureTests.CompilerBugKeyedAttrBareCallTest do
 
   # Repro for https://github.com/deviprsd/hologram/issues/13.
   #
+  # STATUS (2026-08-08): both assertions PASS on this minimal page - the bug
+  # does NOT reproduce here, on fresh AND incremental builds. The original
+  # finding (Setu app, `Holoprint.Workspace.Row.row_class/1`) is unconfirmed
+  # as to mechanism; something present in the real app's larger call graph
+  # is the actual trigger, not the bare-call-as-keyed-attribute-value shape
+  # alone. See the issue #13 comment thread for the full writeup.
+  #
   # No click needed - `{%for}` items render client-side on mount, so the
   # bare-call-as-keyed-attribute-value crash (if present) happens on page
   # load. Expected result if the issue reproduces: the first assertion
