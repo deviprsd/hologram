@@ -16,7 +16,9 @@ const Erlang_Maps = {
 
     const pair = Type.mapGet(map, Type.encodeMapKey(key));
 
-    return pair === undefined ? Type.atom("error") : pair[1];
+    return pair === undefined
+      ? Type.atom("error")
+      : Type.tuple([Type.atom("ok"), pair[1]]);
   },
   // End find/2
   // Deps: []
