@@ -2595,6 +2595,56 @@ defmodule Hologram.Compiler.TransformerTest do
                line: 4
              }
     end
+
+    test "clause matching a struct pattern is transformed in pattern context (issue #12)" do
+      ast =
+        ast("""
+        case x do
+          %Hologram.Test.Fixtures.Compiler.Transformer.Module105{a: 1} -> a
+        end
+        """)
+
+      assert transform(ast, %Context{}) == %IR.Case{
+               condition: %IR.Variable{name: :x},
+               clauses: [
+                 %IR.Clause{
+                   match: %IR.MapType{
+                     data: [
+                       {%IR.AtomType{value: :__struct__}, %IR.AtomType{value: Module105}},
+                       {%IR.AtomType{value: :a}, %IR.IntegerType{value: 1}}
+                     ]
+                   },
+                   guards: [],
+                   body: %IR.Block{
+                     expressions: [%IR.Variable{name: :a}]
+                   }
+                 }
+               ],
+               line: 1
+             }
+    end
+
+    test "clause with a guard matching a struct pattern is transformed in pattern context (issue #12)" do
+      ast =
+        ast("""
+        case x do
+          %Hologram.Test.Fixtures.Compiler.Transformer.Module105{a: a} when a > 0 -> a
+        end
+        """)
+
+      assert %IR.Case{
+               clauses: [
+                 %IR.Clause{
+                   match: %IR.MapType{
+                     data: [
+                       {%IR.AtomType{value: :__struct__}, %IR.AtomType{value: Module105}},
+                       {%IR.AtomType{value: :a}, %IR.Variable{name: :a}}
+                     ]
+                   }
+                 }
+               ]
+             } = transform(ast, %Context{})
+    end
   end
 
   describe "comprehension" do
