@@ -75,7 +75,10 @@ describe("Erlang_Maps", () => {
 
       const result = find(key, map);
 
-      assert.deepStrictEqual(result, value);
+      assert.deepStrictEqual(
+        result,
+        Type.tuple([Type.atom("ok"), value]),
+      );
     });
 
     it("key does not exist in map", () => {
