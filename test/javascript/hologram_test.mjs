@@ -210,6 +210,23 @@ describe("Hologram", () => {
       assert.isNull(result);
       assert.equal(countOf(cid2), 1);
     });
+
+    it("no-ops instead of crashing when the target's cid was deregistered before dispatch (issue #18)", () => {
+      registerCid(cid1, 0);
+
+      // Nothing in the runtime ever removes a single entry - the only way a
+      // previously-registered cid stops being registered is a full-registry
+      // swap, which only happens on navigation (ComponentRegistry.populate()).
+      // A stale native-event listener or debounced timer armed before that
+      // swap can still fire afterwards, dispatching against a cid the fresh
+      // registry never heard of.
+      ComponentRegistry.populate(Type.map());
+
+      assert.doesNotThrow(() => {
+        const result = Hologram.executeAction(buildAction("bump", cid1));
+        assert.isNull(result);
+      });
+    });
   });
 
   describe("executeLoadPrefetchedPageAction()", () => {

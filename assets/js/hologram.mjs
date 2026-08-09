@@ -148,6 +148,19 @@ export default class Hologram {
     const target = Erlang_Maps["get/2"](Type.atom("target"), action);
 
     const componentModule = ComponentRegistry.getComponentModule(target);
+
+    // Issue #18: nothing in the runtime removes a single ComponentRegistry
+    // entry - the only way target stops being registered is a full-registry
+    // swap (ComponentRegistry.populate(), navigation-only). A stale native
+    // event listener or debounced timer armed before that swap can still
+    // fire afterwards. getComponentModule returns null for exactly this
+    // case (see its own comment) - no-op instead of crashing
+    // callNamedFunction on a null module, same as runExclusive's queued-path
+    // isCidRegistered check already does for the busy-cid case.
+    if (componentModule === null) {
+      return null;
+    }
+
     const componentStruct = ComponentRegistry.getComponentStruct(target);
     const args = [name, params, componentStruct];
 
