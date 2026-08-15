@@ -170,6 +170,17 @@ export default class RenderCache {
       $.#encounteredCids.push(descendantCidKey);
     }
 
+    // Same reasoning as the #encounteredCids backfill above, for #formInputVnodes: a replayed
+    // entry's own controlled-input vnodes were already collected the render they were cached
+    // (see noteFormInput()), but nothing re-adds them here, so an enclosing ancestor's
+    // formInputsSince() slice would otherwise permanently lose them across this replay too - and
+    // when that ancestor itself later replays, Renderer.replayFormInputs() would never re-sync
+    // those inputs' value/checked, since snabbdom's identity check already skipped their
+    // hook.update.
+    for (const formInputVnode of entry.formInputVnodes) {
+      $.#formInputVnodes.push(formInputVnode);
+    }
+
     return entry;
   }
 
