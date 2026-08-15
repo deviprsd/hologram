@@ -98,11 +98,24 @@ export default class Vdom {
   // Only the vnode key is renumbered, never the comment's text, so server-rendered and
   // client-rendered markup stay byte-identical. Both sides walk a children list in document order,
   // so both arrive at the same keys.
+  // A repeated marker key can reach here two ways: as a bare comment vnode (sel "!", not yet
+  // grouped - the common case, most marked spans are still flat when their own list is
+  // finalized) or as a fragment (sel undefined) that groupBlockFragments already gathered one
+  // level down - two sibling instances of the same component template each group their own
+  // top-level marked block into a fragment inside their own #renderNodes call, before this list
+  // ever sees them, so both fragments already carry the identical un-renumbered open-marker key
+  // by the time they reach here as ordinary children of this list. Excluding fragments here would
+  // let that duplicate reach snabbdom's keyed diff unrenumbered - the exact "same component placed
+  // twice" case this function exists to cover. sel !== "!" alone can't tell the two apart from a
+  // real element (whose sel is its tag name, e.g. "div") or a resource-keyed link/script (sel is
+  // also its tag name) - excluding those needs sel !== undefined too.
   static dedupeMarkerKeys(children) {
     const counts = new Map();
 
     for (const child of children) {
-      if (child?.sel !== "!" || !child.key) {
+      const isMarkerOrFragment = child?.sel === "!" || child?.sel === undefined;
+
+      if (!isMarkerOrFragment || !child.key) {
         continue;
       }
 

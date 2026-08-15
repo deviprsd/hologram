@@ -385,6 +385,60 @@ describe("Renderer", () => {
       );
     });
 
+    // Two sibling instances of the same template (nested lists here stand in for what two
+    // stateful component instances of the same module produce - a component's own top-level
+    // output is grouped into a fragment inside its own #renderNodes call, before the parent ever
+    // sees it, exactly like a nested list is here) each carry the identical marker hash, since the
+    // hash is derived from the template, not the instance. Each gets grouped into its own fragment
+    // *before* this list's own #renderNodes runs, so by the time this list's own dedupeMarkerKeys
+    // sees them, they already have matching un-renumbered keys.
+    it("renumbers repeated fragments from sibling instances of one template, not just repeated bare markers", () => {
+      // Two "[h:1a2b3c:0:o]<div></div>[h:1a2b3c:0:c]" spans, each pre-grouped into its own
+      // fragment one level down, spliced into one parent list.
+      const marker = (side) =>
+        Type.tuple([
+          Type.atom("public_comment"),
+          Type.list([
+            Type.tuple([
+              Type.atom("text"),
+              Type.bitstring(`[h:1a2b3c:0:${side}]`),
+            ]),
+          ]),
+        ]);
+
+      const element = (tagName) =>
+        Type.tuple([
+          Type.atom("element"),
+          Type.bitstring(tagName),
+          Type.list(),
+          Type.list(),
+        ]);
+
+      const instance = () =>
+        Type.list([marker("o"), element("div"), marker("c")]);
+
+      const node = Type.list([instance(), instance()]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      // Both are fragments (sel undefined), not bare comment vnodes - dedupeMarkerKeys must
+      // still tell them apart, or snabbdom's keyed diff receives two siblings with the same key.
+      assert.equal(result.length, 2);
+      assert.isUndefined(result[0].sel);
+      assert.isUndefined(result[1].sel);
+
+      assert.deepStrictEqual(
+        result.map((r) => r.key),
+        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1"],
+      );
+    });
+
     it("with nested stateful components", () => {
       const cid3 = Type.bitstring("component_3");
       const cid7 = Type.bitstring("component_7");
