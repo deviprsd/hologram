@@ -9929,5 +9929,154 @@ describe("Renderer", () => {
       assert.equal(Renderer.listenerBindings.length, 1);
       assert.equal(Renderer.listenerBindings[0].slotKey, firstSlotKey);
     });
+
+    // #20: RenderCache.replay() must leave every enclosing ancestor able to see a replayed
+    // component's own descendants, or a descendant several levels below a replayed hit can go
+    // dirty and never be re-rendered again (permanently, until something unrelated invalidates
+    // the ancestor's own cache entry via a different path).
+    describe("replay backfill (#20)", () => {
+      // Defines a component module whose template renders "<@a>" followed by childNode (or
+      // nothing, for the innermost link in the chain) - a real ancestor/descendant relationship
+      // through the component's own template, not through slots, so childrenDom stays out of the
+      // picture (same shape as Module10/11/12 above, inlined here instead of as fixture files
+      // since this chain exists only for this describe block).
+      function defineChainModule(moduleName, childNode) {
+        Interpreter.defineElixirFunction(
+          moduleName,
+          "__props__",
+          0,
+          "public",
+          [
+            {
+              params: (_context) => [],
+              guards: [],
+              body: (_context) => Type.list(),
+            },
+          ],
+        );
+
+        Interpreter.defineElixirFunction(moduleName, "template", 0, "public", [
+          {
+            params: (_context) => [],
+            guards: [],
+            body: (context) => {
+              globalThis.Hologram.return = Type.anonymousFunction(
+                1,
+                [
+                  {
+                    params: (_context) => [Type.variablePattern("vars")],
+                    guards: [],
+                    body: (context) => {
+                      Interpreter.matchOperator(
+                        context.vars.vars,
+                        Type.matchPlaceholder(),
+                        context,
+                      );
+                      Interpreter.updateVarsToMatchedValues(context);
+
+                      const nodes = [
+                        Type.tuple([
+                          Type.atom("expression"),
+                          Type.tuple([
+                            Interpreter.dotOperator(
+                              context.vars.vars,
+                              Type.atom("a"),
+                            ),
+                          ]),
+                        ]),
+                      ];
+
+                      if (childNode !== null) {
+                        nodes.push(childNode);
+                      }
+
+                      return Type.list(nodes);
+                    },
+                  },
+                ],
+                context,
+              );
+              Interpreter.updateVarsToMatchedValues(context);
+              return globalThis.Hologram.return;
+            },
+          },
+        ]);
+      }
+
+      const moduleP = "Hologram.Test.Fixtures.Template.Renderer.MemoReplayP";
+      const moduleC = "Hologram.Test.Fixtures.Template.Renderer.MemoReplayC";
+      const moduleG = "Hologram.Test.Fixtures.Template.Renderer.MemoReplayG";
+
+      const cidP = Type.bitstring("memo_replay_p");
+      const cidC = Type.bitstring("memo_replay_c");
+      const cidG = Type.bitstring("memo_replay_g");
+
+      function seedChain() {
+        const gNode = componentNode(moduleG, cidG);
+        const cNode = componentNode(moduleC, cidC);
+
+        defineChainModule(moduleG, null);
+        defineChainModule(moduleC, gNode);
+        defineChainModule(moduleP, cNode);
+
+        ComponentRegistry.putEntry(
+          cidP,
+          componentRegistryEntryFixture({
+            module: Type.alias(moduleP),
+            state: Type.map([[Type.atom("a"), Type.integer(1)]]),
+          }),
+        );
+
+        ComponentRegistry.putEntry(
+          cidC,
+          componentRegistryEntryFixture({
+            module: Type.alias(moduleC),
+            state: Type.map([[Type.atom("a"), Type.integer(2)]]),
+          }),
+        );
+
+        ComponentRegistry.putEntry(
+          cidG,
+          componentRegistryEntryFixture({
+            module: Type.alias(moduleG),
+            state: Type.map([[Type.atom("a"), Type.integer(3)]]),
+          }),
+        );
+      }
+
+      it("keeps a grandchild's dirty state visible to a distant ancestor after the child in between replays", () => {
+        seedChain();
+
+        const pNode = componentNode(moduleP, cidP);
+
+        // R1: everything fresh.
+        renderOnce(pNode);
+
+        // R2: dirty p only - p re-renders, c is reusable and replays (its own props/context/
+        // struct/parentTagName are all unchanged), so c's own descendant (g) is never
+        // re-encountered this render. Without the fix, p's new cache entry's descendantCids
+        // silently drops g.
+        const structP = ComponentRegistry.getComponentStruct(cidP);
+        ComponentRegistry.putComponentStruct(
+          cidP,
+          putState(structP, Type.map([[Type.atom("a"), Type.integer(11)]])),
+        );
+        const second = renderOnce(pNode);
+
+        assert.deepStrictEqual(second, ["1123"]);
+
+        // R3: dirty g only. If p's descendantCids still contains g, p's isReusable() must
+        // reject reuse and p must re-descend so g's new value reaches the output.
+        const structG = ComponentRegistry.getComponentStruct(cidG);
+        ComponentRegistry.putComponentStruct(
+          cidG,
+          putState(structG, Type.map([[Type.atom("a"), Type.integer(999)]])),
+        );
+        const third = renderOnce(pNode);
+
+        assert.notStrictEqual(second, third);
+        assert.deepStrictEqual(third, ["11" + "2" + "999"]);
+      });
+    });
   });
 });

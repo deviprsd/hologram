@@ -155,8 +155,20 @@ export default class RenderCache {
     $.#markLive(cidKey, entry.descendantCids);
   }
 
+  // A replayed entry's own descendants were never re-traversed this render, so nothing pushed
+  // them onto #encounteredCids (noteEncountered() only fires for a cid actually visited). Any
+  // enclosing ancestor computing its OWN descendantCids via descendantsSince() (a slice of
+  // #encounteredCids taken across this replay) would otherwise silently lose track of them -
+  // permanently, since the ancestor's next cache entry is built from that incomplete slice, and
+  // an ancestor that can no longer see one of its real descendants can never again correctly
+  // reject reuse when that descendant goes dirty. Backfilling here keeps a replay indistinguishable
+  // from a fresh traversal from every enclosing ancestor's point of view.
   static replay(entry) {
     $.#markLive(entry.cidKey, entry.descendantCids);
+
+    for (const descendantCidKey of entry.descendantCids) {
+      $.#encounteredCids.push(descendantCidKey);
+    }
 
     return entry;
   }
