@@ -155,8 +155,31 @@ export default class RenderCache {
     $.#markLive(cidKey, entry.descendantCids);
   }
 
+  // A replayed entry's own descendants were never re-traversed this render, so nothing pushed
+  // them onto #encounteredCids (noteEncountered() only fires for a cid actually visited). Any
+  // enclosing ancestor computing its OWN descendantCids via descendantsSince() (a slice of
+  // #encounteredCids taken across this replay) would otherwise silently lose track of them -
+  // permanently, since the ancestor's next cache entry is built from that incomplete slice, and
+  // an ancestor that can no longer see one of its real descendants can never again correctly
+  // reject reuse when that descendant goes dirty. Backfilling here keeps a replay indistinguishable
+  // from a fresh traversal from every enclosing ancestor's point of view.
   static replay(entry) {
     $.#markLive(entry.cidKey, entry.descendantCids);
+
+    for (const descendantCidKey of entry.descendantCids) {
+      $.#encounteredCids.push(descendantCidKey);
+    }
+
+    // Same reasoning as the #encounteredCids backfill above, for #formInputVnodes: a replayed
+    // entry's own controlled-input vnodes were already collected the render they were cached
+    // (see noteFormInput()), but nothing re-adds them here, so an enclosing ancestor's
+    // formInputsSince() slice would otherwise permanently lose them across this replay too - and
+    // when that ancestor itself later replays, Renderer.replayFormInputs() would never re-sync
+    // those inputs' value/checked, since snabbdom's identity check already skipped their
+    // hook.update.
+    for (const formInputVnode of entry.formInputVnodes) {
+      $.#formInputVnodes.push(formInputVnode);
+    }
 
     return entry;
   }
