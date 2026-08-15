@@ -9,15 +9,16 @@ declarations. The `.js` files are untouched.
 
 ## Why it is vendored
 
-Hologram renders template blocks as fragment vnodes, which snabbdom supports only behind
-`experimental: {fragments: true}`. That support has a defect we need fixed now: removing a text
-node from inside a fragment throws, because `removeVnodes` hands the removal the fragment's own
-`DocumentFragment` rather than resolving the node's real parent, the way it already does for
-elements. Template indentation puts whitespace text inside every block, so switching a block off
-hits it on ordinary markup.
+Historically, Hologram rendered template blocks as fragment vnodes (snabbdom's `experimental:
+{fragments: true}`), which needed two local patches to diff correctly - both dropped once
+per-element keys (dom.ex's `add_slot_keys/2`) replaced fragment-wrapped blocks entirely, so
+neither the fragments flag nor either patch is in use anymore. The copy is byte-identical to
+upstream as of that change; nothing below currently deviates.
 
-Vendoring keeps that fix in the repository and, more importantly, keeps it visible: the copy
-landed byte-identical to upstream, and every deviation since is its own commit.
+Kept vendored rather than switched to an npm dependency for now, since that's a separate decision
+with its own blast radius (package.json, lockfile, every `./vendor/snabbdom/...` import path) -
+worth doing at some point, just not bundled into the migration that removed the reason to vendor
+in the first place.
 
 ## Keeping it byte-identical
 
@@ -27,23 +28,11 @@ file, and a diff against upstream becomes unreadable.
 
 ## Deviations from upstream
 
-Each one is marked in the source with a `HOLOGRAM PATCH` comment explaining what it changes and
-why, and is covered by `test/javascript/vendor/snabbdom_test.mjs` - so an upgrade that drops one
-fails there rather than in a browser.
-
-- `build/init.js` - when removing a text node, resolve its own parent instead of using the one
-  passed in. Inside a fragment the parent passed in is that fragment's `DocumentFragment`, which
-  emptied itself into the page on insertion, so removal throws. The element branch already
-  resolves the parent this way, through `createRmCb`.
-- `build/htmldomapi.js` - `insertBefore`, when its `newNode` is a fragment already emptied by a
-  prior insertion, moves the live sibling range between the fragment's stamped
-  `firstChildNode`/`lastChildNode` by hand instead of handing the (now childless) `DocumentFragment`
-  to the native `insertBefore`. A keyed reorder (not an add/remove) hands back that same emptied
-  fragment as the vnode being moved; inserting it natively at that point moves nothing, so the
-  reorder silently no-ops - the diff runs, reports success, and the DOM never changes.
+None currently. Historical deviations (both since reverted - see git history for `build/init.js`
+and `build/htmldomapi.js`) were marked with a `HOLOGRAM PATCH` comment in the source; use the same
+convention if a new one is ever needed.
 
 ## Updating
 
 Replace `build/` and `LICENSE` with the new release verbatim, delete the `.js.map` and `.d.ts`
-files, and commit that as one step. Then re-apply each deviation above in its own commit,
-dropping anything since fixed upstream.
+files, and commit that as one step.

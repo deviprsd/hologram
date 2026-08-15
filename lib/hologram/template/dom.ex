@@ -8,10 +8,11 @@ defmodule Hologram.Template.DOM do
   alias Hologram.Template.Parser
   alias Hologram.TemplateSyntaxError
 
-  # Blocks whose rendered node count can change between renders, shifting the position of every
-  # sibling that follows them. "raw" and "else" are absent because neither delimits a region whose
-  # size can vary: "raw" only marks source to reconstruct, and "else" is a branch within an "if".
-  @marked_blocks ["for", "if"]
+  # Tags a key would name nothing new. "document" and "window" render no node at all, and "slot"
+  # renders whatever is put in its place. The three page-level elements are each the only one of
+  # their kind, so a key cannot tell them from a sibling - and the client's boot path reaches them
+  # by name rather than through an ordinary children diff, which a key would make refuse.
+  @unkeyable_tags ["body", "document", "head", "html", "slot", "window"]
 
   @type attribute :: {String.t(), t} | {:spread, {any}}
 
@@ -38,10 +39,12 @@ defmodule Hologram.Template.DOM do
   """
   @spec build_ast(list(Parser.parsed_tag())) :: AST.t()
   def build_ast(tags) do
+    hash = template_hash(tags)
+
     {code, _last_tag_type} =
       tags
       |> resolve_for_key_plans()
-      |> add_block_markers()
+      |> add_slot_keys(hash)
       |> Enum.reduce({"", nil}, fn tag, {code_acc, last_tag_type} ->
         current_tag_type = if is_tuple(tag), do: elem(tag, 0), else: tag
 
@@ -61,12 +64,13 @@ defmodule Hologram.Template.DOM do
   end
 
   # Decides, for every "for" block, how its items get keyed - and rewrites the tag stream to carry
-  # that decision, since add_block_markers/1 (which runs next) is where the decision is finally
-  # spliced into generated code but has no way to look ahead at a block's body to derive it.
+  # that decision, since add_slot_keys/2 (which runs next) is where a keyed block's own item key
+  # gets injected onto its body's first top-level element but has no way to look ahead at the
+  # block's body to derive it.
   #
-  # Runs as its own pass, before add_block_markers/1, because deriving the decision needs a
-  # different kind of lookahead than marking does: marking only needs to find each block's matching
-  # end tag, while this needs to inspect the block's *body* - its generator shape, and whether one
+  # Runs as its own pass, before add_slot_keys/2, because deriving the decision needs a
+  # different kind of lookahead than injecting a key does: injecting only needs to find the body's
+  # first top-level element, while this needs to inspect the block's *body* - its generator shape, and whether one
   # of its top-level tags carries an explicit $key - before the block's own opening tag can be
   # rewritten. A single forward pass can't rewrite a tag it already emitted, so this walks the tag
   # list twice: once to work out each "for" block's plan (keyed by that block's position in `tags`,
@@ -87,8 +91,7 @@ defmodule Hologram.Template.DOM do
       raw_depth: 0,
       plans: %{},
       guards: %{},
-      guard_refs: %{},
-      strip: MapSet.new()
+      guard_refs: %{}
     }
 
     final_state = Enum.reduce(indexed_tags, initial_state, &scan_for_key_plan_tag/2)
@@ -99,32 +102,17 @@ defmodule Hologram.Template.DOM do
   end
 
   # Rewrites a "for" block's own start tag to carry its resolved key plan and memoization guard
-  # list, and strips the $key attribute (if any) from whichever tag carried it - the marker
-  # machinery reads the key from the loop variable or the hoisted expression, not from an
-  # attribute left on the rendered element, and an unstripped "$key" would otherwise reach
-  # #buildEventBinding as a bogus "key" event.
+  # list. An author's own "$key" attribute (if any) is left exactly where it was written -
+  # add_slot_keys/2 (which runs next) reads it from there directly instead of a hoisted variable,
+  # and no longer strips it: upstream's own "$key"-is-not-an-event guard (ported alongside it,
+  # see renderer.mjs's #buildEventBinding) means an unstripped "$key" no longer needs stripping to
+  # avoid being read as a bogus "key" event.
   defp apply_for_key_plan({:block_start, {"for", expr_str}}, index, state) do
     {:block_start,
      {"for", expr_str, Map.fetch!(state.plans, index), Map.fetch!(state.guards, index)}}
   end
 
-  defp apply_for_key_plan({:start_tag, {tag_name, attrs}}, index, state) do
-    {:start_tag, {tag_name, strip_key_attr(attrs, index, state.strip)}}
-  end
-
-  defp apply_for_key_plan({:self_closing_tag, {tag_name, attrs}}, index, state) do
-    {:self_closing_tag, {tag_name, strip_key_attr(attrs, index, state.strip)}}
-  end
-
   defp apply_for_key_plan(tag, _index, _state), do: tag
-
-  defp strip_key_attr(attrs, index, strip) do
-    if MapSet.member?(strip, index) do
-      Enum.reject(attrs, &match?({"$key", _value_parts}, &1))
-    else
-      attrs
-    end
-  end
 
   defp find_key_attr(attrs) do
     Enum.find(attrs, &match?({"$key", _value_parts}, &1))
@@ -133,7 +121,7 @@ defmodule Hologram.Template.DOM do
   # A for-frame's key_expr can only be set once a body tag is scanned, after the frame was already
   # pushed - so it's updated on the stack in place rather than threaded back through a return value
   # the way a stateless fold clause normally would.
-  defp handle_key_attr(state, attrs, index) do
+  defp handle_key_attr(state, attrs) do
     case find_key_attr(attrs) do
       nil ->
         state
@@ -160,11 +148,7 @@ defmodule Hologram.Template.DOM do
         [{:expression, expr_str}] = value_parts
         key_expr = extract_expression_content(expr_str)
 
-        %{
-          state
-          | for_stack: [%{frame | key_expr: key_expr} | rest],
-            strip: MapSet.put(state.strip, index)
-        }
+        %{state | for_stack: [%{frame | key_expr: key_expr} | rest]}
     end
   end
 
@@ -334,10 +318,10 @@ defmodule Hologram.Template.DOM do
     add_expr_refs(state, expr_strs)
   end
 
-  defp scan_for_key_plan_tag({{:start_tag, {tag_name, attrs}}, index}, state) do
+  defp scan_for_key_plan_tag({{:start_tag, {tag_name, attrs}}, _index}, state) do
     scanned_state =
       state
-      |> scan_key_attr(attrs, index)
+      |> scan_key_attr(attrs)
       |> add_tag_name_refs(tag_name)
       |> add_attrs_refs(attrs)
 
@@ -358,9 +342,9 @@ defmodule Hologram.Template.DOM do
   # raw_depth - a self-closing <script/> or <style/> has no body, so there is no "inside" to be
   # raw) unchanged. It is still eligible to carry a top-level $key, so it gets the same $key scan
   # as a start tag, just without the depth bookkeeping.
-  defp scan_for_key_plan_tag({{:self_closing_tag, {tag_name, attrs}}, index}, state) do
+  defp scan_for_key_plan_tag({{:self_closing_tag, {tag_name, attrs}}, _index}, state) do
     state
-    |> scan_key_attr(attrs, index)
+    |> scan_key_attr(attrs)
     |> add_tag_name_refs(tag_name)
     |> add_attrs_refs(attrs)
   end
@@ -442,7 +426,7 @@ defmodule Hologram.Template.DOM do
   defp bump_raw_depth(state), do: %{state | raw_depth: state.raw_depth + 1}
   defp drop_raw_depth(state), do: %{state | raw_depth: max(state.raw_depth - 1, 0)}
 
-  defp scan_key_attr(state, attrs, index) do
+  defp scan_key_attr(state, attrs) do
     case state.for_stack do
       [] ->
         if find_key_attr(attrs) do
@@ -453,50 +437,125 @@ defmodule Hologram.Template.DOM do
         state
 
       _frames ->
-        handle_key_attr(state, attrs, index)
+        handle_key_attr(state, attrs)
     end
   end
 
-  # Brackets each block in a pair of marker comments, so that changing how many nodes the block
-  # renders can't change the identity of the block's siblings. The client diffs children by tag and
-  # position, so without the markers a block that starts rendering an extra node lets the following
-  # sibling be paired with the block's content and rebuilt, destroying focus, scroll position and
-  # media state.
+  # Gives every keyable element the key of the place it holds in this template, counted in source
+  # order - a growing/shrinking "if"/"for" block can no longer shift a following sibling's
+  # identity, since every element defends its own now, whatever happens around it. A "for" block
+  # keyed by resolve_for_key_plans/1 (its own item identity, not this positional one) additionally
+  # gets the computed per-item key injected onto the first top-level element of its body, and its
+  # own start tag stamped with this template's hash and its own position - a stable identifier
+  # memoized_item/5 needs as a cache key, independent of whichever body element (if any) ends up
+  # carrying the item's own key.
   #
-  # Blocks inside <script> and <style> are left alone: a comment there would be part of the script
-  # or stylesheet source rather than markup, and their text-only children have no identity to
-  # protect anyway.
-  defp add_block_markers(tags) do
-    hash = template_hash(tags)
+  # A keyed "for"'s body element gets the *item's* key instead of the positional one - injecting
+  # both would leave two "$key" attributes on the same tag, and the reader (renderer.mjs's
+  # #renderSlotKey) would silently let whichever was appended last shadow the other.
+  defp add_slot_keys(tags, hash) do
+    initial_state = %{next_index: 0, for_stack: [], element_depth: 0}
 
-    {marked_tags, _state} =
-      Enum.flat_map_reduce(tags, {0, [], 0}, &inject_block_markers(&1, &2, hash))
+    {keyed_tags, _state} = Enum.map_reduce(tags, initial_state, &inject_slot_key(&1, &2, hash))
 
-    marked_tags
+    keyed_tags
   end
 
-  # Builds one marker comment, whose text is four bracketed segments, e.g. "[h:a3f2b1c4:0:o]":
-  #
-  #   h         namespace, distinguishing a marker from a comment written in the template
-  #   a3f2b1c4  template hash, see template_hash/1
-  #   0         index of the block within its template, counted in source order
-  #   o         side of the pair, "o" opening or "c" closing
-  #
-  # The marker text doubles as the client-side vnode key, which is why it has to be part of the
-  # markup: the client diffs against a virtual DOM derived from server-rendered HTML, and a
-  # comment's own text is the only carrier that survives serialization. The client recognizes the
-  # same format in Vdom.markerKey/1.
-  #
-  # Takes the tags that follow the marker, so an opening marker can be built in front of its block
-  # without appending to the list it just built.
-  defp marker_tags(hash, index, side, tail \\ []) do
-    [
-      :public_comment_start,
-      {:text, "[h:#{hash}:#{index}:#{side}]"},
-      :public_comment_end
-      | tail
-    ]
+  # Every "for" block gets a for_stack frame, keyed or not - a nested block reached only through
+  # other blocks (an "if" wrapping a "for", say) never itself changes element_depth, so without a
+  # frame for every "for" here (matching resolve_for_key_plans/1's own discipline) an inner keyed
+  # "for"'s body could be mistaken for an outer one's merely because they happen to share a depth.
+  defp inject_slot_key({:block_start, {"for", expr_str, :none, guards}}, state, _hash) do
+    frame = %{key_plan: :none, entry_depth: state.element_depth, target_assigned: false}
+
+    {{:block_start, {"for", expr_str, :none, guards}},
+     %{state | for_stack: [frame | state.for_stack]}}
   end
+
+  defp inject_slot_key({:block_start, {"for", expr_str, key_plan, guards}}, state, hash) do
+    frame = %{key_plan: key_plan, entry_depth: state.element_depth, target_assigned: false}
+    tag = {:block_start, {"for", expr_str, key_plan, guards, hash, state.next_index}}
+
+    new_state = %{
+      state
+      | for_stack: [frame | state.for_stack],
+        next_index: state.next_index + 1
+    }
+
+    {tag, new_state}
+  end
+
+  defp inject_slot_key({:block_end, "for"}, %{for_stack: [frame | rest]} = state, _hash) do
+    tag = if frame.key_plan == :none, do: {:block_end, "for"}, else: {:block_end, {"for", :keyed}}
+    {tag, %{state | for_stack: rest}}
+  end
+
+  defp inject_slot_key({:start_tag, {tag_name, attributes}}, state, hash) do
+    {new_attributes, new_state} = key_attributes(tag_name, attributes, state, hash)
+    {{:start_tag, {tag_name, new_attributes}}, bump_element_depth(new_state)}
+  end
+
+  defp inject_slot_key({:end_tag, _tag_name} = tag, state, _hash) do
+    {tag, %{state | element_depth: state.element_depth - 1}}
+  end
+
+  defp inject_slot_key({:self_closing_tag, {tag_name, attributes}}, state, hash) do
+    {new_attributes, new_state} = key_attributes(tag_name, attributes, state, hash)
+    {{:self_closing_tag, {tag_name, new_attributes}}, new_state}
+  end
+
+  defp inject_slot_key(tag, state, _hash), do: {tag, state}
+
+  defp bump_element_depth(state), do: %{state | element_depth: state.element_depth + 1}
+
+  # Priority, never more than one: an author's own "$key" (explicit for-item key, already
+  # validated and left in place by resolve_for_key_plans/1) > the nearest open keyed "for"'s
+  # auto-derived item key, on its body's first top-level element only > the ordinary positional
+  # key every other keyable element gets.
+  defp key_attributes(tag_name, attributes, state, hash) do
+    if keyable_tag?(tag_name) do
+      cond do
+        find_key_attr(attributes) ->
+          {attributes, bump_index(state)}
+
+        identity_key_frame(state) ->
+          {attributes ++ [identity_key_attribute()],
+           state |> mark_target_assigned() |> bump_index()}
+
+        true ->
+          {attributes ++ [slot_key_attribute(hash, state.next_index)], bump_index(state)}
+      end
+    else
+      {attributes, state}
+    end
+  end
+
+  defp bump_index(state), do: %{state | next_index: state.next_index + 1}
+
+  defp identity_key_frame(%{for_stack: [frame | _]} = state) do
+    if frame.key_plan != :none and not frame.target_assigned and
+         frame.entry_depth == state.element_depth do
+      frame
+    end
+  end
+
+  defp identity_key_frame(_state), do: nil
+
+  defp mark_target_assigned(%{for_stack: [frame | rest]} = state) do
+    %{state | for_stack: [%{frame | target_assigned: true} | rest]}
+  end
+
+  # holo__item_key__ is bound by render_code/1's keyed "for" clause, in the same scope this
+  # element's own DOM tuple gets built in - an ordinary expression attribute referencing a local
+  # variable, no different from any author-written one.
+  defp identity_key_attribute, do: {"$key", [{:expression, "{holo__item_key__}"}]}
+
+  defp slot_key_attribute(hash, index), do: {"$key", [{:text, "#{hash}:#{index}"}]}
+
+  defp keyable_tag?({:expression, _templ_expr}), do: true
+
+  defp keyable_tag?(tag_name),
+    do: Helpers.tag_type(tag_name) == :element and tag_name not in @unkeyable_tags
 
   defp append_code(code_acc, code, last_tag_type)
        when last_tag_type in [
@@ -532,84 +591,6 @@ defmodule Hologram.Template.DOM do
     |> String.trim()
   end
 
-  # State is {next block index, stack of open blocks, nesting depth inside <script>/<style>}. A
-  # block opened inside raw text pushes :skipped so that its end tag pops the stack without
-  # emitting a closing marker. Otherwise the stack holds {block_index, key_plan} - key_plan is
-  # `nil` for "if" (there is no such thing as a keyed "if") and the resolve_for_key_plans/1 result
-  # for "for", carried here only so block_end can find it again to stamp the closing tag the same
-  # way; add_block_markers/1 doesn't otherwise care what a "for" block's key plan is.
-  defp inject_block_markers({:start_tag, {tag_name, _attrs}} = tag, {index, open, depth}, _hash)
-       when tag_name in ["script", "style"] do
-    {[tag], {index, open, depth + 1}}
-  end
-
-  defp inject_block_markers({:end_tag, tag_name} = tag, {index, open, depth}, _hash)
-       when tag_name in ["script", "style"] do
-    {[tag], {index, open, max(depth - 1, 0)}}
-  end
-
-  # "for", not inside <script>/<style>: stamps this occurrence's hash and index onto the block's
-  # own start tag, so render_code/1 can build the marker text for each item without needing the
-  # fold state add_block_markers/1 carries but render_code/1 doesn't.
-  defp inject_block_markers(
-         {:block_start, {"for", expr_str, key_plan, guards}},
-         {index, open, 0},
-         hash
-       ) do
-    tag = {:block_start, {"for", expr_str, key_plan, guards, hash, index}}
-    {marker_tags(hash, index, "o", [tag]), {index + 1, [{index, key_plan} | open], 0}}
-  end
-
-  # "if" is the only other member of @marked_blocks - "for" always arrives as the 3-tuple the
-  # clause above matches, since resolve_for_key_plans/1 runs on every "for" block unconditionally.
-  defp inject_block_markers({:block_start, {"if", _expr}} = tag, {index, open, 0}, hash) do
-    {marker_tags(hash, index, "o", [tag]), {index + 1, [{index, nil} | open], 0}}
-  end
-
-  # Inside <script>/<style>: the block still has to compile (it may render into the raw text), but
-  # gets no markers - resolve_for_key_plans/1 already forces key_plan to :none here, so the start
-  # tag is left as the bare 4-tuple render_code/1's plain, unstamped "for" clause matches.
-  defp inject_block_markers(
-         {:block_start, {"for", _expr_str, _key_plan, _guards}} = tag,
-         {index, open, depth},
-         _hash
-       ) do
-    {[tag], {index, [:skipped | open], depth}}
-  end
-
-  defp inject_block_markers({:block_start, {"if", _expr}} = tag, {index, open, depth}, _hash) do
-    {[tag], {index, [:skipped | open], depth}}
-  end
-
-  defp inject_block_markers(
-         {:block_end, block_name} = tag,
-         {index, [:skipped | open], depth},
-         _hash
-       )
-       when block_name in @marked_blocks do
-    {[tag], {index, open, depth}}
-  end
-
-  defp inject_block_markers(
-         {:block_end, "for"},
-         {index, [{block_index, key_plan} | open], depth},
-         hash
-       )
-       when key_plan != nil do
-    tag = {:block_end, {"for", key_plan, hash, block_index}}
-    {[tag | marker_tags(hash, block_index, "c")], {index, open, depth}}
-  end
-
-  defp inject_block_markers(
-         {:block_end, "if"} = tag,
-         {index, [{block_index, nil} | open], depth},
-         hash
-       ) do
-    {[tag | marker_tags(hash, block_index, "c")], {index, open, depth}}
-  end
-
-  defp inject_block_markers(tag, state, _hash), do: {[tag], state}
-
   # Wraps implicit keyword list.
   # {a: 1, b: 2} is not valid Elixir code, although {123, a: 1, b: 2} is allowed.
   defp normalize_implicit_keyword_list(templ_expr) do
@@ -625,7 +606,7 @@ defmodule Hologram.Template.DOM do
   end
 
   # Templates checked out on Windows carry CRLF line endings, which would otherwise give the same
-  # template a different hash per platform, so markers could not be asserted verbatim.
+  # template a different hash per platform, so keys could not be asserted verbatim.
   defp normalize_newlines(term) when is_binary(term) do
     StringUtils.normalize_newlines(term)
   end
@@ -667,38 +648,30 @@ defmodule Hologram.Template.DOM do
     "] else ["
   end
 
-  # Unstamped (the block is inside <script>/<style>, so add_block_markers/1 never gave it a hash
-  # and index) or stamped but ineligible for a key plan - both compile to the same plain
-  # comprehension as before this module existed. Neither is memoized: :none means positional
-  # diffing (no cross-render item identity to key a cache on), and unstamped content has no
-  # markers at all.
+  # :none means positional diffing - no cross-render item identity to key a cache on, so nothing
+  # to memoize, same plain comprehension as before "for" items could be keyed at all.
   defp render_code({:block_start, {"for", expr_str, :none, _guards}}) do
     "(for #{extract_expression_content(expr_str)} do ["
   end
 
-  defp render_code({:block_start, {"for", expr_str, :none, _guards, _hash, _index}}) do
-    "(for #{extract_expression_content(expr_str)} do ["
-  end
-
-  # Wraps the body list in a call to Marker.memoized_item/5, itself the middle element of a
-  # 3-element array bracketed by the item's open and close markers. Both renderers already walk a
-  # nested list recursively wherever they find one (the same mechanism that lets a "for" or "if"
-  # block's own per-iteration/per-branch list sit inside its parent's children list unflattened),
-  # so this needs no flattening of its own - the nesting resolves the same way it always has.
+  # Wraps the body list in a call to Marker.memoized_item/5. Both renderers already walk a nested
+  # list recursively wherever they find one (the same mechanism that lets a "for" or "if" block's
+  # own per-iteration/per-branch list sit inside its parent's children list unflattened), so this
+  # needs no flattening of its own - the nesting resolves the same way it always has.
   #
   # Elixir-side memoized_item/5 is a transparent `item_fun.()`, so server-rendered output is
   # unchanged; the client twin (assets/js/elixir/hologram/template/marker.mjs) is where the actual
   # per-item cache lives, guarded by `guards` - see PLANNING notes on resolve_guards/3 for why that
   # list is restricted to names bound by this block or an enclosing "for", never "everything
   # referenced": a name out of scope at this call site is a compile error, not just a missed cache
-  # hit.
+  # hit. holo__item_key__ also reaches the DOM directly - add_slot_keys/2 injects it as the "$key"
+  # attribute on the body's first top-level element, when there is one (see identity_key_frame/1).
   defp render_code({:block_start, {"for", expr_str, key_plan, guards, hash, index}}) do
     key_source = render_item_key_source(key_plan)
     guards_code = Enum.join(guards, ", ")
 
     ~s{(for #{extract_expression_content(expr_str)} do } <>
       ~s{holo__item_key__ = #{key_source}; } <>
-      ~s{[Hologram.Template.Marker.item_node(holo__item_key__, "#{hash}", #{index}, "o"), } <>
       ~s{Hologram.Template.Marker.memoized_item(holo__item_key__, "#{hash}", #{index}, [#{guards_code}], fn -> [}
   end
 
@@ -706,12 +679,10 @@ defmodule Hologram.Template.DOM do
     "] end)"
   end
 
-  defp render_code({:block_end, {"for", :none, _hash, _index}}) do
-    "] end)"
-  end
-
-  defp render_code({:block_end, {"for", _key_plan, hash, index}}) do
-    "] end), Hologram.Template.Marker.item_node(holo__item_key__, \"#{hash}\", #{index}, \"c\")] end)"
+  # Closes the body list, the memoized_item/5 call's own trailing "fn -> ... end" argument, and
+  # then the enclosing "for ... do ... end" the keyed :block_start clause above opened.
+  defp render_code({:block_end, {"for", :keyed}}) do
+    "] end) end)"
   end
 
   defp render_code({:block_start, {"if", expr_str}}) do
@@ -812,14 +783,14 @@ defmodule Hologram.Template.DOM do
     "Hologram.Template.Marker.key_from_value(#{key_expr})"
   end
 
-  # Distinguishes markers belonging to different templates, since slot content is spliced into the
-  # surrounding template's children and bare block indexes would collide there. Derived from the
+  # Distinguishes keys belonging to different templates, since slot content is spliced into the
+  # surrounding template's children and bare positions would collide there. Derived from the
   # tags rather than the module name so that it stays stable across renames and needs no caller
-  # context. Two byte-identical templates share a hash, which degrades to marker churn rather than
-  # element identity loss.
+  # context. Two byte-identical templates share a hash, which leaves their keys told apart only by
+  # position among siblings, the same way a loop's repeats are.
   #
   # :erlang.phash2/2 is documented to return the same value for a given term regardless of machine
-  # architecture and ERTS version, which is what lets tests assert marker text verbatim.
+  # architecture and ERTS version, which is what lets tests assert key text verbatim.
   defp template_hash(tags) do
     tags
     |> normalize_newlines()

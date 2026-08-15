@@ -1,8 +1,8 @@
 "use strict";
 
 // Hand-ported twin of lib/hologram/template/marker.ex - keep both in sync, especially
-// key_from_value/1, whose accept/reject rules have to agree exactly so the client and the server
-// arrive at the same marker text for the same item.
+// key_from_value/1, whose accept/reject rules have to agree exactly so an item never ends up with
+// a "$key" attribute on only one of server- and client-rendered output.
 
 import Bitstring from "../../../bitstring.mjs";
 import Erlang_Maps from "../../../erlang/maps.mjs";
@@ -47,22 +47,6 @@ const Elixir_Hologram_Template_Marker = {
   },
   // End item_key/1
   // Deps: [:maps.get/2, :maps.is_key/2]
-
-  // Start item_node/4
-  "item_node/4": (key, hash, index, side) => {
-    if (Type.isNil(key)) {
-      return Type.nil();
-    }
-
-    const commentText = `[h:${Bitstring.toText(hash)}:${index.value}:${Bitstring.toText(key)}:${Bitstring.toText(side)}]`;
-
-    return Type.tuple([
-      Type.atom("public_comment"),
-      Type.list([Type.tuple([Type.atom("text"), Type.bitstring(commentText)])]),
-    ]);
-  },
-  // End item_node/4
-  // Deps: []
 
   // Start key_from_value/1
   "key_from_value/1": (value) => {

@@ -375,7 +375,6 @@ defmodule Hologram.Compiler.CallGraph do
     {Hologram.JS, :typeof, 2},
     {Hologram.Router.Helpers, :asset_path, 1},
     {Hologram.Template.Marker, :item_key, 1},
-    {Hologram.Template.Marker, :item_node, 4},
     {Hologram.Template.Marker, :key_from_value, 1},
     {Hologram.Template.Marker, :memoized_item, 5},
     {IO, :inspect, 1},

@@ -18,8 +18,8 @@ import Type from "./type.mjs";
 // *generator* expression consumes) and a whole-scope guard would rarely hit.
 //
 // Caches the item's DOM term (the interpreted template output), not the rendered vnode: rows
-// reorder far more than components do, and vdom.mjs's dedupeMarkerKeys/groupBlockFragments mutate
-// vnode .key/.elm in place, so reusing a vnode across a position change would be unsound. A hit
+// reorder far more than components do, and vdom.mjs's dedupeKeys mutates vnode .key in place, so
+// reusing a vnode across a position change would be unsound. A hit
 // still pays the (cheap) phase-B render step - renderDom - same as any unmemoized item; only
 // phase A (interpreting the item's template body) is skipped, which is the expensive part on a
 // non-trivial row template.

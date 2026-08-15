@@ -664,13 +664,6 @@ export default class Hologram {
 
     Interpreter.defineManuallyPortedFunction(
       "Hologram.Template.Marker",
-      "item_node/4",
-      "public",
-      ManuallyPortedElixirHologramTemplateMarker["item_node/4"],
-    );
-
-    Interpreter.defineManuallyPortedFunction(
-      "Hologram.Template.Marker",
       "key_from_value/1",
       "public",
       ManuallyPortedElixirHologramTemplateMarker["key_from_value/1"],
