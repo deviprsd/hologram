@@ -1,9 +1,11 @@
 "use strict";
 
-// Same 30-row list as for_list_unkeyed/run.mjs, but with the item marker pair
-// Hologram.Template.Marker.item_node/4 wraps around each row - the shape a {%for} with a single
-// plain-variable generator (or an explicit $key) actually renders. Compares against
-// for_list_unkeyed to show the per-item marker overhead: two extra comment nodes per row.
+// Same 30-row list as for_list_unkeyed/run.mjs, but with each row carrying the "$key" attribute
+// Hologram.Template.DOM.add_slot_keys/2 injects on every keyable element (see also
+// Renderer.#renderSlotKey) - the shape a {%for} loop actually renders. Compares against
+// for_list_unkeyed to show the per-item key-processing overhead (Renderer.#renderSlotKey plus
+// snabbdom's keyed diffing) now that reconciliation happens by attribute rather than by
+// comment-marker bracketing.
 
 import Renderer from "../../../../../assets/js/renderer.mjs";
 import Type from "../../../../../assets/js/type.mjs";
@@ -30,27 +32,19 @@ const liNode = (index) =>
           Type.tuple([Type.atom("text"), Type.bitstring(String(index))]),
         ]),
       ]),
+      Type.tuple([
+        Type.bitstring("$key"),
+        Type.list([
+          Type.tuple([Type.atom("text"), Type.bitstring(`bench:${index}`)]),
+        ]),
+      ]),
     ]),
     Type.list([
       Type.tuple([Type.atom("text"), Type.bitstring(`Item ${index}`)]),
     ]),
   ]);
 
-const itemMarker = (index, side) =>
-  Type.tuple([
-    Type.atom("public_comment"),
-    Type.list([
-      Type.tuple([
-        Type.atom("text"),
-        Type.bitstring(`[h:bench:0:${index}:${side}]`),
-      ]),
-    ]),
-  ]);
-
-const rows = Array.from({length: ROW_COUNT}, (_, i) => {
-  const index = i + 1;
-  return [itemMarker(index, "o"), liNode(index), itemMarker(index, "c")];
-}).flat();
+const rows = Array.from({length: ROW_COUNT}, (_, i) => liNode(i + 1));
 
 const node = Type.tuple([
   Type.atom("element"),

@@ -51,47 +51,15 @@ describe("Vdom", () => {
         assert.deepStrictEqual(node, vnode("!", "my comment"));
       });
 
-      it("opening block marker", () => {
+      // "$key" never reaches server-rendered HTML (renderer.ex's render_attributes/1 strips every
+      // "$"-prefixed attribute), so a comment recovered from the live DOM has nothing to key it -
+      // even text that happens to look like the old marker format stays an ordinary, unkeyed
+      // comment.
+      it("comment text that looks like the old marker format", () => {
         const node = vnode("!", "[h:1a2b3c:0:o]");
         Vdom.addKeysToVnodes(node);
 
-        assert.deepStrictEqual(
-          node,
-          vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
-        );
-      });
-
-      it("closing block marker", () => {
-        const node = vnode("!", "[h:1a2b3c:0:c]");
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode("!", {key: "[h:1a2b3c:0:c]"}, "[h:1a2b3c:0:c]"),
-        );
-      });
-
-      it("nested block markers", () => {
-        const node = vnode("div", {}, [
-          vnode("!", "[h:1a2b3c:0:o]"),
-          vnode("img", {attrs: {src: "my_src"}}, []),
-          vnode("!", "[h:1a2b3c:0:c]"),
-        ]);
-
-        Vdom.addKeysToVnodes(node);
-
-        // The marked span is gathered into one keyed fragment.
-        assert.equal(node.children.length, 1);
-
-        const blockFragment = node.children[0];
-
-        assert.isUndefined(blockFragment.sel);
-        assert.equal(blockFragment.key, "[h:1a2b3c:0:o]");
-
-        assert.deepStrictEqual(
-          blockFragment.children.map((child) => child.key ?? child.sel),
-          ["[h:1a2b3c:0:o]", "img", "[h:1a2b3c:0:c]"],
-        );
+        assert.deepStrictEqual(node, vnode("!", "[h:1a2b3c:0:o]"));
       });
     });
 
@@ -248,65 +216,103 @@ describe("Vdom", () => {
     });
   });
 
-  describe("dedupeMarkerKeys()", () => {
-    it("distinct marker keys", () => {
+  describe("dedupeKeys()", () => {
+    it("distinct keys", () => {
       const children = [
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
-        vnode("!", {key: "[h:1a2b3c:0:c]"}, "[h:1a2b3c:0:c]"),
+        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", {key: "abc123:1"}, []),
       ];
 
-      Vdom.dedupeMarkerKeys(children);
+      Vdom.dedupeKeys(children);
 
       assert.deepStrictEqual(
         children.map((child) => child.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:c]"],
+        ["abc123:0", "abc123:1"],
       );
     });
 
-    it("repeated marker keys", () => {
+    it("repeated keys", () => {
       const children = [
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
+        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", {key: "abc123:0"}, []),
       ];
 
-      Vdom.dedupeMarkerKeys(children);
+      Vdom.dedupeKeys(children);
 
       assert.deepStrictEqual(
         children.map((child) => child.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1", "[h:1a2b3c:0:o]:2"],
+        ["abc123:0", "abc123:0:1", "abc123:0:2"],
       );
     });
 
-    it("renumbers the vnode key without touching the comment text", () => {
+    it("renumbers the vnode key without touching anything else", () => {
       const children = [
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
-        vnode("!", {key: "[h:1a2b3c:0:o]"}, "[h:1a2b3c:0:o]"),
+        vnode("li", {key: "abc123:0", attrs: {"data-x": "y"}}, ["a"]),
+        vnode("li", {key: "abc123:0", attrs: {"data-x": "y"}}, ["b"]),
       ];
 
-      Vdom.dedupeMarkerKeys(children);
+      Vdom.dedupeKeys(children);
 
       assert.deepStrictEqual(
-        children.map((child) => child.text),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]"],
+        children.map((child) => child.children[0].text),
+        ["a", "b"],
       );
 
-      assert.equal(children[1].data.key, "[h:1a2b3c:0:o]:1");
+      assert.equal(children[1].data.key, "abc123:0:1");
+      assert.equal(children[1].data.attrs["data-x"], "y");
     });
 
-    it("ordinary comments and elements", () => {
+    it("unkeyed elements are left alone", () => {
       const children = [
-        vnode("!", "my comment"),
-        vnode("!", "my comment"),
         vnode("div", {attrs: {}}, []),
         vnode("div", {attrs: {}}, []),
       ];
 
-      Vdom.dedupeMarkerKeys(children);
+      Vdom.dedupeKeys(children);
 
       assert.deepStrictEqual(
         children.map((child) => child.key),
-        [undefined, undefined, undefined, undefined],
+        [undefined, undefined],
+      );
+    });
+
+    // Every kind of key repeats through the same rule now - a "$key"-carrying element and a
+    // resource-keyed script share one counter, unlike the old marker-only dedup.
+    it("an element key and a resource key repeat through the same counter", () => {
+      const children = [
+        vnode("li", {key: "abc123:0"}, []),
+        vnode("script", {key: "abc123:0", attrs: {src: "x.js"}}, []),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["abc123:0", "abc123:0:1"],
+      );
+    });
+
+    it("a children list of one is returned unchanged", () => {
+      const children = [vnode("li", {key: "abc123:0"}, [])];
+      const result = Vdom.dedupeKeys(children);
+
+      assert.equal(result, children);
+    });
+  });
+
+  describe("finalizeChildren()", () => {
+    it("delegates to dedupeKeys()", () => {
+      const children = [
+        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", {key: "abc123:0"}, []),
+      ];
+
+      Vdom.finalizeChildren(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["abc123:0", "abc123:0:1"],
       );
     });
   });
@@ -330,7 +336,9 @@ describe("Vdom", () => {
       assert.deepStrictEqual(result, expected);
     });
 
-    it("numbers repeated block marker comments", () => {
+    // "$key" never reaches server-rendered HTML, so comment text that looks like the old marker
+    // format stays plain, unkeyed comments - same as any other text a comment might carry.
+    it("comment text that looks like the old marker format is never keyed", () => {
       const result = Vdom.from(
         "<html><body><!--[h:1a2b3c:0:o]--><!--[h:1a2b3c:0:o]--></body></html>",
       );
@@ -339,26 +347,7 @@ describe("Vdom", () => {
 
       assert.deepStrictEqual(
         body.children.map((child) => child.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1"],
-      );
-    });
-
-    it("keys block marker comments", () => {
-      const result = Vdom.from(
-        "<html><body><!--[h:1a2b3c:0:o]--><!-- my comment --><!--[h:1a2b3c:0:c]--></body></html>",
-      );
-
-      const body = result.children[1];
-
-      assert.equal(body.children.length, 1);
-
-      const blockFragment = body.children[0];
-
-      assert.equal(blockFragment.key, "[h:1a2b3c:0:o]");
-
-      assert.deepStrictEqual(
-        blockFragment.children.map((child) => child.key ?? child.text),
-        ["[h:1a2b3c:0:o]", " my comment ", "[h:1a2b3c:0:c]"],
+        [undefined, undefined],
       );
     });
 
@@ -548,349 +537,6 @@ describe("Vdom", () => {
 
         assert.deepStrictEqual(result, expected);
       });
-    });
-  });
-  describe("groupBlockFragments()", () => {
-    const marker = (key) => vnode("!", {key}, key);
-
-    const keysOf = (children) =>
-      children.map((child) =>
-        typeof child === "string" ? child : (child.key ?? child.sel ?? "text"),
-      );
-
-    it("children list without markers is returned unchanged", () => {
-      const children = [vnode("div", {attrs: {}}, []), "abc"];
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.equal(result, children);
-    });
-
-    it("marked span becomes a single keyed fragment", () => {
-      const children = [
-        "before",
-        marker("[h:1a2b3c:0:o]"),
-        vnode("p", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:c]"),
-        vnode("input", {attrs: {}}, []),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), [
-        "before",
-        "[h:1a2b3c:0:o]",
-        "input",
-      ]);
-
-      const fragment = result[1];
-
-      assert.isUndefined(fragment.sel);
-      assert.deepStrictEqual(keysOf(fragment.children), [
-        "[h:1a2b3c:0:o]",
-        "p",
-        "[h:1a2b3c:0:c]",
-      ]);
-    });
-
-    it("empty span becomes a fragment holding only its markers", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:c]"),
-        vnode("input", {attrs: {}}, []),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]", "input"]);
-      assert.equal(result[0].children.length, 2);
-    });
-
-    it("sibling spans become separate fragments", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:c]"),
-        vnode("input", {attrs: {}}, []),
-        marker("[h:1a2b3c:1:o]"),
-        marker("[h:1a2b3c:1:c]"),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), [
-        "[h:1a2b3c:0:o]",
-        "input",
-        "[h:1a2b3c:1:o]",
-      ]);
-    });
-
-    it("nested spans become nested fragments", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:1:o]"),
-        vnode("b", {attrs: {}}, []),
-        marker("[h:1a2b3c:1:c]"),
-        marker("[h:1a2b3c:0:c]"),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]"]);
-
-      const outer = result[0];
-
-      assert.deepStrictEqual(keysOf(outer.children), [
-        "[h:1a2b3c:0:o]",
-        "[h:1a2b3c:1:o]",
-        "[h:1a2b3c:0:c]",
-      ]);
-
-      assert.deepStrictEqual(keysOf(outer.children[1].children), [
-        "[h:1a2b3c:1:o]",
-        "b",
-        "[h:1a2b3c:1:c]",
-      ]);
-    });
-
-    // A keyed "for" block's own markers wrap one item-marker fragment per iteration - the shape
-    // Hologram.Template.Marker.item_node/4 produces alongside the block's own open/close markers
-    // (dom.ex's inject_block_markers/3). Item markers share the block's hash and index, so nesting
-    // still has to resolve correctly even though the outer and inner markers only differ by the
-    // extra key segment.
-    it("item marker fragments nest inside their block's own fragment", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:1:o]"),
-        vnode("li", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:1:c]"),
-        marker("[h:1a2b3c:0:2:o]"),
-        vnode("li", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:2:c]"),
-        marker("[h:1a2b3c:0:c]"),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]"]);
-
-      const block = result[0];
-
-      assert.deepStrictEqual(keysOf(block.children), [
-        "[h:1a2b3c:0:o]",
-        "[h:1a2b3c:0:1:o]",
-        "[h:1a2b3c:0:2:o]",
-        "[h:1a2b3c:0:c]",
-      ]);
-
-      assert.deepStrictEqual(keysOf(block.children[1].children), [
-        "[h:1a2b3c:0:1:o]",
-        "li",
-        "[h:1a2b3c:0:1:c]",
-      ]);
-
-      assert.deepStrictEqual(keysOf(block.children[2].children), [
-        "[h:1a2b3c:0:2:o]",
-        "li",
-        "[h:1a2b3c:0:2:c]",
-      ]);
-    });
-
-    it("renumbered repeats pair with their own closing side", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        vnode("b", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:o]:1"),
-        vnode("i", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:c]:1"),
-      ];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), [
-        "[h:1a2b3c:0:o]",
-        "[h:1a2b3c:0:o]:1",
-      ]);
-
-      assert.deepStrictEqual(keysOf(result[1].children), [
-        "[h:1a2b3c:0:o]:1",
-        "i",
-        "[h:1a2b3c:0:c]:1",
-      ]);
-    });
-
-    it("same block nested inside itself pairs by depth", () => {
-      // A component whose template holds a block that renders the component again, with nothing
-      // between them, splices both renderings into one children list under the same marker.
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:o]"),
-        vnode("p", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:c]"),
-      ];
-
-      Vdom.dedupeMarkerKeys(children);
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]"]);
-
-      const outer = result[0];
-
-      assert.deepStrictEqual(keysOf(outer.children), [
-        "[h:1a2b3c:0:o]",
-        "[h:1a2b3c:0:o]:1",
-        "[h:1a2b3c:0:c]:1",
-      ]);
-
-      assert.deepStrictEqual(keysOf(outer.children[1].children), [
-        "[h:1a2b3c:0:o]:1",
-        "p",
-        "[h:1a2b3c:0:c]",
-      ]);
-    });
-
-    it("same block nested inside itself twice over", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:o]"),
-        vnode("p", {attrs: {}}, []),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:c]"),
-      ];
-
-      Vdom.dedupeMarkerKeys(children);
-
-      const result = Vdom.groupBlockFragments(children);
-      const depth = (children) =>
-        children.length === 0
-          ? 0
-          : 1 +
-            Math.max(
-              ...children.map((child) =>
-                child.children ? depth(child.children) : 0,
-              ),
-            );
-
-      assert.equal(result.length, 1);
-      assert.equal(depth(result), 4);
-    });
-
-    it("same block nested inside itself, followed by a sibling rendering", () => {
-      const children = [
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:c]"),
-        marker("[h:1a2b3c:0:o]"),
-        marker("[h:1a2b3c:0:c]"),
-      ];
-
-      Vdom.dedupeMarkerKeys(children);
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), [
-        "[h:1a2b3c:0:o]",
-        "[h:1a2b3c:0:o]:2",
-      ]);
-    });
-
-    it("opening marker without a matching close leaves the list flat", () => {
-      const children = [marker("[h:1a2b3c:0:o]"), vnode("p", {attrs: {}}, [])];
-
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.deepStrictEqual(keysOf(result), ["[h:1a2b3c:0:o]", "p"]);
-    });
-
-    it("fragment grouped from live nodes stands for the span they occupy", () => {
-      const container = document.createElement("div");
-      container.innerHTML = "<!--[h:1a2b3c:0:o]--><p></p><!--[h:1a2b3c:0:c]-->";
-
-      const [openNode, contentNode, closeNode] = [...container.childNodes];
-
-      const children = [
-        {...marker("[h:1a2b3c:0:o]"), elm: openNode},
-        {...vnode("p", {attrs: {}}, []), elm: contentNode},
-        {...marker("[h:1a2b3c:0:c]"), elm: closeNode},
-      ];
-
-      const [blockFragment] = Vdom.groupBlockFragments(children);
-
-      assert.equal(blockFragment.elm.nodeType, 11);
-      assert.equal(blockFragment.elm.parent, container);
-      assert.equal(blockFragment.elm.firstChildNode, openNode);
-      assert.equal(blockFragment.elm.lastChildNode, closeNode);
-    });
-
-    it("fragment grouped from parsed markup has no live node", () => {
-      const children = [marker("[h:1a2b3c:0:o]"), marker("[h:1a2b3c:0:c]")];
-      const [blockFragment] = Vdom.groupBlockFragments(children);
-
-      assert.isUndefined(blockFragment.elm);
-    });
-
-    it("ordinary comments are left alone", () => {
-      const children = [
-        vnode("!", "my comment"),
-        vnode("div", {attrs: {}}, []),
-      ];
-      const result = Vdom.groupBlockFragments(children);
-
-      assert.equal(result, children);
-    });
-  });
-
-  describe("markerKey()", () => {
-    it("opening marker", () => {
-      assert.equal(Vdom.markerKey("[h:1a2b3c:0:o]"), "[h:1a2b3c:0:o]");
-    });
-
-    it("closing marker", () => {
-      assert.equal(Vdom.markerKey("[h:1a2b3c:12:c]"), "[h:1a2b3c:12:c]");
-    });
-
-    it("ordinary comment text", () => {
-      assert.isNull(Vdom.markerKey(" my comment "));
-    });
-
-    it("marker with surrounding text", () => {
-      assert.isNull(Vdom.markerKey("abc [h:1a2b3c:0:o] xyz"));
-    });
-
-    it("marker with invalid side", () => {
-      assert.isNull(Vdom.markerKey("[h:1a2b3c:0:x]"));
-    });
-
-    it("marker with non-numeric block index", () => {
-      assert.isNull(Vdom.markerKey("[h:1a2b3c:abc:o]"));
-    });
-
-    it("non-string text", () => {
-      assert.isNull(Vdom.markerKey(undefined));
-    });
-
-    // "for" item markers - see Hologram.Template.Marker.item_node/4.
-    it("item marker, opening", () => {
-      assert.equal(Vdom.markerKey("[h:1a2b3c:0:42:o]"), "[h:1a2b3c:0:42:o]");
-    });
-
-    it("item marker, closing", () => {
-      assert.equal(Vdom.markerKey("[h:1a2b3c:0:42:c]"), "[h:1a2b3c:0:42:c]");
-    });
-
-    it("item marker with a binary key", () => {
-      assert.equal(
-        Vdom.markerKey("[h:1a2b3c:0:abc-def:o]"),
-        "[h:1a2b3c:0:abc-def:o]",
-      );
-    });
-
-    it("item marker with an invalid character in the key", () => {
-      assert.isNull(Vdom.markerKey("[h:1a2b3c:0:a b:o]"));
     });
   });
 });

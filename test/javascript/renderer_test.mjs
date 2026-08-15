@@ -253,8 +253,10 @@ describe("Renderer", () => {
       assert.deepStrictEqual(result, expected);
     });
 
-    it("with block marker", () => {
-      // <!--[h:1a2b3c:0:o]-->
+    // Comments carry no key at all now - dom.ex's add_slot_keys/2 only ever keys elements
+    // (Renderer.#renderSlotKey reads "$key" off attrsDom, which a public_comment node has none
+    // of), so comment text that happens to look like the old marker format is just ordinary text.
+    it("comment text is never keyed, even if it looks like the old marker format", () => {
       const node = Type.tuple([
         Type.atom("public_comment"),
         Type.list([
@@ -270,173 +272,10 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]");
+      const expected = vnode("!", "[h:1a2b3c:0:o]");
 
       assert.deepStrictEqual(result, expected);
-    });
-
-    // "for" item markers - Hologram.Template.Marker.item_node/4 produces the same shape as a
-    // block marker, plus the item's key as an extra segment before the side. This is the client
-    // rendering path (as opposed to a DOM-derived one), and it has to key the comment exactly the
-    // same way the server's marker text and the DOM-derived paths (Vdom.addKeysToVnodes,
-    // Vdom.#buildVnodeFromDomNode) do, since the first patch after boot/navigation diffs against
-    // whichever of those the page loaded from.
-    it("with item marker", () => {
-      // <!--[h:1a2b3c:0:42:o]-->
-      const node = Type.tuple([
-        Type.atom("public_comment"),
-        Type.list([
-          Type.tuple([Type.atom("text"), Type.bitstring("[h:1a2b3c:0:42:o]")]),
-        ]),
-      ]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      const expected = vnode(
-        "!",
-        { key: "[h:1a2b3c:0:42:o]" },
-        "[h:1a2b3c:0:42:o]",
-      );
-
-      assert.deepStrictEqual(result, expected);
-    });
-
-    it("numbers repeated block markers in one list", () => {
-      // <!--[h:1a2b3c:0:o]--><!--[h:1a2b3c:0:o]-->
-      const marker = Type.tuple([
-        Type.atom("public_comment"),
-        Type.list([
-          Type.tuple([Type.atom("text"), Type.bitstring("[h:1a2b3c:0:o]")]),
-        ]),
-      ]);
-
-      const node = Type.list([marker, marker]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      assert.deepStrictEqual(
-        result.map((child) => child.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1"],
-      );
-
-      assert.deepStrictEqual(
-        result.map((child) => child.text),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]"],
-      );
-    });
-
-    it("gathers a marked span into one fragment", () => {
-      // <!--[h:1a2b3c:0:o]--><div></div><!--[h:1a2b3c:0:c]--><input />
-      const marker = (side) =>
-        Type.tuple([
-          Type.atom("public_comment"),
-          Type.list([
-            Type.tuple([
-              Type.atom("text"),
-              Type.bitstring(`[h:1a2b3c:0:${side}]`),
-            ]),
-          ]),
-        ]);
-
-      const element = (tagName) =>
-        Type.tuple([
-          Type.atom("element"),
-          Type.bitstring(tagName),
-          Type.list(),
-          Type.list(),
-        ]);
-
-      const node = Type.list([
-        marker("o"),
-        element("div"),
-        marker("c"),
-        element("input"),
-      ]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      // The block holds one position whatever it renders, so the input never shifts.
-      assert.equal(result.length, 2);
-      assert.isUndefined(result[0].sel);
-      assert.equal(result[0].key, "[h:1a2b3c:0:o]");
-      assert.equal(result[1].sel, "input");
-
-      assert.deepStrictEqual(
-        result[0].children.map((child) => child.key ?? child.sel),
-        ["[h:1a2b3c:0:o]", "div", "[h:1a2b3c:0:c]"],
-      );
-    });
-
-    // Two sibling instances of the same template (nested lists here stand in for what two
-    // stateful component instances of the same module produce - a component's own top-level
-    // output is grouped into a fragment inside its own #renderNodes call, before the parent ever
-    // sees it, exactly like a nested list is here) each carry the identical marker hash, since the
-    // hash is derived from the template, not the instance. Each gets grouped into its own fragment
-    // *before* this list's own #renderNodes runs, so by the time this list's own dedupeMarkerKeys
-    // sees them, they already have matching un-renumbered keys.
-    it("renumbers repeated fragments from sibling instances of one template, not just repeated bare markers", () => {
-      // Two "[h:1a2b3c:0:o]<div></div>[h:1a2b3c:0:c]" spans, each pre-grouped into its own
-      // fragment one level down, spliced into one parent list.
-      const marker = (side) =>
-        Type.tuple([
-          Type.atom("public_comment"),
-          Type.list([
-            Type.tuple([
-              Type.atom("text"),
-              Type.bitstring(`[h:1a2b3c:0:${side}]`),
-            ]),
-          ]),
-        ]);
-
-      const element = (tagName) =>
-        Type.tuple([
-          Type.atom("element"),
-          Type.bitstring(tagName),
-          Type.list(),
-          Type.list(),
-        ]);
-
-      const instance = () =>
-        Type.list([marker("o"), element("div"), marker("c")]);
-
-      const node = Type.list([instance(), instance()]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      // Both are fragments (sel undefined), not bare comment vnodes - dedupeMarkerKeys must
-      // still tell them apart, or snabbdom's keyed diff receives two siblings with the same key.
-      assert.equal(result.length, 2);
-      assert.isUndefined(result[0].sel);
-      assert.isUndefined(result[1].sel);
-
-      assert.deepStrictEqual(
-        result.map((r) => r.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1"],
-      );
+      assert.isUndefined(result.key);
     });
 
     it("with nested stateful components", () => {

@@ -1,7 +1,8 @@
 Benchmark
 
 Function: Renderer.renderDom()\
-Argument: a 30-row `<ul>` list, unkeyed (baseline for for_list_keyed)
+Argument: a 30-row `<ul>` list, no `<li>` carrying a "$key" attribute (baseline for
+for_list_keyed)
 
 ## System
 
@@ -41,10 +42,10 @@ Argument: a 30-row `<ul>` list, unkeyed (baseline for for_list_keyed)
 <table>
   <tr>
     <th>Average Cold Execution Time</th>
-    <td>781.38 μs</td>
+    <td>800 μs</td>
   </tr>
   <tr>
     <th>Average Warm Execution Time</th>
-    <td>22.80 μs</td>
+    <td>26.5 μs</td>
   </tr>
 </table>
