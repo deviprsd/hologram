@@ -117,10 +117,12 @@ defmodule Hologram.RouterTest do
         |> Map.put(:body_params, %{"_json" => parsed_json})
         |> call([])
 
-      assert String.contains?(conn.resp_body, "Module1 page, a = 123, b = :xyz")
+      response = Jason.decode!(conn.resp_body)
 
-      # Initial pages include runtime script
-      refute String.contains?(conn.resp_body, "hologram/runtime")
+      assert response["type"] == "page"
+      assert response["pageParams"] =~ "123"
+      assert response["pageParams"] =~ "xyz"
+      assert Plug.Conn.get_resp_header(conn, "hologram-page-data") == ["true"]
     end
   end
 

@@ -3,7 +3,6 @@
 import {
   attributesModule,
   eventListenersModule,
-  h as vnode,
   init,
   vnode as rawVnode,
 } from "./vendor/snabbdom/build/index.js";
@@ -116,56 +115,6 @@ export default class Vdom {
     );
 
     return patchedVirtualDocument;
-  }
-
-  // Parses server-rendered HTML into a vnode tree with no "$key" on ordinary elements (only
-  // link/script resource keys are recovered) - kept only for #patchPage's HTML-based page
-  // navigation, which still calls it. Everything else (the first render after boot) goes through
-  // mirror() instead, which doesn't have this gap. Dead once #patchPage is migrated off raw HTML.
-  static from(html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    return Vdom.#buildVnodeFromDomNode(doc.documentElement);
-  }
-
-  // Used only by from() - see its comment for why this still exists.
-  static #buildVnodeFromDomNode(node) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return node.textContent;
-    }
-
-    if (node.nodeType === Node.COMMENT_NODE) {
-      return vnode("!", node.textContent);
-    }
-
-    const children = $.dedupeKeys(
-      Array.from(node.childNodes).map(Vdom.#buildVnodeFromDomNode),
-    );
-
-    const attrs = {};
-
-    for (let attr of node.attributes) {
-      attrs[attr.name] = attr.value === "" ? true : attr.value;
-    }
-
-    const tagName = node.tagName.toLowerCase();
-    const data = {attrs: attrs};
-
-    if (tagName === "link" && typeof attrs.href === "string") {
-      data.key = `__hologramLink__:${attrs.href}`;
-    } else if (
-      tagName === "script" &&
-      typeof attrs.src === "string" &&
-      attrs.src
-    ) {
-      data.key = `__hologramScript__:${attrs.src}`;
-    } else if (tagName === "script" && node.textContent) {
-      // Make sure the script is executed if the code changes.
-      data.key = `__hologramScript__:${node.textContent}`;
-    }
-
-    return vnode(tagName, data, children);
   }
 
   // An element's attributes in the vdom convention: a valueless attribute reads as true.
