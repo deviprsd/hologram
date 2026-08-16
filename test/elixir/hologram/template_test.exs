@@ -6,7 +6,8 @@ defmodule Hologram.TemplateTest do
   describe "dom_ast/1" do
     test "build DOM AST from the given markup" do
       assert dom_ast("<div>content</div>") == [
-               {:{}, [line: 1], [:element, "div", [], [{:text, "content"}]]}
+               {:{}, [line: 1],
+                [:element, "div", [{"$key", [text: "kcndqf:0"]}], [{:text, "content"}]]}
              ]
     end
 
@@ -21,7 +22,9 @@ defmodule Hologram.TemplateTest do
       <div>{@value}</div>
       """
 
-      assert template.(%{value: 123}) == [{:element, "div", [], [expression: {123}]}]
+      assert template.(%{value: 123}) == [
+               {:element, "div", [{"$key", [text: "1k1sfru:0"]}], [expression: {123}]}
+             ]
     end
 
     test "template which doesn't use vars" do
@@ -29,7 +32,9 @@ defmodule Hologram.TemplateTest do
       <div>abc</div>
       """
 
-      assert template.(%{}) == [{:element, "div", [], [text: "abc"]}]
+      assert template.(%{}) == [
+               {:element, "div", [{"$key", [text: "kqd760:0"]}], [text: "abc"]}
+             ]
     end
 
     test "template with raw block" do
@@ -54,7 +59,9 @@ defmodule Hologram.TemplateTest do
 
       """
 
-      assert template.(%{}) == [{:element, "div", [], [text: "abc"]}]
+      assert template.(%{}) == [
+               {:element, "div", [{"$key", [text: "kqd760:0"]}], [text: "abc"]}
+             ]
     end
 
     test "bitstring argument" do
@@ -71,7 +78,7 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{my_var: %{id: "my_id"}}) == [
-               {:element, "div", [spread: {%{id: "my_id"}}], []}
+               {:element, "div", [{:spread, {%{id: "my_id"}}}, {"$key", [text: "1bladbi:0"]}], []}
              ]
     end
 
@@ -94,7 +101,8 @@ defmodule Hologram.TemplateTest do
                 [
                   {"class", [text: "btn"]},
                   {:spread, {%{title: "my_title"}}},
-                  {"id", [expression: {"my_id"}]}
+                  {"id", [expression: {"my_id"}]},
+                  {"$key", [text: "1jnz2n1:0"]}
                 ], []}
              ]
     end
@@ -105,7 +113,12 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{my_var_1: %{a: 1}, my_var_2: [b: 2]}) == [
-               {:element, "div", [spread: {%{a: 1}}, spread: {[b: 2]}], []}
+               {:element, "div",
+                [
+                  {:spread, {%{a: 1}}},
+                  {:spread, {[b: 2]}},
+                  {"$key", [text: "1p5l3l1:0"]}
+                ], []}
              ]
     end
 
@@ -115,7 +128,11 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{}) == [
-               {:element, "div", [spread: {[my_key_1: "abc", my_key_2: [my_key_3: "xyz"]]}], []}
+               {:element, "div",
+                [
+                  {:spread, {[my_key_1: "abc", my_key_2: [my_key_3: "xyz"]]}},
+                  {"$key", [text: "qkvbks:0"]}
+                ], []}
              ]
     end
 
@@ -125,27 +142,33 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{my_base: %{a: 1}, my_overrides: %{b: 2}}) == [
-               {:element, "div", [spread: {%{a: 1, b: 2}}], []}
+               {:element, "div", [{:spread, {%{a: 1, b: 2}}}, {"$key", [text: "zrvq9z:0"]}], []}
              ]
     end
 
     test "dynamic tag with module value" do
       template = ~HOLO"<{@module} />"
 
-      assert template.(%{module: Aaa.Bbb.Ccc}) == [{:dynamic_tag, {Aaa.Bbb.Ccc}, [], []}]
+      assert template.(%{module: Aaa.Bbb.Ccc}) == [
+               {:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: "kctz9n:0"]}], []}
+             ]
     end
 
     test "dynamic tag with element name value" do
       template = ~HOLO"<{@tag} />"
 
-      assert template.(%{tag: "div"}) == [{:dynamic_tag, {"div"}, [], []}]
+      assert template.(%{tag: "div"}) == [
+               {:dynamic_tag, {"div"}, [{"$key", [text: "1er3lvo:0"]}], []}
+             ]
     end
 
     test "dynamic tag with alias in tag name expression" do
       alias Aaa.Bbb.Ccc
       template = ~HOLO"<{Ccc} />"
 
-      assert template.(%{}) == [{:dynamic_tag, {Aaa.Bbb.Ccc}, [], []}]
+      assert template.(%{}) == [
+               {:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: "x0myb0:0"]}], []}
+             ]
     end
 
     test "dynamic tag with conditional tag name expression" do
@@ -153,8 +176,13 @@ defmodule Hologram.TemplateTest do
       <{if @flag do "a" else "button" end} />
       """
 
-      assert template.(%{flag: true}) == [{:dynamic_tag, {"a"}, [], []}]
-      assert template.(%{flag: false}) == [{:dynamic_tag, {"button"}, [], []}]
+      assert template.(%{flag: true}) == [
+               {:dynamic_tag, {"a"}, [{"$key", [text: "13zd6zi:0"]}], []}
+             ]
+
+      assert template.(%{flag: false}) == [
+               {:dynamic_tag, {"button"}, [{"$key", [text: "13zd6zi:0"]}], []}
+             ]
     end
 
     test "dynamic tag with attributes" do
@@ -164,7 +192,11 @@ defmodule Hologram.TemplateTest do
 
       assert template.(%{tag: "div", my_value_2: 123}) == [
                {:dynamic_tag, {"div"},
-                [{"my_key_1", [text: "my_value_1"]}, {"my_key_2", [expression: {123}]}], []}
+                [
+                  {"my_key_1", [text: "my_value_1"]},
+                  {"my_key_2", [expression: {123}]},
+                  {"$key", [text: "1ih1te3:0"]}
+                ], []}
              ]
     end
 
@@ -174,7 +206,8 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{tag: "div", my_var: %{id: "my_id"}}) == [
-               {:dynamic_tag, {"div"}, [spread: {%{id: "my_id"}}], []}
+               {:dynamic_tag, {"div"},
+                [{:spread, {%{id: "my_id"}}}, {"$key", [text: "1wlobum:0"]}], []}
              ]
     end
 
@@ -184,7 +217,8 @@ defmodule Hologram.TemplateTest do
       """
 
       assert template.(%{tag: "div", my_value: 123}) == [
-               {:dynamic_tag, {"div"}, [], [text: "abc", expression: {123}]}
+               {:dynamic_tag, {"div"}, [{"$key", [text: "833qnd:0"]}],
+                [text: "abc", expression: {123}]}
              ]
     end
 

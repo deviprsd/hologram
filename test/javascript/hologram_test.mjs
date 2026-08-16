@@ -232,7 +232,7 @@ describe("Hologram", () => {
   describe("executeLoadPrefetchedPageAction()", () => {
     let eventTargetNode, loadNewPageStub;
 
-    const html = "my_html";
+    const payload = {type: "page"};
 
     const loadPrefetchedPageAction = Type.actionStruct({
       name: Type.atom("__load_prefetched_page__"),
@@ -245,7 +245,7 @@ describe("Hologram", () => {
     beforeEach(() => {
       loadNewPageStub = sinon
         .stub(Hologram, "loadNewPage")
-        .callsFake((_pagePath, _html) => null);
+        .callsFake((_pagePath, _payload) => null);
 
       eventTargetNode = {id: "dummy_event_target_node"};
     });
@@ -280,7 +280,7 @@ describe("Hologram", () => {
         [
           mapKey,
           {
-            html: null,
+            payload: null,
             isNavigateConfirmed: false,
             pagePath: pagePath,
             timestamp: Date.now(),
@@ -301,7 +301,7 @@ describe("Hologram", () => {
       const mapValue = Hologram.prefetchedPages.get(mapKey);
 
       assert.deepStrictEqual(mapValue, {
-        html: null,
+        payload: null,
         isNavigateConfirmed: true,
         pagePath: pagePath,
         timestamp: mapValue.timestamp,
@@ -318,7 +318,7 @@ describe("Hologram", () => {
         [
           mapKey,
           {
-            html: html,
+            payload: payload,
             isNavigateConfirmed: false,
             pagePath: pagePath,
             timestamp: Date.now(),
@@ -335,7 +335,41 @@ describe("Hologram", () => {
       assert.instanceOf(Hologram.prefetchedPages, Map);
       assert.equal(Hologram.prefetchedPages.size, 0);
 
-      sinon.assert.calledOnceWithExactly(loadNewPageStub, pagePath, html);
+      sinon.assert.calledOnceWithExactly(loadNewPageStub, pagePath, payload);
+    });
+
+    // Dropping the entry instead would leave the link dead: the click looks the target up here,
+    // and an entry that is not there does nothing at all.
+    it("hands the target to the browser when the prefetch found no page", () => {
+      const leaveAppStub = sinon.stub(Hologram, "leaveApp");
+
+      eventTargetNode = {__hologramId__: "dummy_hologram_id"};
+      const mapKey = "dummy_hologram_id:/hologram-test-fixtures-module7";
+
+      Hologram.prefetchedPages = new Map([
+        [
+          mapKey,
+          {
+            isNavigateConfirmed: false,
+            isPage: false,
+            pagePath: pagePath,
+            payload: null,
+            timestamp: Date.now(),
+          },
+        ],
+      ]);
+
+      Hologram.executeLoadPrefetchedPageAction(
+        loadPrefetchedPageAction,
+        eventTargetNode,
+      );
+
+      assert.equal(Hologram.prefetchedPages.size, 0);
+
+      sinon.assert.calledOnceWithExactly(leaveAppStub, pagePath);
+      sinon.assert.notCalled(loadNewPageStub);
+
+      leaveAppStub.restore();
     });
 
     it("is a no-op if there is no prefeteched pages map entry for the given map key", () => {
@@ -419,9 +453,10 @@ describe("Hologram", () => {
       const mapValue = Hologram.prefetchedPages.get(mapKey);
 
       assert.deepStrictEqual(mapValue, {
-        html: null,
         isNavigateConfirmed: false,
+        isPage: true,
         pagePath: pagePath,
+        payload: null,
         timestamp: mapValue.timestamp,
       });
 
@@ -431,6 +466,7 @@ describe("Hologram", () => {
         clientFetchPageStub,
         module7,
         successCallbacks[0],
+        sinon.match.func,
       );
 
       assert.equal(successCallbacks.length, 1);
@@ -468,9 +504,10 @@ describe("Hologram", () => {
       const mapValue = Hologram.prefetchedPages.get(mapKey);
 
       assert.deepStrictEqual(Hologram.prefetchedPages.get(mapKey), {
-        html: null,
         isNavigateConfirmed: false,
+        isPage: true,
         pagePath: pagePath,
+        payload: null,
         timestamp: mapValue.timestamp,
       });
 
@@ -480,6 +517,7 @@ describe("Hologram", () => {
         clientFetchPageStub,
         module7,
         successCallbacks[0],
+        sinon.match.func,
       );
 
       assert.equal(successCallbacks.length, 1);
@@ -1234,13 +1272,77 @@ describe("Hologram", () => {
     });
   });
 
+  describe("handlePrefetchPageNotPage()", () => {
+    let leaveAppStub;
+
+    beforeEach(() => {
+      leaveAppStub = sinon.stub(Hologram, "leaveApp");
+    });
+
+    afterEach(() => leaveAppStub.restore());
+
+    it("leaves the app when navigate has already been confirmed", () => {
+      Hologram.prefetchedPages = new Map([
+        [
+          "dummy_map_key",
+          {
+            isNavigateConfirmed: true,
+            isPage: true,
+            pagePath: "/my-page-path",
+            payload: null,
+            timestamp: Date.now(),
+          },
+        ],
+      ]);
+
+      Hologram.handlePrefetchPageNotPage("dummy_map_key");
+
+      assert.equal(Hologram.prefetchedPages.size, 0);
+      sinon.assert.calledOnceWithExactly(leaveAppStub, "/my-page-path");
+    });
+
+    // Before the click, the answer is only remembered: leaving the app on hover would take the
+    // user somewhere they have not asked to go.
+    it("marks the entry when navigate hasn't been confirmed", () => {
+      const mapKey = "dummy_map_key";
+
+      Hologram.prefetchedPages = new Map([
+        [
+          mapKey,
+          {
+            isNavigateConfirmed: false,
+            isPage: true,
+            pagePath: "/my-page-path",
+            payload: null,
+            timestamp: Date.now(),
+          },
+        ],
+      ]);
+
+      Hologram.handlePrefetchPageNotPage(mapKey);
+
+      assert.equal(Hologram.prefetchedPages.size, 1);
+      assert.isFalse(Hologram.prefetchedPages.get(mapKey).isPage);
+      sinon.assert.notCalled(leaveAppStub);
+    });
+
+    it("no prefetchedPages map entry", () => {
+      Hologram.prefetchedPages = new Map();
+
+      Hologram.handlePrefetchPageNotPage("dummy_map_key");
+
+      assert.equal(Hologram.prefetchedPages.size, 0);
+      sinon.assert.notCalled(leaveAppStub);
+    });
+  });
+
   describe("handlePrefetchPageSuccess()", () => {
     let loadNewPageStub;
 
     beforeEach(() => {
       loadNewPageStub = sinon
         .stub(Hologram, "loadNewPage")
-        .callsFake((_pagePath, _html) => null);
+        .callsFake((_pagePath, _payload) => null);
     });
 
     afterEach(() => Hologram.loadNewPage.restore());
@@ -1248,7 +1350,7 @@ describe("Hologram", () => {
     it("no prefetchedPages map entry", () => {
       Hologram.prefetchedPages = new Map();
 
-      Hologram.handlePrefetchPageSuccess("dummy_map_key", "my_html");
+      Hologram.handlePrefetchPageSuccess("dummy_map_key", {type: "page"});
 
       // Can't use assert.deepStrictEqual for Maps
       assert.instanceOf(Hologram.prefetchedPages, Map);
@@ -1262,7 +1364,7 @@ describe("Hologram", () => {
         [
           "dummy_map_key",
           {
-            html: null,
+            payload: null,
             isNavigateConfirmed: true,
             pagePath: "/my-page-path",
             timestamp: Date.now(),
@@ -1270,17 +1372,15 @@ describe("Hologram", () => {
         ],
       ]);
 
-      Hologram.handlePrefetchPageSuccess("dummy_map_key", "my_html");
+      Hologram.handlePrefetchPageSuccess("dummy_map_key", {type: "page"});
 
       // Can't use assert.deepStrictEqual for Maps
       assert.instanceOf(Hologram.prefetchedPages, Map);
       assert.equal(Hologram.prefetchedPages.size, 0);
 
-      sinon.assert.calledOnceWithExactly(
-        loadNewPageStub,
-        "/my-page-path",
-        "my_html",
-      );
+      sinon.assert.calledOnceWithExactly(loadNewPageStub, "/my-page-path", {
+        type: "page",
+      });
     });
 
     it("navigate hasn't been confirmed", () => {
@@ -1291,7 +1391,7 @@ describe("Hologram", () => {
         [
           mapKey,
           {
-            html: null,
+            payload: null,
             isNavigateConfirmed: false,
             pagePath: "/my-page-path",
             timestamp: timestamp,
@@ -1299,7 +1399,7 @@ describe("Hologram", () => {
         ],
       ]);
 
-      Hologram.handlePrefetchPageSuccess(mapKey, "my_html");
+      Hologram.handlePrefetchPageSuccess(mapKey, {type: "page"});
 
       // Can't use assert.deepStrictEqual for Maps
       assert.instanceOf(Hologram.prefetchedPages, Map);
@@ -1309,7 +1409,7 @@ describe("Hologram", () => {
       const mapValue = Hologram.prefetchedPages.get(mapKey);
 
       assert.deepStrictEqual(mapValue, {
-        html: "my_html",
+        payload: {type: "page"},
         isNavigateConfirmed: false,
         pagePath: "/my-page-path",
         timestamp: timestamp,
@@ -1614,6 +1714,7 @@ describe("Hologram", () => {
 
   describe("render()", () => {
     afterEach(() => {
+      Hologram.virtualDocument = null;
       Renderer.listenerBindings = [];
       sinon.restore();
     });
@@ -1653,6 +1754,57 @@ describe("Hologram", () => {
       // Reach listeners persist, so each is rechecked after reconcile to re-sync and auto-fill.
       sinon.assert.calledOnce(recheckStub);
       sinon.assert.callOrder(reconcileStub, recheckStub);
+    });
+
+    // A full document load has no previous render to diff against, only the page the server sent,
+    // so the old side is this render mirrored onto it. Reading the page into a vdom of its own
+    // instead would describe it in terms the render never uses, and every node would be rebuilt.
+    it("seeds the first render by mirroring it onto the page the server sent", () => {
+      const renderedVirtualDocument = {sel: "html", data: {}, children: []};
+      const mirroredVirtualDocument = {sel: "html", data: {}, children: []};
+
+      sinon.stub(Renderer, "renderPage").returns(renderedVirtualDocument);
+      const mirrorStub = sinon
+        .stub(Vdom, "mirror")
+        .returns(mirroredVirtualDocument);
+      const patchStub = sinon.stub(Vdom, "patchVirtualDocument");
+
+      Hologram.virtualDocument = null;
+
+      Hologram.render();
+
+      sinon.assert.calledOnceWithExactly(
+        mirrorStub,
+        renderedVirtualDocument,
+        document.documentElement,
+      );
+
+      sinon.assert.calledOnceWithExactly(
+        patchStub,
+        mirroredVirtualDocument,
+        renderedVirtualDocument,
+      );
+    });
+
+    it("leaves a render that has a previous one to diff against alone", () => {
+      const previousVirtualDocument = {sel: "html", data: {}, children: []};
+      const renderedVirtualDocument = {sel: "html", data: {}, children: []};
+
+      sinon.stub(Renderer, "renderPage").returns(renderedVirtualDocument);
+      const mirrorStub = sinon.stub(Vdom, "mirror");
+      const patchStub = sinon.stub(Vdom, "patchVirtualDocument");
+
+      Hologram.virtualDocument = previousVirtualDocument;
+
+      Hologram.render();
+
+      sinon.assert.notCalled(mirrorStub);
+
+      sinon.assert.calledOnceWithExactly(
+        patchStub,
+        previousVirtualDocument,
+        renderedVirtualDocument,
+      );
     });
   });
 

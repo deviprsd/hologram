@@ -299,6 +299,13 @@ export default class Renderer {
 
     const originalEventName = attributeName.substring(1);
 
+    // $key names the place an element holds in its template rather than something that happens to
+    // it, so it binds nothing. Without this it would register a listener for an event called "key",
+    // which no browser fires.
+    if (originalEventName === "key") {
+      return null;
+    }
+
     // click_outside is not a per-element listener: the dismissing click lands on another element,
     // so it is collected as a document-level "click" binding in #renderElement. Returning null here
     // keeps it out of the element's "on" map.
@@ -1533,6 +1540,14 @@ export default class Renderer {
     } else if (currentTagName === "script" && childrenVdom[0]) {
       // Make sure the script is executed if the code changes.
       data.key = `__hologramScript__:${childrenVdom[0]}`;
+    } else {
+      // What the element loads names it better than where it sits, so a slot key only applies to
+      // elements that load nothing (link/script take the branches above instead).
+      const slotKey = $.#renderSlotKey(attrsDom);
+
+      if (slotKey !== null) {
+        data.key = slotKey;
+      }
     }
 
     const elementVnode = vnode(currentTagName, data, childrenVdom);
@@ -1590,29 +1605,23 @@ export default class Renderer {
 
   // Based on render_dom/3 (list case)
   static #renderNodes(nodes, context, slots, defaultTarget, parentTagName) {
-    // A block rendered more than once into this list carries the same marker key each time, so the
-    // repeats are numbered here, where the list is finalized, and each marked span is then gathered
-    // into one fragment so the block holds a single position however much it renders.
-    //
-    // Numbering runs first: a fragment pairs its markers by key, and a repeat's key is only unique
-    // once numbered.
-    return Vdom.groupBlockFragments(
-      Vdom.dedupeMarkerKeys(
-        Renderer.#mergeNeighbouringTextNodes(
-          nodes.data
-            // There may be nil DOM nodes resulting from "if" blocks, e.g. {%if false}abc{/if} or DOCTYPE
-            .filter((node) => !Type.isNil(node))
-            .map((node) =>
-              Renderer.renderDom(
-                node,
-                context,
-                slots,
-                defaultTarget,
-                parentTagName,
-              ),
-            )
-            .flat(),
-        ),
+    // The element's children are complete here, whatever nesting of blocks, loops and components
+    // produced them, so this is where a repeated key is settled against the rest of the list.
+    return Vdom.finalizeChildren(
+      Renderer.#mergeNeighbouringTextNodes(
+        nodes.data
+          // There may be nil DOM nodes resulting from "if" blocks, e.g. {%if false}abc{/if} or DOCTYPE
+          .filter((node) => !Type.isNil(node))
+          .map((node) =>
+            Renderer.renderDom(
+              node,
+              context,
+              slots,
+              defaultTarget,
+              parentTagName,
+            ),
+          )
+          .flat(),
       ),
     );
   }
@@ -1684,14 +1693,7 @@ export default class Renderer {
       .map((child) => (typeof child === "string" ? child : vnodeToHtml(child)))
       .join("");
 
-    // Block markers are emitted as comments, so they arrive here like any other comment node and
-    // are told apart by their marker text. Keying them here keeps client-rendered markers matching
-    // the ones recovered from server-rendered markup.
-    const key = Vdom.markerKey(commentContent);
-
-    return key
-      ? vnode("!", {key: key}, commentContent)
-      : vnode("!", commentContent);
+    return vnode("!", commentContent);
   }
 
   // Based on render_dom/3 (slot case)
@@ -1947,6 +1949,34 @@ export default class Renderer {
 
   static #valueDomToText(valueDom) {
     return Bitstring.toText(Renderer.valueDomToBitstring(valueDom));
+  }
+
+  // The key an element carries for the place it holds in its template, or null when it has none.
+  //
+  // Read straight off attrsDom rather than attrsVdom: "$key" starts with "$", so
+  // #renderAttributesAndProps already filtered it out of attrsVdom the same way it filters every
+  // event attribute (see #renderAttributesAndProps's regularAttrs). #valueDomToText already
+  // handles a "$key" value being either the compiler's own literal positional text or a keyed
+  // for-loop's own identity expression - the same conversion any other attribute's value goes
+  // through, just reached a different way because attrsVdom was never an option here.
+  //
+  // Scanned from the end because dom.ex's add_slot_keys/2 appends its own positional key after
+  // anything already on the tag - an author's own "$key" or a keyed for-loop's injected identity
+  // key - so the scan ends on its first step whenever one of those is present.
+  static #renderSlotKey(attrsDom) {
+    for (let index = attrsDom.data.length - 1; index >= 0; index -= 1) {
+      const attrDom = attrsDom.data[index];
+
+      if (Type.isRecordTuple(attrDom, "spread", 2)) {
+        continue;
+      }
+
+      if (Bitstring.toText(attrDom.data[0]) === "$key") {
+        return $.#valueDomToText(attrDom.data[1]);
+      }
+    }
+
+    return null;
   }
 
   // Returns the within modifier's CSS distance (e.g. "200px", "50%") from a modifiers map, or

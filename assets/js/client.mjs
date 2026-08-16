@@ -94,7 +94,7 @@ export default class Client {
     HttpTransport.restartPing(sendImmediatePing);
   }
 
-  static async fetchPage(toParam, onSuccess) {
+  static async fetchPage(toParam, onSuccess, onNotPage) {
     let pageModule, queryString;
 
     if (Type.isAlias(toParam)) {
@@ -113,14 +113,17 @@ export default class Client {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: Serializer.serialize($.buildPageRequestPayload(), "server"),
+        redirect: "manual",
       });
 
-      if (!response.ok) {
-        $.#handleFetchPageError(response.status);
+      // Awaited so that whatever the callback goes on to do is part of this promise. A redirect
+      // answers by fetching the next page, and without the await a failure there - the hop limit
+      // being one - would reject a promise nobody holds instead of reaching the caller.
+      if (response.headers.get("hologram-page-data") === "true") {
+        await onSuccess(await response.json());
+      } else {
+        await onNotPage();
       }
-
-      const html = await response.text();
-      onSuccess(html);
     } catch (error) {
       if (error instanceof HologramRuntimeError) {
         throw error;

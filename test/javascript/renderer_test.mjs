@@ -253,8 +253,10 @@ describe("Renderer", () => {
       assert.deepStrictEqual(result, expected);
     });
 
-    it("with block marker", () => {
-      // <!--[h:1a2b3c:0:o]-->
+    // Comments carry no key at all now - dom.ex's add_slot_keys/2 only ever keys elements
+    // (Renderer.#renderSlotKey reads "$key" off attrsDom, which a public_comment node has none
+    // of), so comment text that happens to look like the old marker format is just ordinary text.
+    it("comment text is never keyed, even if it looks like the old marker format", () => {
       const node = Type.tuple([
         Type.atom("public_comment"),
         Type.list([
@@ -270,119 +272,10 @@ describe("Renderer", () => {
         parentTagName,
       );
 
-      const expected = vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]");
+      const expected = vnode("!", "[h:1a2b3c:0:o]");
 
       assert.deepStrictEqual(result, expected);
-    });
-
-    // "for" item markers - Hologram.Template.Marker.item_node/4 produces the same shape as a
-    // block marker, plus the item's key as an extra segment before the side. This is the client
-    // rendering path (as opposed to a DOM-derived one), and it has to key the comment exactly the
-    // same way the server's marker text and the DOM-derived paths (Vdom.addKeysToVnodes,
-    // Vdom.#buildVnodeFromDomNode) do, since the first patch after boot/navigation diffs against
-    // whichever of those the page loaded from.
-    it("with item marker", () => {
-      // <!--[h:1a2b3c:0:42:o]-->
-      const node = Type.tuple([
-        Type.atom("public_comment"),
-        Type.list([
-          Type.tuple([Type.atom("text"), Type.bitstring("[h:1a2b3c:0:42:o]")]),
-        ]),
-      ]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      const expected = vnode(
-        "!",
-        { key: "[h:1a2b3c:0:42:o]" },
-        "[h:1a2b3c:0:42:o]",
-      );
-
-      assert.deepStrictEqual(result, expected);
-    });
-
-    it("numbers repeated block markers in one list", () => {
-      // <!--[h:1a2b3c:0:o]--><!--[h:1a2b3c:0:o]-->
-      const marker = Type.tuple([
-        Type.atom("public_comment"),
-        Type.list([
-          Type.tuple([Type.atom("text"), Type.bitstring("[h:1a2b3c:0:o]")]),
-        ]),
-      ]);
-
-      const node = Type.list([marker, marker]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      assert.deepStrictEqual(
-        result.map((child) => child.key),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1"],
-      );
-
-      assert.deepStrictEqual(
-        result.map((child) => child.text),
-        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]"],
-      );
-    });
-
-    it("gathers a marked span into one fragment", () => {
-      // <!--[h:1a2b3c:0:o]--><div></div><!--[h:1a2b3c:0:c]--><input />
-      const marker = (side) =>
-        Type.tuple([
-          Type.atom("public_comment"),
-          Type.list([
-            Type.tuple([
-              Type.atom("text"),
-              Type.bitstring(`[h:1a2b3c:0:${side}]`),
-            ]),
-          ]),
-        ]);
-
-      const element = (tagName) =>
-        Type.tuple([
-          Type.atom("element"),
-          Type.bitstring(tagName),
-          Type.list(),
-          Type.list(),
-        ]);
-
-      const node = Type.list([
-        marker("o"),
-        element("div"),
-        marker("c"),
-        element("input"),
-      ]);
-
-      const result = Renderer.renderDom(
-        node,
-        context,
-        slots,
-        defaultTarget,
-        parentTagName,
-      );
-
-      // The block holds one position whatever it renders, so the input never shifts.
-      assert.equal(result.length, 2);
-      assert.isUndefined(result[0].sel);
-      assert.equal(result[0].key, "[h:1a2b3c:0:o]");
-      assert.equal(result[1].sel, "input");
-
-      assert.deepStrictEqual(
-        result[0].children.map((child) => child.key ?? child.sel),
-        ["[h:1a2b3c:0:o]", "div", "[h:1a2b3c:0:c]"],
-      );
+      assert.isUndefined(result.key);
     });
 
     it("with nested stateful components", () => {
@@ -10164,6 +10057,125 @@ describe("Renderer", () => {
 
         assert.equal(Renderer.formInputReplays.length, 1);
       });
+    });
+  });
+
+  // Regression coverage for the bug Phase 0 of the key-reconciliation migration fixed
+  // (dedupeMarkerKeys only renumbered bare comment-marker vnodes, so two sibling instances of the
+  // same component template - each pre-grouped into a fragment one level down, invisible to that
+  // filter - reached snabbdom's keyed diff with the identical, un-renumbered key). Fragments and
+  // markers are gone now, but the input that caused it isn't: two sibling instances of the same
+  // template still compute the identical positional "$key" (same tag stream -> same hash and
+  // index), so this proves the new dedupeKeys()/finalizeChildren() pass still catches the
+  // collision through the real render path, not just a hand-built array.
+  describe("$key collisions across sibling instances of the same template", () => {
+    const moduleName =
+      "Hologram.Test.Fixtures.Template.Renderer.SiblingKeyCollisionModule";
+
+    before(() => {
+      // Every instance of this template renders the identical root element with the identical
+      // "$key" - what add_slot_keys/2 would inject for any two placements of the same compiled
+      // template, since the key is derived purely from the template's own tag stream.
+      Interpreter.defineElixirFunction(moduleName, "__props__", 0, "public", [
+        {
+          params: (_context) => [],
+          guards: [],
+          body: (_context) => Type.list(),
+        },
+      ]);
+
+      Interpreter.defineElixirFunction(moduleName, "template", 0, "public", [
+        {
+          params: (_context) => [],
+          guards: [],
+          body: (context) => {
+            globalThis.Hologram.return = Type.anonymousFunction(
+              1,
+              [
+                {
+                  params: (_context) => [Type.variablePattern("vars")],
+                  guards: [],
+                  body: (_context) =>
+                    Type.list([
+                      Type.tuple([
+                        Type.atom("element"),
+                        Type.bitstring("li"),
+                        Type.list([
+                          Type.tuple([
+                            Type.bitstring("$key"),
+                            Type.keywordList([
+                              [
+                                Type.atom("text"),
+                                Type.bitstring("same_template_hash:0"),
+                              ],
+                            ]),
+                          ]),
+                        ]),
+                        Type.list([
+                          Type.tuple([Type.atom("text"), Type.bitstring("x")]),
+                        ]),
+                      ]),
+                    ]),
+                },
+              ],
+              context,
+            );
+            Interpreter.updateVarsToMatchedValues(context);
+            return globalThis.Hologram.return;
+          },
+        },
+      ]);
+    });
+
+    it("renumbers the second instance's key instead of leaving a duplicate", () => {
+      const cidA = Type.bitstring("sibling_key_collision_a");
+      const cidB = Type.bitstring("sibling_key_collision_b");
+
+      ComponentRegistry.putEntry(
+        cidA,
+        componentRegistryEntryFixture({module: Type.alias(moduleName)}),
+      );
+      ComponentRegistry.putEntry(
+        cidB,
+        componentRegistryEntryFixture({module: Type.alias(moduleName)}),
+      );
+
+      const componentNode = (cid) =>
+        Type.tuple([
+          Type.atom("component"),
+          Type.alias(moduleName),
+          Type.list([
+            Type.tuple([
+              Type.bitstring("cid"),
+              Type.keywordList([[Type.atom("text"), cid]]),
+            ]),
+          ]),
+          Type.list(),
+        ]);
+
+      // <ul><SiblingKeyCollisionModule cid="a" /><SiblingKeyCollisionModule cid="b" /></ul>
+      const node = Type.tuple([
+        Type.atom("element"),
+        Type.bitstring("ul"),
+        Type.list(),
+        Type.list([componentNode(cidA), componentNode(cidB)]),
+      ]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      const [first, second] = result.children;
+
+      assert.equal(first.sel, "li");
+      assert.equal(second.sel, "li");
+      assert.equal(first.key, "same_template_hash:0");
+      assert.equal(second.key, "same_template_hash:0:1");
+      assert.notEqual(first.key, second.key);
     });
   });
 });

@@ -1,9 +1,9 @@
 Benchmark
 
 Function: Renderer.renderDom()\
-Argument: a 30-row `<ul>` list, each row wrapped in an item marker pair (see
-Hologram.Template.Marker.item_node/4) - compare against for_list_unkeyed for the per-item marker
-overhead
+Argument: a 30-row `<ul>` list, each `<li>` carrying a "$key" attribute (see
+Hologram.Template.DOM.add_slot_keys/2 and Renderer.#renderSlotKey) - compare against
+for_list_unkeyed for the per-item key-processing overhead
 
 ## System
 
@@ -43,13 +43,16 @@ overhead
 <table>
   <tr>
     <th>Average Cold Execution Time</th>
-    <td>1146.79 μs</td>
+    <td>886 μs</td>
   </tr>
   <tr>
     <th>Average Warm Execution Time</th>
-    <td>47.18 μs</td>
+    <td>30.8 μs</td>
   </tr>
 </table>
 
-Roughly 2x the unkeyed baseline's warm time, tracking the node count: each row goes from one
-`<li>` to three nodes (open marker, `<li>`, close marker).
+About 15% over the unkeyed baseline's warm time - the cost of reading each row's "$key" attribute
+and snabbdom's keyed diffing. Since positional/identity keys attach directly to their element
+rather than wrapping it in marker comments, node count no longer differs between the two
+benchmarks at all (previously the keyed case rendered 3 nodes per row against the unkeyed case's
+1, for a roughly 2x gap).

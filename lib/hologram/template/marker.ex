@@ -5,13 +5,13 @@ defmodule Hologram.Template.Marker do
   # assets/js/elixir/hologram/template/marker.mjs instead of being auto-transpiled - see
   # Hologram.Compiler.CallGraph.manually_ported_elixir_mfas/0. Keep both implementations in sync;
   # `key_from_value/1` in particular must accept and reject exactly the same values on both sides,
-  # since the same key text has to survive server-rendered markup and be reproduced identically by
-  # the client renderer for the first patch after boot/navigation to agree with it.
+  # since a value one side rejects and the other accepts would give an item a "$key" attribute on
+  # only one of server- and client-rendered output.
 
-  # Excludes ":" (the marker's own segment separator), "<", ">", "&", "\"" (unsafe inside an HTML
-  # comment or requiring escaping the server side doesn't do for comment text) and whitespace.
-  # "-" is kept for UUIDs; a run of "--" is rejected separately since it can close an HTML comment
-  # early.
+  # Excludes ":" so a key can't be mistaken for a segment separator in ItemCache's own
+  # "hash:index:key" cache key (see item_cache.mjs), and "<", ">", "&", "\"", whitespace as a
+  # conservative holdover from when this value could still reach an HTML comment unescaped. "-" is
+  # kept for UUIDs; a run of "--" stays excluded for the same historical reason.
   @key_regex ~r/^[A-Za-z0-9_.@|~+-]+$/
   @max_key_length 128
 
@@ -28,10 +28,15 @@ defmodule Hologram.Template.Marker do
 
   @doc """
   Validates and stringifies a key candidate - either an auto-key's `:id` value or an explicit
-  `$key` expression's value. Only binaries, integers and non-boolean, non-nil atoms are accepted,
-  since those are the terms that can become marker text without escaping. Returns `nil` when the
-  value can't safely become marker text, which `item_node/4` turns into a plain (unkeyed) item -
-  the same positional diffing behaviour as before this module existed.
+  `$key` expression's value. Only binaries, integers and non-boolean, non-nil atoms are accepted.
+  Returns `nil` when the value can't safely become the key text - `add_slot_keys/2` (see
+  `Hologram.Template.DOM`) then leaves the body's element with no "$key" attribute of its own, so
+  it falls back to whichever ordinary key add_slot_keys/2 gives every other element, and the item
+  loses its memoized_item/5 cache entry - the same positional diffing behaviour as before this
+  module existed, silently, for that item alone. ":" is excluded so the key can't be mistaken for
+  a segment separator in `ItemCache`'s own `"hash:index:key"` cache key (see item_cache.mjs); "-"
+  is kept for UUIDs, with a run of "--" rejected separately as a defensive leftover from when this
+  value could still reach an HTML comment unescaped.
   """
   @spec key_from_value(term) :: String.t() | nil
   def key_from_value(value) when is_binary(value), do: validate_key_text(value)
@@ -45,20 +50,6 @@ defmodule Hologram.Template.Marker do
   end
 
   def key_from_value(_value), do: nil
-
-  @doc """
-  Builds one side of an item marker comment node - the client keys it exactly like a block marker
-  (see `Hologram.Template.DOM.marker_tags/4`), except the marker text carries the item's key as an
-  extra segment before the side. Returns `nil` when `key` is `nil`: both renderers drop `nil`
-  children, so an unkeyable item emits no marker and no extra markup - the list falls back to
-  positional diffing for that item alone, silently.
-  """
-  @spec item_node(String.t() | nil, String.t(), non_neg_integer, String.t()) :: tuple | nil
-  def item_node(nil, _hash, _index, _side), do: nil
-
-  def item_node(key, hash, index, side) do
-    {:public_comment, [text: "[h:#{hash}:#{index}:#{key}:#{side}]"]}
-  end
 
   @doc """
   Wraps a keyed `{%for}` item's body. Semantically transparent on the BEAM - always calls

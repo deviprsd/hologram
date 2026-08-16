@@ -1,8 +1,9 @@
 "use strict";
 
-// Baseline for for_list_keyed/run.mjs - same 30-row list, but without item markers, i.e. the
-// shape a {%for} whose generator isn't a single plain variable (or that has no :id and no $key)
-// still renders today. Compares against for_list_keyed to show the per-item marker overhead.
+// Baseline for for_list_keyed/run.mjs - same 30-row list, but with no "$key" attribute on any
+// row. No real {%for} loop output looks like this on its own (every keyable element gets a
+// "$key" - see Hologram.Template.DOM.add_slot_keys/2), but it isolates the per-item key-reading
+// and keyed-diffing cost that for_list_keyed pays.
 
 import Renderer from "../../../../../assets/js/renderer.mjs";
 import Type from "../../../../../assets/js/type.mjs";

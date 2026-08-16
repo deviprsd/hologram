@@ -114,18 +114,4 @@ defmodule Hologram.Template.MarkerTest do
       assert key_from_value("a_b.c@d|e~f+g-h") == "a_b.c@d|e~f+g-h"
     end
   end
-
-  describe "item_node/4" do
-    test "with a key" do
-      assert item_node("42", "abc123", 0, "o") == {:public_comment, [text: "[h:abc123:0:42:o]"]}
-    end
-
-    test "with a key, closing side" do
-      assert item_node("42", "abc123", 0, "c") == {:public_comment, [text: "[h:abc123:0:42:c]"]}
-    end
-
-    test "without a key" do
-      assert item_node(nil, "abc123", 0, "o") == nil
-    end
-  end
 end

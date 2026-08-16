@@ -2,8 +2,8 @@
 
 // Based on Elixir Hologram.Template.MarkerTest - the accept/reject table for key_from_value/1 in
 // particular has to match its Elixir twin exactly (see lib/hologram/template/marker.ex), since a
-// key that one side derives and the other rejects would desync the vdom the client boots from
-// server-rendered markup from the vdom it renders itself.
+// key one side derives and the other rejects would give an item a "$key" attribute on only one of
+// server- and client-rendered output.
 
 import {
   assert,
@@ -18,7 +18,6 @@ import Type from "../../../../../assets/js/type.mjs";
 defineRuntimeGlobals();
 
 const item_key = Elixir_Hologram_Template_Marker["item_key/1"];
-const item_node = Elixir_Hologram_Template_Marker["item_node/4"];
 const key_from_value = Elixir_Hologram_Template_Marker["key_from_value/1"];
 const memoized_item = Elixir_Hologram_Template_Marker["memoized_item/5"];
 
@@ -209,63 +208,6 @@ describe("Elixir_Hologram_Template_Marker", () => {
         key_from_value(Type.bitstring(key)),
         Type.bitstring(key),
       );
-    });
-  });
-
-  describe("item_node/4", () => {
-    it("with a key", () => {
-      const result = item_node(
-        Type.bitstring("42"),
-        Type.bitstring("abc123"),
-        Type.integer(0),
-        Type.bitstring("o"),
-      );
-
-      assert.deepStrictEqual(
-        result,
-        Type.tuple([
-          Type.atom("public_comment"),
-          Type.list([
-            Type.tuple([
-              Type.atom("text"),
-              Type.bitstring("[h:abc123:0:42:o]"),
-            ]),
-          ]),
-        ]),
-      );
-    });
-
-    it("with a key, closing side", () => {
-      const result = item_node(
-        Type.bitstring("42"),
-        Type.bitstring("abc123"),
-        Type.integer(0),
-        Type.bitstring("c"),
-      );
-
-      assert.deepStrictEqual(
-        result,
-        Type.tuple([
-          Type.atom("public_comment"),
-          Type.list([
-            Type.tuple([
-              Type.atom("text"),
-              Type.bitstring("[h:abc123:0:42:c]"),
-            ]),
-          ]),
-        ]),
-      );
-    });
-
-    it("without a key", () => {
-      const result = item_node(
-        Type.nil(),
-        Type.bitstring("abc123"),
-        Type.integer(0),
-        Type.bitstring("o"),
-      );
-
-      assert.deepStrictEqual(result, Type.nil());
     });
   });
 
