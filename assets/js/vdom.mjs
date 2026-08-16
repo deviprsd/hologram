@@ -5,56 +5,12 @@ import {
   eventListenersModule,
   h as vnode,
   init,
+  vnode as rawVnode,
 } from "./vendor/snabbdom/build/index.js";
 
 const patch = init([attributesModule, eventListenersModule]);
 
 export default class Vdom {
-  // "$key" never reaches server-rendered HTML - lib/hologram/template/renderer.ex's
-  // render_attributes/1 rejects every "$"-prefixed attribute unconditionally, same as any event
-  // binding - so there is nothing to recover here for an ordinary element; only a resource key
-  // (link/script, derived from href/src/textContent, which are ordinary non-"$" attributes and do
-  // reach the markup) is ever set on a boot-derived vnode. Ordinary elements fall back to
-  // snabbdom's own keyless tag+position pairing for this first patch only - any later client-
-  // driven render carries real "$key"s on both sides of its own diff (see renderer.mjs's
-  // #renderSlotKey), which is where keyed reconciliation actually takes effect.
-  static addKeysToVnodes(node) {
-    let key;
-
-    switch (node.sel) {
-      case "link":
-        if (
-          node.data?.attrs?.href &&
-          typeof node.data.attrs.href === "string"
-        ) {
-          key = `__hologramLink__:${node.data.attrs.href}`;
-        }
-        break;
-
-      case "script":
-        if (typeof node.data?.attrs?.src === "string" && node.data.attrs.src) {
-          key = `__hologramScript__:${node.data.attrs.src}`;
-        } else if (node.textContent) {
-          // Make sure the script is executed if the code changes.
-          key = `__hologramScript__:${node.textContent}`;
-        }
-        break;
-    }
-
-    if (key) {
-      node.key = key;
-      node.data.key = key;
-    }
-
-    if (Array.isArray(node.children)) {
-      for (const childNode of node.children) {
-        Vdom.addKeysToVnodes(childNode);
-      }
-
-      node.children = $.dedupeKeys(node.children);
-    }
-  }
-
   // Numbers repeats of a key within one children list, in document order: the second occurrence
   // becomes "<key>:1", the third "<key>:2".
   //
@@ -106,11 +62,21 @@ export default class Vdom {
     return $.dedupeKeys(children);
   }
 
-  static from(html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    return Vdom.#buildVnodeFromDomNode(doc.documentElement);
+  // Builds the old side of the boot patch: the rendered vdom mirrored onto the live DOM, sel and
+  // key copied from the rendered side and elm taken from the page, so the first patch adopts the
+  // server-rendered nodes instead of recreating them. The patch then does the rest through its
+  // ordinary machinery - attributes are re-set idempotently, event listeners attach, and the
+  // rendered side's stylesheet and script keys compare equal by construction, so neither is
+  // re-fetched or re-executed.
+  //
+  // Nodes the render has no counterpart for are mirrored as they really are, children and
+  // resource keys included, so the patch aligns and repairs that region on its own terms through
+  // the same create, move and remove paths every later patch runs. Repair is not implemented
+  // here.
+  static mirror(renderedVnode, domNode) {
+    return $.#correspondsTo(renderedVnode, domNode)
+      ? $.#mirrorNode(renderedVnode, domNode)
+      : $.#vnodeOfDomNode(domNode);
   }
 
   // Covered in feature tests
@@ -152,6 +118,18 @@ export default class Vdom {
     return patchedVirtualDocument;
   }
 
+  // Parses server-rendered HTML into a vnode tree with no "$key" on ordinary elements (only
+  // link/script resource keys are recovered) - kept only for #patchPage's HTML-based page
+  // navigation, which still calls it. Everything else (the first render after boot) goes through
+  // mirror() instead, which doesn't have this gap. Dead once #patchPage is migrated off raw HTML.
+  static from(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    return Vdom.#buildVnodeFromDomNode(doc.documentElement);
+  }
+
+  // Used only by from() - see its comment for why this still exists.
   static #buildVnodeFromDomNode(node) {
     if (node.nodeType === Node.TEXT_NODE) {
       return node.textContent;
@@ -190,6 +168,17 @@ export default class Vdom {
     return vnode(tagName, data, children);
   }
 
+  // An element's attributes in the vdom convention: a valueless attribute reads as true.
+  static #domNodeAttrs(domNode) {
+    const attrs = {};
+
+    for (const attr of domNode.attributes) {
+      attrs[attr.name] = attr.value === "" ? true : attr.value;
+    }
+
+    return attrs;
+  }
+
   // We're checking html element children,
   // so the nodes are either: head element, body element or text (whitespace) nodes
   static #isBodyVnode(vnode) {
@@ -200,6 +189,223 @@ export default class Vdom {
   // so the nodes are either: head element, body element or text (whitespace) nodes
   static #isHeadVnode(vnode) {
     return vnode.sel?.[0] === "h";
+  }
+
+  // Mirrors a rendered children list against a span of DOM nodes, advancing the shared cursor as
+  // nodes are consumed.
+  //
+  // Leftover DOM nodes are NOT consumed here: only the element owning the list knows the span is
+  // exhausted, so #mirrorNode appends them after this returns.
+  static #mirrorChildren(renderedChildren, domNodes, cursor) {
+    const mirroredChildren = [];
+
+    for (const renderedChild of renderedChildren) {
+      // The render is not always a prefix-by-prefix match for the page: a boot render omits the
+      // runtime's own scripts, which the server did emit. So an element takes the first DOM node
+      // it can correspond to rather than only the one at the cursor, and the nodes passed over are
+      // mirrored as they are, for the patch to match or remove.
+      const domIndex = $.#correspondingIndex(renderedChild, domNodes, cursor);
+
+      if (domIndex === -1) {
+        // Nothing left this child could be: the patch creates it.
+        continue;
+      }
+
+      while (cursor.index < domIndex) {
+        mirroredChildren.push($.#vnodeOfDomNode(domNodes[cursor.index]));
+        cursor.index += 1;
+      }
+
+      mirroredChildren.push($.#mirrorNode(renderedChild, domNodes[domIndex]));
+      cursor.index = domIndex + 1;
+    }
+
+    return mirroredChildren;
+  }
+
+  // The old-side vnode for one rendered vnode paired with the DOM node it corresponds to.
+  static #mirrorNode(renderedVnode, domNode) {
+    // Text is adopted whatever it says: the patch rewrites text in place, which keeps the node,
+    // so differing content is not a reason to rebuild.
+    if (renderedVnode.sel === undefined) {
+      return rawVnode(
+        undefined,
+        undefined,
+        undefined,
+        domNode.textContent,
+        domNode,
+      );
+    }
+
+    if (renderedVnode.sel === "!") {
+      const data = renderedVnode.key ? {key: renderedVnode.key} : {};
+
+      return rawVnode("!", data, undefined, domNode.textContent, domNode);
+    }
+
+    // Attributes are read from the DOM, not copied from the rendered side, so the patch sees what
+    // is really there: stale attributes are removed, missing ones added.
+    const data = {attrs: $.#domNodeAttrs(domNode)};
+
+    if (renderedVnode.key) {
+      data.key = renderedVnode.key;
+    }
+
+    const cursor = {index: 0};
+
+    const mirroredChildren = $.#mirrorChildren(
+      renderedVnode.children ?? [],
+      domNode.childNodes,
+      cursor,
+    );
+
+    // DOM nodes past the rendered children - third-party insertions or divergence - are mirrored
+    // as themselves, so the patch removes them.
+    while (cursor.index < domNode.childNodes.length) {
+      mirroredChildren.push(
+        $.#vnodeOfDomNode(domNode.childNodes[cursor.index]),
+      );
+      cursor.index += 1;
+    }
+
+    return rawVnode(
+      renderedVnode.sel,
+      data,
+      mirroredChildren,
+      undefined,
+      domNode,
+    );
+  }
+
+  // Whether a rendered vnode can stand for a DOM node, which is what makes adopting it safe.
+  //
+  // A resource key names what the element loads, and is the one thing a tag match is not enough
+  // for: adopting a script element for a different src would leave the old code running, since a
+  // script that has already executed does not run again when its src changes. The key an element
+  // carries for its place, which the DOM never held, does not constrain the pairing - it is
+  // identity rather than content.
+  static #correspondsTo(renderedVnode, domNode) {
+    if (renderedVnode.sel === undefined) {
+      return (
+        !Array.isArray(renderedVnode.children) &&
+        domNode.nodeType === Node.TEXT_NODE
+      );
+    }
+
+    if (renderedVnode.sel === "!") {
+      return domNode.nodeType === Node.COMMENT_NODE;
+    }
+
+    if (
+      domNode.nodeType !== Node.ELEMENT_NODE ||
+      domNode.tagName.toLowerCase() !== renderedVnode.sel
+    ) {
+      return false;
+    }
+
+    return $.#isResourceKey(renderedVnode.key)
+      ? $.#resourceKey(domNode, $.#domNodeAttrs(domNode)) === renderedVnode.key
+      : true;
+  }
+
+  // The index of the first DOM node from the cursor on that the rendered vnode can stand for, or
+  // -1 when there is none left.
+  //
+  // Only an element looks past the cursor. An element names what it is, so the nodes it steps over
+  // are ones the render genuinely does not have. Text and comments name nothing - any text node
+  // stands for any other - so one that looked ahead would claim a node further along and orphan
+  // every element in between, which the patch would then rebuild.
+  //
+  // The root is where that is guaranteed rather than incidental: the parser puts the whitespace
+  // between </head> and <body> inside <html>, so the rendered text that precedes <head> finds its
+  // counterpart only after it, and a scanning text vnode would pass over the entire head.
+  static #correspondingIndex(renderedVnode, domNodes, cursor) {
+    if (renderedVnode.sel === undefined || renderedVnode.sel === "!") {
+      return cursor.index < domNodes.length &&
+        $.#correspondsTo(renderedVnode, domNodes[cursor.index])
+        ? cursor.index
+        : -1;
+    }
+
+    for (let index = cursor.index; index < domNodes.length; index += 1) {
+      if ($.#correspondsTo(renderedVnode, domNodes[index])) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  static #isResourceKey(key) {
+    return (
+      typeof key === "string" &&
+      (key.startsWith("__hologramLink__:") ||
+        key.startsWith("__hologramScript__:"))
+    );
+  }
+
+  // The key a link or script element carries by what it loads, or null for anything else. Mirrors
+  // what the renderer derives for the same element, so the two sides compare equal.
+  static #resourceKey(domNode, attrs) {
+    const tagName = domNode.tagName.toLowerCase();
+
+    if (tagName === "link" && typeof attrs.href === "string") {
+      return `__hologramLink__:${attrs.href}`;
+    }
+
+    if (tagName === "script" && typeof attrs.src === "string" && attrs.src) {
+      return `__hologramScript__:${attrs.src}`;
+    }
+
+    if (tagName === "script" && domNode.textContent) {
+      // Make sure the script is executed if the code changes.
+      return `__hologramScript__:${domNode.textContent}`;
+    }
+
+    return null;
+  }
+
+  // A vnode standing for a DOM node on its own terms: its own tag, attributes, children and
+  // resource key, with the live node attached. Used wherever the rendered side has no counterpart,
+  // so the patch decides what happens to it - matching it by tag or key and keeping it, or
+  // removing it. It has to describe the node truthfully, children included: a vnode that claims
+  // to be empty makes the patch append content the node already has.
+  static #vnodeOfDomNode(domNode) {
+    if (domNode.nodeType === Node.TEXT_NODE) {
+      return rawVnode(
+        undefined,
+        undefined,
+        undefined,
+        domNode.textContent,
+        domNode,
+      );
+    }
+
+    if (domNode.nodeType === Node.COMMENT_NODE) {
+      return rawVnode("!", {}, undefined, domNode.textContent, domNode);
+    }
+
+    const attrs = $.#domNodeAttrs(domNode);
+    const data = {attrs: attrs};
+    const key = $.#resourceKey(domNode, attrs);
+
+    if (key) {
+      data.key = key;
+    }
+
+    const children = $.finalizeChildren(
+      Array.from(domNode.childNodes).map((childNode) =>
+        $.#vnodeOfDomNode(childNode),
+      ),
+    );
+
+    return rawVnode(
+      domNode.tagName.toLowerCase(),
+      data,
+      children,
+      undefined,
+      domNode,
+    );
   }
 }
 

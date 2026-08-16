@@ -64,8 +64,6 @@ import ManuallyPortedElixirStringTokenizer from "./elixir/string/tokenizer.mjs";
 import ManuallyPortedElixirTask from "./elixir/task.mjs";
 import ManuallyPortedElixirURI from "./elixir/uri.mjs";
 
-import {toVNode} from "./vendor/snabbdom/build/index.js";
-
 // TODO: test
 export default class Hologram {
   static #ETS_STORAGE_KEY = "hologram_ets";
@@ -442,6 +440,16 @@ export default class Hologram {
       Hologram.#pageModule,
       Hologram.#pageParams,
     );
+
+    // On a full document load there is no previous render to diff against, only the page the
+    // server sent, so the old side is built by mirroring this render onto it. The patch then
+    // adopts those nodes instead of recreating the whole page.
+    if (Hologram.virtualDocument === null) {
+      Hologram.virtualDocument = Vdom.mirror(
+        newVirtualDocument,
+        document.documentElement,
+      );
+    }
 
     Hologram.virtualDocument = Vdom.patchVirtualDocument(
       Hologram.virtualDocument,
@@ -1022,8 +1030,8 @@ export default class Hologram {
 
     Hologram.#defineManuallyPortedFunctions();
 
-    Hologram.virtualDocument = toVNode(document.documentElement);
-    Vdom.addKeysToVnodes(Hologram.virtualDocument);
+    // virtualDocument stays null here - render()'s own first call seeds it by mirroring the
+    // render onto the page the server sent (Vdom.mirror), instead of a separate pre-render step.
 
     console.inspect = (term) => console.log(Interpreter.inspect(term));
 

@@ -9,213 +9,16 @@ import {
 
 import Vdom from "../../assets/js/vdom.mjs";
 
+import {
+  attributesModule,
+  eventListenersModule,
+  init,
+} from "../../assets/js/vendor/snabbdom/build/index.js";
+
 defineRuntimeGlobals();
 registerWebApis();
 
 describe("Vdom", () => {
-  describe("addKeysToVnodes()", () => {
-    it("element node that is not a link or script", () => {
-      const node = vnode("img", {attrs: {src: "my_src"}}, []);
-      Vdom.addKeysToVnodes(node);
-
-      assert.deepStrictEqual(node, vnode("img", {attrs: {src: "my_src"}}, []));
-    });
-
-    it("text node", () => {
-      const node = {
-        sel: undefined,
-        data: undefined,
-        children: undefined,
-        text: "my_text",
-        elm: undefined,
-        key: undefined,
-      };
-
-      Vdom.addKeysToVnodes(node);
-
-      assert.deepStrictEqual(node, {
-        sel: undefined,
-        data: undefined,
-        children: undefined,
-        text: "my_text",
-        elm: undefined,
-        key: undefined,
-      });
-    });
-
-    describe("comment node", () => {
-      it("ordinary comment", () => {
-        const node = vnode("!", "my comment");
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("!", "my comment"));
-      });
-
-      // "$key" never reaches server-rendered HTML (renderer.ex's render_attributes/1 strips every
-      // "$"-prefixed attribute), so a comment recovered from the live DOM has nothing to key it -
-      // even text that happens to look like the old marker format stays an ordinary, unkeyed
-      // comment.
-      it("comment text that looks like the old marker format", () => {
-        const node = vnode("!", "[h:1a2b3c:0:o]");
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("!", "[h:1a2b3c:0:o]"));
-      });
-    });
-
-    describe("link element", () => {
-      it("without attrs field", () => {
-        const node = vnode("link", {}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("link", {}, []));
-      });
-
-      it("without href attribute, but with some other attribute", () => {
-        const node = vnode("link", {attrs: {rel: "stylesheet"}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode("link", {attrs: {rel: "stylesheet"}}, []),
-        );
-      });
-
-      it("with boolean href attribute", () => {
-        const node = vnode("link", {attrs: {href: true}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("link", {attrs: {href: true}}, []));
-      });
-
-      it("with non-empty string href attribute", () => {
-        const node = vnode("link", {attrs: {href: "my_link"}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode(
-            "link",
-            {
-              key: "__hologramLink__:my_link",
-              attrs: {href: "my_link"},
-            },
-            [],
-          ),
-        );
-      });
-
-      it("nested link nodes", () => {
-        const node = vnode("div", {}, [
-          vnode("link", {attrs: {href: "my_link_1"}}, []),
-          vnode("img", {attrs: {src: "my_src"}}, []),
-          vnode("link", {attrs: {href: "my_link_2"}}, []),
-        ]);
-
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode("div", {}, [
-            vnode(
-              "link",
-              {
-                key: "__hologramLink__:my_link_1",
-                attrs: {href: "my_link_1"},
-              },
-              [],
-            ),
-            vnode("img", {attrs: {src: "my_src"}}, []),
-            vnode(
-              "link",
-              {
-                key: "__hologramLink__:my_link_2",
-                attrs: {href: "my_link_2"},
-              },
-              [],
-            ),
-          ]),
-        );
-      });
-    });
-
-    describe("script element", () => {
-      it("without attrs field", () => {
-        const node = vnode("script", {}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("script", {}, []));
-      });
-
-      it("without src attribute (inline script), but with some other attribute", () => {
-        const node = vnode("script", {attrs: {type: "text/javascript"}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode("script", {attrs: {type: "text/javascript"}}, []),
-        );
-      });
-
-      it("with boolean src attribute", () => {
-        const node = vnode("script", {attrs: {src: true}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(node, vnode("script", {attrs: {src: true}}, []));
-      });
-
-      it("with non-empty string src attribute", () => {
-        const node = vnode("script", {attrs: {src: "my_src"}}, []);
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode(
-            "script",
-            {
-              key: "__hologramScript__:my_src",
-              attrs: {src: "my_src"},
-            },
-            [],
-          ),
-        );
-      });
-
-      it("nested script nodes", () => {
-        const node = vnode("div", {}, [
-          vnode("script", {attrs: {src: "my_src_1"}}, []),
-          vnode("img", {attrs: {src: "my_src"}}, []),
-          vnode("script", {attrs: {src: "my_src_2"}}, []),
-        ]);
-
-        Vdom.addKeysToVnodes(node);
-
-        assert.deepStrictEqual(
-          node,
-          vnode("div", {}, [
-            vnode(
-              "script",
-              {
-                key: "__hologramScript__:my_src_1",
-                attrs: {src: "my_src_1"},
-              },
-              [],
-            ),
-            vnode("img", {attrs: {src: "my_src"}}, []),
-            vnode(
-              "script",
-              {
-                key: "__hologramScript__:my_src_2",
-                attrs: {src: "my_src_2"},
-              },
-              [],
-            ),
-          ]),
-        );
-      });
-    });
-  });
-
   describe("dedupeKeys()", () => {
     it("distinct keys", () => {
       const children = [
@@ -314,6 +117,238 @@ describe("Vdom", () => {
         children.map((child) => child.key),
         ["abc123:0", "abc123:0:1"],
       );
+    });
+  });
+
+  describe("mirror()", () => {
+    // The same patch production builds, so these stand for the boot patch rather than a
+    // differently configured one.
+    const patch = init([attributesModule, eventListenersModule]);
+
+    const mount = (html) => {
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      document.body.appendChild(container);
+
+      return container;
+    };
+
+    // Mirror against the container, then run the boot patch the way render() will: the mirrored
+    // tree as the old side, the rendered tree as the new one.
+    const adopt = (renderedChildren, html) => {
+      const container = mount(html);
+      const rendered = vnode("div", {attrs: {}}, renderedChildren);
+      const mirrored = Vdom.mirror(rendered, container);
+
+      return {container, mirrored, patched: () => patch(mirrored, rendered)};
+    };
+
+    it("adopts a matching tree, copying sel and key from the rendered side", () => {
+      const container = mount('<div id="app"><p>hello</p></div>');
+
+      const rendered = vnode("div", {attrs: {id: "app"}, key: "my_key"}, [
+        vnode("p", {attrs: {}}, ["hello"]),
+      ]);
+
+      const mirrored = Vdom.mirror(rendered, container.firstChild);
+
+      assert.equal(mirrored.sel, "div");
+      assert.equal(mirrored.key, "my_key");
+      assert.deepStrictEqual(mirrored.data.attrs, {id: "app"});
+      assert.equal(mirrored.elm, container.firstChild);
+
+      const [p] = mirrored.children;
+      assert.equal(p.sel, "p");
+      assert.equal(p.elm, container.firstChild.firstChild);
+      assert.equal(p.children[0].text, "hello");
+      assert.equal(p.children[0].elm, p.elm.firstChild);
+    });
+
+    it("keeps the server's nodes through the boot patch and attaches listeners", () => {
+      let clicks = 0;
+
+      const {container, patched} = adopt(
+        [vnode("button", {attrs: {}, on: {click: () => clicks++}}, ["go"])],
+        "<button>go</button>",
+      );
+
+      const serverButton = container.querySelector("button");
+      patched();
+
+      assert.equal(container.querySelector("button"), serverButton);
+
+      serverButton.dispatchEvent(new window.Event("click"));
+      assert.equal(clicks, 1);
+    });
+
+    it("syncs attributes to the rendered side without replacing the node", () => {
+      const {container, patched} = adopt(
+        [vnode("p", {attrs: {class: "fresh"}}, [])],
+        '<p class="stale" data-junk="1"></p>',
+      );
+
+      const serverP = container.querySelector("p");
+      patched();
+
+      assert.equal(container.querySelector("p"), serverP);
+      assert.equal(serverP.getAttribute("class"), "fresh");
+      assert.isFalse(serverP.hasAttribute("data-junk"));
+    });
+
+    it("adopts a text node whose content differs and patches it in place", () => {
+      const {container, patched} = adopt(
+        [vnode("p", {attrs: {}}, ["fresh"])],
+        "<p>stale</p>",
+      );
+
+      const serverText = container.querySelector("p").firstChild;
+      patched();
+
+      assert.equal(container.querySelector("p").firstChild, serverText);
+      assert.equal(serverText.textContent, "fresh");
+    });
+
+    it("replaces a subtree whose tag diverges", () => {
+      const {container, patched} = adopt(
+        [vnode("div", {attrs: {}}, [])],
+        "<span>old</span>",
+      );
+
+      const serverSpan = container.querySelector("span");
+      patched();
+
+      assert.isNull(container.querySelector("span"));
+      assert.notEqual(container.querySelector("div"), serverSpan);
+      assert.equal(container.firstChild.tagName, "DIV");
+    });
+
+    it("removes DOM nodes the rendered side doesn't know about", () => {
+      const {container, patched} = adopt(
+        [vnode("p", {attrs: {}}, [])],
+        "<p></p><i>injected</i>",
+      );
+
+      patched();
+
+      assert.isNull(container.querySelector("i"));
+      assert.equal(container.childNodes.length, 1);
+    });
+
+    it("creates rendered nodes with no DOM counterpart", () => {
+      const {container, patched} = adopt(
+        [vnode("p", {attrs: {}}, []), vnode("em", {attrs: {}}, [])],
+        "<p></p>",
+      );
+
+      const serverP = container.querySelector("p");
+      patched();
+
+      assert.equal(container.querySelector("p"), serverP);
+      assert.equal(container.querySelector("em").tagName, "EM");
+    });
+
+    // The boot render omits the runtime's own scripts: they are guarded by page_mounted?, which
+    // the server sets to true in the struct it serializes to the client. So the render is not a
+    // node-for-node prefix of the head, and the stylesheet after those scripts still has to be
+    // adopted rather than re-fetched.
+    it("passes over nodes the render omits and adopts what follows", () => {
+      const {container, patched} = adopt(
+        [
+          vnode("meta", {attrs: {charset: "utf-8"}}, []),
+          vnode(
+            "link",
+            {
+              key: "__hologramLink__:/app.css",
+              attrs: {rel: "stylesheet", href: "/app.css"},
+            },
+            [],
+          ),
+          vnode("style", {attrs: {}}, ["body { color: red; }"]),
+        ],
+        '<meta charset="utf-8">' +
+          "<script>globalThis.Hologram = {}</script>" +
+          '<script src="/hologram/runtime.js"></script>' +
+          '<link rel="stylesheet" href="/app.css">' +
+          "<style>body { color: red; }</style>",
+      );
+
+      const serverMeta = container.querySelector("meta");
+      const serverLink = container.querySelector("link");
+      const serverStyle = container.querySelector("style");
+
+      patched();
+
+      assert.equal(container.querySelector("meta"), serverMeta);
+      assert.equal(container.querySelector("link"), serverLink);
+      assert.equal(container.querySelector("style"), serverStyle);
+      assert.equal(container.querySelectorAll("script").length, 0);
+
+      // A node mirrored as itself has to report its children truthfully, or the patch appends
+      // content it already holds.
+      assert.equal(serverStyle.textContent, "body { color: red; }");
+    });
+
+    // The shape the root has on every page: the parser puts the whitespace between </head> and
+    // <body> inside <html>, so the rendered text that comes before an element finds a text node
+    // only after it. A text node stands for any other, so a text vnode allowed to look ahead would
+    // take that one and pass over the element in between - the whole head, in the real document.
+    it("does not let a text node take one further along", () => {
+      // The element carries the key of its place, the way every rendered element does. A node
+      // mirrored as itself carries none, so the two no longer match and the patch rebuilds it.
+      const {container, patched} = adopt(
+        [" ", vnode("p", {attrs: {}, key: "my_key"}, ["hello"])],
+        "<p>hello</p> ",
+      );
+
+      const serverP = container.querySelector("p");
+      patched();
+
+      assert.equal(container.querySelector("p"), serverP);
+    });
+
+    it("does not adopt a script element for a different source", () => {
+      const {container, patched} = adopt(
+        [
+          vnode(
+            "script",
+            {
+              key: "__hologramScript__:/fresh.js",
+              attrs: {src: "/fresh.js"},
+            },
+            [],
+          ),
+        ],
+        '<script src="/stale.js"></script>',
+      );
+
+      const serverScript = container.querySelector("script");
+      patched();
+
+      // Adopting would have left the stale code running, since changing src on a script that has
+      // already executed does not run the new one.
+      assert.notEqual(container.querySelector("script"), serverScript);
+      assert.equal(
+        container.querySelector("script").getAttribute("src"),
+        "/fresh.js",
+      );
+    });
+
+    it("keeps a script whose rendered key matches, so it is not re-executed", () => {
+      const rendered = vnode(
+        "script",
+        {key: "__hologramScript__:my_src", attrs: {src: "my_src"}},
+        [],
+      );
+
+      const {container, patched} = adopt(
+        [rendered],
+        '<script src="my_src"></script>',
+      );
+
+      const serverScript = container.querySelector("script");
+      patched();
+
+      assert.equal(container.querySelector("script"), serverScript);
     });
   });
 
