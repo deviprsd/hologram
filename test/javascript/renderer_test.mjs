@@ -10059,4 +10059,123 @@ describe("Renderer", () => {
       });
     });
   });
+
+  // Regression coverage for the bug Phase 0 of the key-reconciliation migration fixed
+  // (dedupeMarkerKeys only renumbered bare comment-marker vnodes, so two sibling instances of the
+  // same component template - each pre-grouped into a fragment one level down, invisible to that
+  // filter - reached snabbdom's keyed diff with the identical, un-renumbered key). Fragments and
+  // markers are gone now, but the input that caused it isn't: two sibling instances of the same
+  // template still compute the identical positional "$key" (same tag stream -> same hash and
+  // index), so this proves the new dedupeKeys()/finalizeChildren() pass still catches the
+  // collision through the real render path, not just a hand-built array.
+  describe("$key collisions across sibling instances of the same template", () => {
+    const moduleName =
+      "Hologram.Test.Fixtures.Template.Renderer.SiblingKeyCollisionModule";
+
+    before(() => {
+      // Every instance of this template renders the identical root element with the identical
+      // "$key" - what add_slot_keys/2 would inject for any two placements of the same compiled
+      // template, since the key is derived purely from the template's own tag stream.
+      Interpreter.defineElixirFunction(moduleName, "__props__", 0, "public", [
+        {
+          params: (_context) => [],
+          guards: [],
+          body: (_context) => Type.list(),
+        },
+      ]);
+
+      Interpreter.defineElixirFunction(moduleName, "template", 0, "public", [
+        {
+          params: (_context) => [],
+          guards: [],
+          body: (context) => {
+            globalThis.Hologram.return = Type.anonymousFunction(
+              1,
+              [
+                {
+                  params: (_context) => [Type.variablePattern("vars")],
+                  guards: [],
+                  body: (_context) =>
+                    Type.list([
+                      Type.tuple([
+                        Type.atom("element"),
+                        Type.bitstring("li"),
+                        Type.list([
+                          Type.tuple([
+                            Type.bitstring("$key"),
+                            Type.keywordList([
+                              [
+                                Type.atom("text"),
+                                Type.bitstring("same_template_hash:0"),
+                              ],
+                            ]),
+                          ]),
+                        ]),
+                        Type.list([
+                          Type.tuple([Type.atom("text"), Type.bitstring("x")]),
+                        ]),
+                      ]),
+                    ]),
+                },
+              ],
+              context,
+            );
+            Interpreter.updateVarsToMatchedValues(context);
+            return globalThis.Hologram.return;
+          },
+        },
+      ]);
+    });
+
+    it("renumbers the second instance's key instead of leaving a duplicate", () => {
+      const cidA = Type.bitstring("sibling_key_collision_a");
+      const cidB = Type.bitstring("sibling_key_collision_b");
+
+      ComponentRegistry.putEntry(
+        cidA,
+        componentRegistryEntryFixture({module: Type.alias(moduleName)}),
+      );
+      ComponentRegistry.putEntry(
+        cidB,
+        componentRegistryEntryFixture({module: Type.alias(moduleName)}),
+      );
+
+      const componentNode = (cid) =>
+        Type.tuple([
+          Type.atom("component"),
+          Type.alias(moduleName),
+          Type.list([
+            Type.tuple([
+              Type.bitstring("cid"),
+              Type.keywordList([[Type.atom("text"), cid]]),
+            ]),
+          ]),
+          Type.list(),
+        ]);
+
+      // <ul><SiblingKeyCollisionModule cid="a" /><SiblingKeyCollisionModule cid="b" /></ul>
+      const node = Type.tuple([
+        Type.atom("element"),
+        Type.bitstring("ul"),
+        Type.list(),
+        Type.list([componentNode(cidA), componentNode(cidB)]),
+      ]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      const [first, second] = result.children;
+
+      assert.equal(first.sel, "li");
+      assert.equal(second.sel, "li");
+      assert.equal(first.key, "same_template_hash:0");
+      assert.equal(second.key, "same_template_hash:0:1");
+      assert.notEqual(first.key, second.key);
+    });
+  });
 });
