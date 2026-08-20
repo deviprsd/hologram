@@ -166,7 +166,10 @@ export default class ComponentRegistry {
   // isStale is an optional caller-supplied thunk, re-checked on the queued path only (see
   // isCidRegistered below for why that path alone needs a second look): true means whatever made
   // fn() valid when it was queued no longer holds, so it's skipped exactly like an unregistered
-  // cid. What "stale" means is entirely the caller's concern - this queue doesn't know or care.
+  // cid. What "stale" means, and whether answering it logs anything, is entirely the caller's
+  // concern - this queue doesn't know or care, and doesn't call it at all on the unregistered-cid
+  // path (that check short-circuits first), so a caller relying on isStale for a side effect only
+  // sees it on drops this queue can't already explain on its own.
   //
   // The cid is claimed SYNCHRONOUSLY, before fn() runs - not only once fn()
   // returns. That ordering is load-bearing: fn() itself can synchronously
