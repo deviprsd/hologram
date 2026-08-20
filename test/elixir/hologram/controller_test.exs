@@ -219,17 +219,11 @@ defmodule Hologram.ControllerTest do
   defp serialize_payload(payload) do
     instance_id = Map.get(payload, :instance_id, "test-instance-id")
 
-    serialized_sub_receipts =
-      payload
-      |> Map.get(:sub_receipts, [])
-      |> Enum.map(fn token -> "b0#{binary_to_hex(token)}" end)
-
     serialized_map_data = [
       ["ainstance_id", "b0#{binary_to_hex(instance_id)}"],
       ["amodule", "a#{payload.module}"],
       ["aname", "a#{payload.name}"],
       ["aparams", serialize_params(payload.params)],
-      ["asub_receipts", %{"t" => "l", "d" => serialized_sub_receipts}],
       ["atarget", "b0#{binary_to_hex(payload.target)}"]
     ]
 
@@ -2503,7 +2497,6 @@ defmodule Hologram.ControllerTest do
 
       assert is_nil(Plug.Conn.get_session(conn, @csrf_token_session_key))
     end
-
   end
 
   describe "send_response/2" do
