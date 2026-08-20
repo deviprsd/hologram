@@ -21,9 +21,27 @@ export default class KeyboardEvent {
       [Type.atom("alt_key"), Type.boolean(event.altKey)],
       [Type.atom("code"), Type.bitstring(event.code)],
       [Type.atom("ctrl_key"), Type.boolean(event.ctrlKey)],
+      // True while an IME composition session (e.g. Japanese/Chinese input) is in progress -
+      // a handler committing on Enter needs this to avoid firing mid-composition.
+      [Type.atom("is_composing"), Type.boolean(event.isComposing ?? false)],
       [Type.atom("key"), Type.bitstring(event.key)],
       [Type.atom("meta_key"), Type.boolean(event.metaKey)],
       [Type.atom("repeat"), Type.boolean(event.repeat)],
+      // event.target only exposes selectionStart/selectionEnd on text-editable elements
+      // (input/textarea); a keydown bound on a non-editable container (e.g. a div) has
+      // neither, so both fall back to nil rather than a misleading 0.
+      [
+        Type.atom("selection_end"),
+        event.target?.selectionEnd != null
+          ? Type.integer(event.target.selectionEnd)
+          : Type.nil(),
+      ],
+      [
+        Type.atom("selection_start"),
+        event.target?.selectionStart != null
+          ? Type.integer(event.target.selectionStart)
+          : Type.nil(),
+      ],
       [Type.atom("shift_key"), Type.boolean(event.shiftKey)],
     ]);
   }
