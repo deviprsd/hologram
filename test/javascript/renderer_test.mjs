@@ -1026,6 +1026,110 @@ describe("Renderer", () => {
           Hologram.handleUiEvent.restore();
         });
 
+        describe("pointer capture", () => {
+          const pointerDownElement = () =>
+            Type.tuple([
+              Type.atom("element"),
+              Type.bitstring("span"),
+              Type.list([
+                Type.tuple([
+                  Type.bitstring("$pointer_down"),
+                  Type.list([
+                    Type.tuple([Type.atom("text"), Type.bitstring("my_action")]),
+                  ]),
+                ]),
+              ]),
+              Type.list(),
+            ]);
+
+          it("captures the pointer on $pointer_down when the target supports it", () => {
+            const vdom = Renderer.renderDom(
+              pointerDownElement(),
+              context,
+              slots,
+              defaultTarget,
+              parentTagName,
+            );
+
+            sinon
+              .stub(Hologram, "handleUiEvent")
+              .callsFake(
+                (_event, _eventType, _operationSpecVdom, _defaultTarget) => null,
+              );
+
+            const setPointerCapture = sinon.spy();
+            const target = {setPointerCapture};
+
+            vdom.data.on.pointerdown({target, pointerId: 7});
+
+            sinon.assert.calledOnceWithExactly(setPointerCapture, 7);
+
+            Hologram.handleUiEvent.restore();
+          });
+
+          it("does nothing when the target has no setPointerCapture (e.g. non-browser test environments)", () => {
+            const vdom = Renderer.renderDom(
+              pointerDownElement(),
+              context,
+              slots,
+              defaultTarget,
+              parentTagName,
+            );
+
+            sinon
+              .stub(Hologram, "handleUiEvent")
+              .callsFake(
+                (_event, _eventType, _operationSpecVdom, _defaultTarget) => null,
+              );
+
+            // Should not throw even though target has no setPointerCapture at all.
+            assert.doesNotThrow(() =>
+              vdom.data.on.pointerdown({target: {}, pointerId: 7}),
+            );
+
+            Hologram.handleUiEvent.restore();
+          });
+
+          it("does not capture on other pointer events", () => {
+            const node = Type.tuple([
+              Type.atom("element"),
+              Type.bitstring("span"),
+              Type.list([
+                Type.tuple([
+                  Type.bitstring("$pointer_move"),
+                  Type.list([
+                    Type.tuple([Type.atom("text"), Type.bitstring("my_action")]),
+                  ]),
+                ]),
+              ]),
+              Type.list(),
+            ]);
+
+            const vdom = Renderer.renderDom(
+              node,
+              context,
+              slots,
+              defaultTarget,
+              parentTagName,
+            );
+
+            sinon
+              .stub(Hologram, "handleUiEvent")
+              .callsFake(
+                (_event, _eventType, _operationSpecVdom, _defaultTarget) => null,
+              );
+
+            const setPointerCapture = sinon.spy();
+            const target = {setPointerCapture};
+
+            vdom.data.on.pointermove({target, pointerId: 7});
+
+            sinon.assert.notCalled(setPointerCapture);
+
+            Hologram.handleUiEvent.restore();
+          });
+        });
+
         describe("event name mapping", () => {
           it("maps $mouse_move to mousemove", () => {
             const node = Type.tuple([

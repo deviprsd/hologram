@@ -372,6 +372,22 @@ export default class Renderer {
         return;
       }
 
+      // A $pointer_down binding retargets its own pointer's subsequent pointermove/pointerup to
+      // this element regardless of where the cursor physically travels - without it, an
+      // element-scoped $pointer_move only fires while the cursor stays over that element's own box,
+      // which a fast drag routinely outruns (a small slider handle is the motivating case: the
+      // cursor leaves its 16px box on the very first move). The browser auto-releases capture on
+      // pointerup/pointercancel, so no matching release call is needed here. Guarded by a feature
+      // check, not a tag/event-target check. because setPointerCapture is only actually missing in
+      // pathological environments (jsdom-based unit tests), never on a real element in a real
+      // browser.
+      if (
+        effectiveDomEventName === "pointerdown" &&
+        typeof event.target.setPointerCapture === "function"
+      ) {
+        event.target.setPointerCapture(event.pointerId);
+      }
+
       // Process the event synchronously: handleUiEvent runs preventDefault and reads the event
       // payload now, while the event is live, then returns the dispatch (or null when ignored).
       // Only the dispatch is debounced - deferring preventDefault would let the browser's native
