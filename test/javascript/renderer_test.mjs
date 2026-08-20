@@ -9458,6 +9458,28 @@ describe("Renderer", () => {
       assert.strictEqual(typeof inputVnode.data.hook.create, "function");
       assert.strictEqual(typeof inputVnode.data.hook.update, "function");
     });
+
+    // renderTree() is deliberately not bracketed by RenderCache.beginRender()/endRender() - unlike
+    // renderPage(), it only ever renders elements and text, never a component clause, so there is
+    // no per-cid cache entry for it to guard. But #renderElement calls RenderCache.noteFormInput()
+    // unconditionally for every element it renders, tree or page alike, so a controlled input in
+    // the tree still gets pushed onto the same #formInputVnodes buffer a real renderPage() reads
+    // from. The next renderPage()'s own beginRender() resets that buffer before taking its first
+    // mark, which is what keeps this safe - proven here rather than just reasoned about, per the
+    // migration plan's own note that a leak here is a silent stale-controlled-input bug, not a
+    // crash, so it would not show up as a test failure unless specifically checked.
+    it("does not leave a controlled input it noted for RenderCache.formInputsSince() to pick up on the next renderPage()", () => {
+      const treeDom = tree(
+        treeElement("input", [attribute("value", "my_value")]),
+      );
+
+      Renderer.renderTree(treeDom);
+
+      RenderCache.beginRender();
+
+      assert.equal(RenderCache.formInputMark(), 0);
+      assert.deepEqual(RenderCache.formInputsSince(0), []);
+    });
   });
 
   describe("toBitstring()", () => {
