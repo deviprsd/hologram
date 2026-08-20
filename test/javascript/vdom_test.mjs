@@ -125,6 +125,27 @@ describe("Vdom", () => {
       );
     });
 
+    // An identity key ($key={holo__item_key__}) evaluates to Renderer.toText(Type.nil()), which is
+    // "" - the empty string, not a truthy key like every other case here - whenever a keyed
+    // {%for}'s item has no :id. snabbdom itself treats "" as a real key (key !== undefined, see
+    // its createKeyToOldIdx), so every item without an :id must still be counted and renumbered
+    // here, the same as any other repeated key, or they collide in snabbdom's own key-to-index map
+    // on the next reorder.
+    it("repeated empty-string keys", () => {
+      const children = [
+        vnode("h2", { key: "" }, []),
+        vnode("p", { key: "" }, []),
+        vnode("blockquote", { key: "" }, []),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["", ":1", ":2"],
+      );
+    });
+
     it("ordinary comments and elements", () => {
       const children = [
         vnode("!", "my comment"),
