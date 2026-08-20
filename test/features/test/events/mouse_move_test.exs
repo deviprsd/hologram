@@ -11,7 +11,7 @@ defmodule HologramFeatureTests.Events.MouseMoveTest do
     |> move_mouse_by(10, 20)
     |> assert_text(
       css("#result"),
-      ~r/%\{event: %\{client_x: #{coord_regex}, client_y: #{coord_regex}, movement_x: #{coord_regex}, movement_y: #{coord_regex}, offset_x: #{coord_regex}, offset_y: #{coord_regex}, page_x: #{coord_regex}, page_y: #{coord_regex}, screen_x: #{coord_regex}, screen_y: #{coord_regex}\}\}/
+      ~r/%\{event: %\{alt_key: false, client_x: #{coord_regex}, client_y: #{coord_regex}, ctrl_key: false, meta_key: false, movement_x: #{coord_regex}, movement_y: #{coord_regex}, offset_x: #{coord_regex}, offset_y: #{coord_regex}, page_x: #{coord_regex}, page_y: #{coord_regex}, screen_x: #{coord_regex}, screen_y: #{coord_regex}, shift_key: false\}\}/
     )
   end
 end

@@ -5,10 +5,9 @@ defmodule Hologram.TemplateTest do
 
   describe "dom_ast/1" do
     test "build DOM AST from the given markup" do
-      assert dom_ast("<div>content</div>") == [
-               {:{}, [line: 1],
-                [:element, "div", [{"$key", [text: "kcndqf:0"]}], [{:text, "content"}]]}
-             ]
+      assert [
+               {:{}, [line: 1], [:element, "div", [{"$key", [text: _key]}], [{:text, "content"}]]}
+             ] = dom_ast("<div>content</div>")
     end
 
     test "trim leading and trailing whitespaces" do
@@ -22,9 +21,8 @@ defmodule Hologram.TemplateTest do
       <div>{@value}</div>
       """
 
-      assert template.(%{value: 123}) == [
-               {:element, "div", [{"$key", [text: "1k1sfru:0"]}], [expression: {123}]}
-             ]
+      assert [{:element, "div", [{"$key", [text: _key]}], [expression: {123}]}] =
+               template.(%{value: 123})
     end
 
     test "template which doesn't use vars" do
@@ -32,9 +30,7 @@ defmodule Hologram.TemplateTest do
       <div>abc</div>
       """
 
-      assert template.(%{}) == [
-               {:element, "div", [{"$key", [text: "kqd760:0"]}], [text: "abc"]}
-             ]
+      assert [{:element, "div", [{"$key", [text: _key]}], [text: "abc"]}] = template.(%{})
     end
 
     test "template with raw block" do
@@ -59,9 +55,7 @@ defmodule Hologram.TemplateTest do
 
       """
 
-      assert template.(%{}) == [
-               {:element, "div", [{"$key", [text: "kqd760:0"]}], [text: "abc"]}
-             ]
+      assert [{:element, "div", [{"$key", [text: _key]}], [text: "abc"]}] = template.(%{})
     end
 
     test "bitstring argument" do
@@ -77,9 +71,9 @@ defmodule Hologram.TemplateTest do
       <div ...{@my_var}></div>
       """
 
-      assert template.(%{my_var: %{id: "my_id"}}) == [
-               {:element, "div", [{:spread, {%{id: "my_id"}}}, {"$key", [text: "1bladbi:0"]}], []}
-             ]
+      assert [
+               {:element, "div", [{:spread, {%{id: "my_id"}}}, {"$key", [text: _key]}], []}
+             ] = template.(%{my_var: %{id: "my_id"}})
     end
 
     test "component spread" do
@@ -96,15 +90,15 @@ defmodule Hologram.TemplateTest do
       <div class="btn" ...{@my_var} id={@my_id}></div>
       """
 
-      assert template.(%{my_var: %{title: "my_title"}, my_id: "my_id"}) == [
+      assert [
                {:element, "div",
                 [
                   {"class", [text: "btn"]},
                   {:spread, {%{title: "my_title"}}},
                   {"id", [expression: {"my_id"}]},
-                  {"$key", [text: "1jnz2n1:0"]}
+                  {"$key", [text: _key]}
                 ], []}
-             ]
+             ] = template.(%{my_var: %{title: "my_title"}, my_id: "my_id"})
     end
 
     test "multiple spreads" do
@@ -112,14 +106,10 @@ defmodule Hologram.TemplateTest do
       <div ...{@my_var_1} ...{@my_var_2}></div>
       """
 
-      assert template.(%{my_var_1: %{a: 1}, my_var_2: [b: 2]}) == [
+      assert [
                {:element, "div",
-                [
-                  {:spread, {%{a: 1}}},
-                  {:spread, {[b: 2]}},
-                  {"$key", [text: "1p5l3l1:0"]}
-                ], []}
-             ]
+                [{:spread, {%{a: 1}}}, {:spread, {[b: 2]}}, {"$key", [text: _key]}], []}
+             ] = template.(%{my_var_1: %{a: 1}, my_var_2: [b: 2]})
     end
 
     test "spread with implicit keyword list" do
@@ -127,13 +117,13 @@ defmodule Hologram.TemplateTest do
       <div ...{my_key_1: "abc", my_key_2: [my_key_3: "xyz"]}></div>
       """
 
-      assert template.(%{}) == [
+      assert [
                {:element, "div",
                 [
                   {:spread, {[my_key_1: "abc", my_key_2: [my_key_3: "xyz"]]}},
-                  {"$key", [text: "qkvbks:0"]}
+                  {"$key", [text: _key]}
                 ], []}
-             ]
+             ] = template.(%{})
     end
 
     test "spread with expression" do
@@ -141,34 +131,29 @@ defmodule Hologram.TemplateTest do
       <div ...{Map.merge(@my_base, @my_overrides)}></div>
       """
 
-      assert template.(%{my_base: %{a: 1}, my_overrides: %{b: 2}}) == [
-               {:element, "div", [{:spread, {%{a: 1, b: 2}}}, {"$key", [text: "zrvq9z:0"]}], []}
-             ]
+      assert [
+               {:element, "div", [{:spread, {%{a: 1, b: 2}}}, {"$key", [text: _key]}], []}
+             ] = template.(%{my_base: %{a: 1}, my_overrides: %{b: 2}})
     end
 
     test "dynamic tag with module value" do
       template = ~HOLO"<{@module} />"
 
-      assert template.(%{module: Aaa.Bbb.Ccc}) == [
-               {:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: "kctz9n:0"]}], []}
-             ]
+      assert [{:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: _key]}], []}] =
+               template.(%{module: Aaa.Bbb.Ccc})
     end
 
     test "dynamic tag with element name value" do
       template = ~HOLO"<{@tag} />"
 
-      assert template.(%{tag: "div"}) == [
-               {:dynamic_tag, {"div"}, [{"$key", [text: "1er3lvo:0"]}], []}
-             ]
+      assert [{:dynamic_tag, {"div"}, [{"$key", [text: _key]}], []}] = template.(%{tag: "div"})
     end
 
     test "dynamic tag with alias in tag name expression" do
       alias Aaa.Bbb.Ccc
       template = ~HOLO"<{Ccc} />"
 
-      assert template.(%{}) == [
-               {:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: "x0myb0:0"]}], []}
-             ]
+      assert [{:dynamic_tag, {Aaa.Bbb.Ccc}, [{"$key", [text: _key]}], []}] = template.(%{})
     end
 
     test "dynamic tag with conditional tag name expression" do
@@ -176,13 +161,10 @@ defmodule Hologram.TemplateTest do
       <{if @flag do "a" else "button" end} />
       """
 
-      assert template.(%{flag: true}) == [
-               {:dynamic_tag, {"a"}, [{"$key", [text: "13zd6zi:0"]}], []}
-             ]
+      assert [{:dynamic_tag, {"a"}, [{"$key", [text: _key]}], []}] = template.(%{flag: true})
 
-      assert template.(%{flag: false}) == [
-               {:dynamic_tag, {"button"}, [{"$key", [text: "13zd6zi:0"]}], []}
-             ]
+      assert [{:dynamic_tag, {"button"}, [{"$key", [text: _key]}], []}] =
+               template.(%{flag: false})
     end
 
     test "dynamic tag with attributes" do
@@ -190,14 +172,14 @@ defmodule Hologram.TemplateTest do
       <{@tag} my_key_1="my_value_1" my_key_2={@my_value_2} />
       """
 
-      assert template.(%{tag: "div", my_value_2: 123}) == [
+      assert [
                {:dynamic_tag, {"div"},
                 [
                   {"my_key_1", [text: "my_value_1"]},
                   {"my_key_2", [expression: {123}]},
-                  {"$key", [text: "1ih1te3:0"]}
+                  {"$key", [text: _key]}
                 ], []}
-             ]
+             ] = template.(%{tag: "div", my_value_2: 123})
     end
 
     test "dynamic tag with spread" do
@@ -205,10 +187,9 @@ defmodule Hologram.TemplateTest do
       <{@tag} ...{@my_var} />
       """
 
-      assert template.(%{tag: "div", my_var: %{id: "my_id"}}) == [
-               {:dynamic_tag, {"div"},
-                [{:spread, {%{id: "my_id"}}}, {"$key", [text: "1wlobum:0"]}], []}
-             ]
+      assert [
+               {:dynamic_tag, {"div"}, [{:spread, {%{id: "my_id"}}}, {"$key", [text: _key]}], []}
+             ] = template.(%{tag: "div", my_var: %{id: "my_id"}})
     end
 
     test "dynamic tag with children" do
@@ -216,10 +197,9 @@ defmodule Hologram.TemplateTest do
       <{@tag}>abc{@my_value}</{@tag}>
       """
 
-      assert template.(%{tag: "div", my_value: 123}) == [
-               {:dynamic_tag, {"div"}, [{"$key", [text: "833qnd:0"]}],
-                [text: "abc", expression: {123}]}
-             ]
+      assert [
+               {:dynamic_tag, {"div"}, [{"$key", [text: _key]}], [text: "abc", expression: {123}]}
+             ] = template.(%{tag: "div", my_value: 123})
     end
 
     test "compiler correctly detects alias used in template" do

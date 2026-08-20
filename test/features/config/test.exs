@@ -7,6 +7,10 @@ config :hologram_feature_tests, HologramFeatureTestsWeb.Endpoint,
 
 config :logger, level: :warning
 
+# Lets a feature test hold the SSE attach open via cookie, so a boot-time command can
+# reach the server before the connection exists. Never enabled outside the test env.
+config :hologram, :__sse_attach_delay_enabled__, true
+
 config :wallaby,
   chromedriver: [
     # Optimize for GithHub Actions CI environment, see: https://github.com/elixir-wallaby/wallaby/issues/468#issuecomment-1113520767
@@ -20,7 +24,7 @@ config :wallaby,
           "--headless",
           "--no-sandbox",
           "--user-agent=Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36",
-          "window-size=1280,800"
+          "--window-size=1280,800"
         ]
       }
     },

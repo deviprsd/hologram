@@ -24,6 +24,15 @@ export default class Vdom {
   // Only the vnode key is renumbered, never anything in the markup, so server-rendered and
   // client-rendered pages stay byte-identical. Both sides walk a children list in document order,
   // so both arrive at the same keys.
+  //
+  // Matches snabbdom's own "is this vnode keyed" check (key !== undefined, see its
+  // createKeyToOldIdx) rather than a truthy check on child.key - an identity key can legitimately
+  // evaluate to "" (Hologram.Template.Marker.item_key/1 falls back to nil, which renders as an
+  // empty string, whenever the for-loop's item has no :id), and every item without one collapses
+  // to that same empty key. A truthy check would skip counting those repeats: snabbdom still
+  // treats "" as a real key and indexes every one of them into the same oldKeyToIdx slot, so the
+  // diff loses track of all but the last and crashes reading .sel off an already-consumed vnode
+  // on the next reorder.
   static dedupeKeys(children) {
     // Nothing can repeat on its own, and a children list of one is the common case.
     if (children.length < 2) {
@@ -33,7 +42,7 @@ export default class Vdom {
     const counts = new Map();
 
     for (const child of children) {
-      if (!child?.key) {
+      if (child?.key === undefined) {
         continue;
       }
 

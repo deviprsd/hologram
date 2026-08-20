@@ -166,6 +166,30 @@ describe("Renderer", () => {
   const parentTagName = "div";
   const slots = Type.keywordList();
 
+  const element = (tagName, childrenDom = []) =>
+    Type.tuple([
+      Type.atom("element"),
+      Type.bitstring(tagName),
+      Type.list(),
+      Type.list(childrenDom),
+    ]);
+
+  // An element carrying the key of its place in the template, as the compiler writes it.
+  const keyedElement = (tagName, index, childrenDom = []) =>
+    Type.tuple([
+      Type.atom("element"),
+      Type.bitstring(tagName),
+      Type.list([
+        Type.tuple([
+          Type.bitstring("$key"),
+          Type.keywordList([
+            [Type.atom("text"), Type.bitstring(`1a2b3c:${index}`)],
+          ]),
+        ]),
+      ]),
+      Type.list(childrenDom),
+    ]);
+
   it("text node", () => {
     const node = Type.tuple([Type.atom("text"), Type.bitstring("abc")]);
 
@@ -276,6 +300,60 @@ describe("Renderer", () => {
 
       assert.deepStrictEqual(result, expected);
       assert.isUndefined(result.key);
+    });
+
+    it("numbers a repeated key in one children list", () => {
+      // <span><div></div><div></div></span>, both divs written in one place of one template
+      const node = element("span", [
+        keyedElement("div", 0),
+        keyedElement("div", 0),
+      ]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      assert.deepStrictEqual(
+        result.children.map((child) => child.key),
+        ["1a2b3c:0", "1a2b3c:0:1"],
+      );
+    });
+
+    // A loop's iterations are lists of their own, so each place of the body occurs once in each
+    // of them - the repeat only exists in the children list they are spliced into, which is where
+    // the numbering has to happen for the keys to come out unique.
+    it("numbers the keys a loop repeats", () => {
+      // <span>{%for ...}<em></em><div></div>{/for}</span>
+      const iteration = () =>
+        Type.list([keyedElement("em", 0), keyedElement("div", 1)]);
+
+      const node = element("span", [
+        Type.list([iteration(), iteration(), iteration()]),
+      ]);
+
+      const result = Renderer.renderDom(
+        node,
+        context,
+        slots,
+        defaultTarget,
+        parentTagName,
+      );
+
+      assert.deepStrictEqual(
+        result.children.map((child) => child.key),
+        [
+          "1a2b3c:0",
+          "1a2b3c:1",
+          "1a2b3c:0:1",
+          "1a2b3c:1:1",
+          "1a2b3c:0:2",
+          "1a2b3c:1:2",
+        ],
+      );
     });
 
     it("with nested stateful components", () => {
@@ -2867,6 +2945,140 @@ describe("Renderer", () => {
           const expected = vnode("script", { attrs: {}, on: {} }, []);
 
           assert.deepStrictEqual(result, expected);
+        });
+      });
+
+      describe("slot key", () => {
+        const keyAttr = (value) =>
+          Type.tuple([
+            Type.bitstring("$key"),
+            Type.keywordList([[Type.atom("text"), Type.bitstring(value)]]),
+          ]);
+
+        const elementWithKey = (tagName, attrs) =>
+          Type.tuple([
+            Type.atom("element"),
+            Type.bitstring(tagName),
+            Type.list(attrs),
+            Type.list(),
+          ]);
+
+        const render = (node) =>
+          Renderer.renderDom(
+            node,
+            context,
+            slots,
+            defaultTarget,
+            parentTagName,
+          );
+
+        it("becomes the vnode key and never an attribute", () => {
+          const result = render(elementWithKey("div", [keyAttr("t7:4")]));
+
+          assert.deepStrictEqual(
+            result,
+            vnode("div", {key: "t7:4", attrs: {}, on: {}}, []),
+          );
+        });
+
+        it("binds no event listener", () => {
+          const result = render(elementWithKey("div", [keyAttr("t7:4")]));
+
+          assert.deepStrictEqual(result.data.on, {});
+        });
+
+        it("element without a key carries none", () => {
+          const result = render(elementWithKey("div", []));
+
+          assert.isUndefined(result.key);
+        });
+
+        // What an element loads names it better than where it sits, so a stylesheet keeps its
+        // href key and does not get re-fetched for having moved in the template.
+        it("does not displace a link element's resource key", () => {
+          const node = elementWithKey("link", [
+            Type.tuple([
+              Type.bitstring("href"),
+              Type.keywordList([
+                [Type.atom("text"), Type.bitstring("my_href")],
+              ]),
+            ]),
+            keyAttr("t7:4"),
+          ]);
+
+          assert.equal(render(node).key, "__hologramLink__:my_href");
+        });
+
+        it("does not displace a script element's resource key", () => {
+          const node = elementWithKey("script", [
+            Type.tuple([
+              Type.bitstring("src"),
+              Type.keywordList([[Type.atom("text"), Type.bitstring("my_src")]]),
+            ]),
+            keyAttr("t7:4"),
+          ]);
+
+          assert.equal(render(node).key, "__hologramScript__:my_src");
+        });
+
+        // An inline script is keyed by its own code, and the live node is keyed by its
+        // textContent, so the two agree only while the whole body renders as one child. Everything
+        // a script can hold renders to text and adjacent text is merged, which is what makes that
+        // true - if it stopped being true, the boot patch would rebuild every inline script and
+        // the page would re-run its own code.
+        it("keys an inline script by the whole of its body", () => {
+          const node = Type.tuple([
+            Type.atom("element"),
+            Type.bitstring("script"),
+            Type.list(),
+            Type.list([
+              Type.tuple([Type.atom("text"), Type.bitstring("let x = ")]),
+              Type.tuple([
+                Type.atom("expression"),
+                Type.tuple([Type.integer(123)]),
+              ]),
+              Type.tuple([Type.atom("text"), Type.bitstring("; go();")]),
+            ]),
+          ]);
+
+          const result = render(node);
+
+          assert.equal(result.children.length, 1);
+          assert.equal(result.children[0].text, "let x = 123; go();");
+          assert.equal(result.key, "__hologramScript__:let x = 123; go();");
+        });
+
+        // The key is found without expanding the spread, so a tag carrying one has to keep
+        // reaching its key.
+        it("is found on a tag that also carries a spread", () => {
+          const node = elementWithKey("div", [
+            Type.tuple([
+              Type.atom("spread"),
+              Type.tuple([
+                Type.map([
+                  [Type.bitstring("class"), Type.bitstring("my_class")],
+                ]),
+              ]),
+            ]),
+            keyAttr("t7:4"),
+          ]);
+
+          assert.equal(render(node).key, "t7:4");
+        });
+
+        it("a spread on its own carries no key", () => {
+          const node = elementWithKey("div", [
+            Type.tuple([
+              Type.atom("spread"),
+              Type.tuple([
+                Type.map([
+                  [Type.bitstring("class"), Type.bitstring("my_class")],
+                ]),
+              ]),
+            ]),
+          ]);
+
+          assert.isUndefined(render(node).key);
         });
       });
 
@@ -9065,6 +9277,208 @@ describe("Renderer", () => {
           );
         });
       });
+    });
+  });
+
+  describe("renderTree()", () => {
+    const text = (str) => Type.tuple([Type.atom("text"), Type.bitstring(str)]);
+
+    const attribute = (name, value) =>
+      Type.tuple([
+        Type.bitstring(name),
+        Type.keywordList([[Type.atom("text"), Type.bitstring(value)]]),
+      ]);
+
+    const treeElement = (tagName, attributes = [], childrenTree = []) =>
+      Type.tuple([
+        Type.atom("element"),
+        Type.bitstring(tagName),
+        Type.list(attributes),
+        Type.list(childrenTree),
+      ]);
+
+    // A page tree is the document's children, so a single node is wrapped in the list one
+    // always is.
+    const tree = (...nodes) => Type.list(nodes);
+
+    it("wraps a tree naming no html element in the elements a document must have", () => {
+      const result = Renderer.renderTree(tree(treeElement("div")));
+
+      const expected = vnode("html", {attrs: {}, on: {}}, [
+        vnode("body", {attrs: {}, on: {}}, [
+          vnode("div", {attrs: {}, on: {}}, []),
+        ]),
+      ]);
+
+      assert.deepStrictEqual(result, expected);
+    });
+
+    it("takes the html element a tree names as the document root", () => {
+      const treeDom = tree(
+        treeElement("html", [], [treeElement("body", [], [text("abc")])]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      const expected = vnode("html", {attrs: {}, on: {}}, [
+        vnode("body", {attrs: {}, on: {}}, ["abc"]),
+      ]);
+
+      assert.deepStrictEqual(result, expected);
+    });
+
+    it("renders the doctype a tree carries to nothing", () => {
+      const treeDom = tree(
+        Type.tuple([Type.atom("doctype"), Type.bitstring("html")]),
+        treeElement("html", [], []),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.deepStrictEqual(result, vnode("html", {attrs: {}, on: {}}, []));
+    });
+
+    it("renders an element's attributes and children", () => {
+      const treeDom = tree(
+        treeElement("div", [attribute("class", "big")], [text("abc")]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.deepStrictEqual(result.children[0].children, [
+        vnode("div", {attrs: {class: "big"}, on: {}}, ["abc"]),
+      ]);
+    });
+
+    it("renders an attribute with an empty value list as a boolean attribute", () => {
+      const hiddenAttribute = Type.tuple([
+        Type.bitstring("hidden"),
+        Type.list(),
+      ]);
+
+      const treeDom = tree(treeElement("div", [hiddenAttribute]));
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.deepStrictEqual(result.children[0].children[0].data.attrs, {
+        hidden: true,
+      });
+    });
+
+    it("merges adjacent text nodes", () => {
+      const treeDom = tree(
+        treeElement("div", [], [text("aaa"), text("bbb"), text("ccc")]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.deepStrictEqual(result.children[0].children, [
+        vnode("div", {attrs: {}, on: {}}, ["aaabbbccc"]),
+      ]);
+    });
+
+    it("takes an element's $key attribute as its vnode key", () => {
+      const treeDom = tree(
+        treeElement("div", [attribute("$key", "1a2b3c:4")], []),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      const divVnode = result.children[0].children[0];
+
+      assert.equal(divVnode.key, "1a2b3c:4");
+      assert.isUndefined(divVnode.data.attrs["$key"]);
+    });
+
+    it("numbers repeated keys by occurrence", () => {
+      const item = treeElement("li", [attribute("$key", "1a2b3c:4")], []);
+      const treeDom = tree(treeElement("ul", [], [item, item, item]));
+
+      const result = Renderer.renderTree(treeDom);
+
+      const keys = result.children[0].children[0].children.map(
+        (childVnode) => childVnode.key,
+      );
+
+      assert.deepStrictEqual(keys, ["1a2b3c:4", "1a2b3c:4:1", "1a2b3c:4:2"]);
+    });
+
+    it("keys a script element by the source it loads", () => {
+      const treeDom = tree(
+        treeElement("script", [attribute("src", "/hologram/page-abc.js")]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.equal(
+        result.children[0].children[0].key,
+        "__hologramScript__:/hologram/page-abc.js",
+      );
+    });
+
+    it("keys an inline script element by the code it holds", () => {
+      const treeDom = tree(treeElement("script", [], [text("var abc = 1;")]));
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.equal(
+        result.children[0].children[0].key,
+        "__hologramScript__:var abc = 1;",
+      );
+    });
+
+    it("keys a link element by what it loads", () => {
+      const treeDom = tree(
+        treeElement("link", [attribute("href", "/my-stylesheet.css")]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      assert.equal(
+        result.children[0].children[0].key,
+        "__hologramLink__:/my-stylesheet.css",
+      );
+    });
+
+    it("sets up the value hooks a controlled input needs", () => {
+      const treeDom = tree(
+        treeElement("input", [attribute("value", "my_value")]),
+      );
+
+      const result = Renderer.renderTree(treeDom);
+
+      const inputVnode = result.children[0].children[0];
+
+      assert.isUndefined(inputVnode.data.attrs.value);
+
+      assert.isUndefined(
+        inputVnode.data.attrs["data-hologram-form-input-value"],
+      );
+
+      assert.strictEqual(typeof inputVnode.data.hook.create, "function");
+      assert.strictEqual(typeof inputVnode.data.hook.update, "function");
+    });
+
+    // renderTree() is deliberately not bracketed by RenderCache.beginRender()/endRender() - unlike
+    // renderPage(), it only ever renders elements and text, never a component clause, so there is
+    // no per-cid cache entry for it to guard. But #renderElement calls RenderCache.noteFormInput()
+    // unconditionally for every element it renders, tree or page alike, so a controlled input in
+    // the tree still gets pushed onto the same #formInputVnodes buffer a real renderPage() reads
+    // from. The next renderPage()'s own beginRender() resets that buffer before taking its first
+    // mark, which is what keeps this safe - proven here rather than just reasoned about, per the
+    // migration plan's own note that a leak here is a silent stale-controlled-input bug, not a
+    // crash, so it would not show up as a test failure unless specifically checked.
+    it("does not leave a controlled input it noted for RenderCache.formInputsSince() to pick up on the next renderPage()", () => {
+      const treeDom = tree(
+        treeElement("input", [attribute("value", "my_value")]),
+      );
+
+      Renderer.renderTree(treeDom);
+
+      RenderCache.beginRender();
+
+      assert.equal(RenderCache.formInputMark(), 0);
+      assert.deepEqual(RenderCache.formInputsSince(0), []);
     });
   });
 

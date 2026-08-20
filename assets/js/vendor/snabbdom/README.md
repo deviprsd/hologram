@@ -7,18 +7,15 @@ The `.js.map` and `.d.ts` files are dropped. The source maps point at `../src/*.
 package does not ship, so every one of them is broken, and nothing here reads the type
 declarations. The `.js` files are untouched.
 
-## Why it is vendored
+## Deviations from upstream
 
-Historically, Hologram rendered template blocks as fragment vnodes (snabbdom's `experimental:
-{fragments: true}`), which needed two local patches to diff correctly - both dropped once
-per-element keys (dom.ex's `add_slot_keys/2`) replaced fragment-wrapped blocks entirely, so
-neither the fragments flag nor either patch is in use anymore. The copy is byte-identical to
-upstream as of that change; nothing below currently deviates.
+None. `build/` is byte-identical to the published package.
 
-Kept vendored rather than switched to an npm dependency for now, since that's a separate decision
-with its own blast radius (package.json, lockfile, every `./vendor/snabbdom/...` import path) -
-worth doing at some point, just not bundled into the migration that removed the reason to vendor
-in the first place.
+It has not always been: Hologram used to render template blocks as fragment vnodes, which
+snabbdom supports only behind `experimental: {fragments: true}`, and that support needed two
+fixes to be usable. Blocks are no longer fragments - every element carries the key of its place
+in its template, so the diff pairs it with itself without anything bracketing it - and both
+fixes went back to upstream code with the fragments they served.
 
 ## Keeping it byte-identical
 
@@ -26,13 +23,9 @@ in the first place.
 reaches this directory through the `assets/js/**` glob in the `format.js` alias, reindents every
 file, and a diff against upstream becomes unreadable.
 
-## Deviations from upstream
-
-None currently. Historical deviations (both since reverted - see git history for `build/init.js`
-and `build/htmldomapi.js`) were marked with a `HOLOGRAM PATCH` comment in the source; use the same
-convention if a new one is ever needed.
-
 ## Updating
 
-Replace `build/` and `LICENSE` with the new release verbatim, delete the `.js.map` and `.d.ts`
-files, and commit that as one step.
+Replace `build/` and `LICENSE` with the new release verbatim and delete the `.js.map` and `.d.ts`
+files. With no deviations to re-apply, that is the whole update. Should one ever be needed again,
+give it its own commit and a `HOLOGRAM PATCH` comment in the source saying what it changes and
+why, so the next upgrade can tell what has to survive it.

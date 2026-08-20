@@ -94,6 +94,13 @@ export default class Client {
     HttpTransport.restartPing(sendImmediatePing);
   }
 
+  // Asks the server to describe a page rather than render it, for a client that renders it itself.
+  //
+  // The answer is a page only when it says so: a page's middleware can answer the request instead,
+  // with any status it likes including a plain 200, so the marker header rather than the status is
+  // what tells the two apart. Anything that is not a page goes to onNotPage, for the caller to hand
+  // to the browser - which is also where an opaque redirect lands, redirects being left to the
+  // browser rather than followed here.
   static async fetchPage(toParam, onSuccess, onNotPage) {
     let pageModule, queryString;
 

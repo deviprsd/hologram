@@ -561,6 +561,66 @@ describe("ComponentRegistry", () => {
       assert.isFalse(secondRan);
     });
 
+    it("skips a queued callback whose isStale check reports it stale", async () => {
+      const deferred = createDeferred();
+
+      ComponentRegistry.runExclusive(cid1, () => deferred.promise);
+
+      let secondRan = false;
+      const gate2 = ComponentRegistry.runExclusive(
+        cid1,
+        () => {
+          secondRan = true;
+        },
+        () => true,
+      );
+
+      deferred.resolve();
+      await gate2;
+
+      assert.isFalse(secondRan);
+    });
+
+    it("runs a queued callback whose isStale check reports it still valid", async () => {
+      const deferred = createDeferred();
+
+      ComponentRegistry.runExclusive(cid1, () => deferred.promise);
+
+      let secondRan = false;
+      const gate2 = ComponentRegistry.runExclusive(
+        cid1,
+        () => {
+          secondRan = true;
+        },
+        () => false,
+      );
+
+      deferred.resolve();
+      await gate2;
+
+      assert.isTrue(secondRan);
+    });
+
+    it("does not consult isStale on the synchronous path, since nothing was queued behind anything", () => {
+      let isStaleCalled = false;
+      let ran = false;
+
+      const result = ComponentRegistry.runExclusive(
+        cid1,
+        () => {
+          ran = true;
+        },
+        () => {
+          isStaleCalled = true;
+          return true;
+        },
+      );
+
+      assert.isTrue(ran);
+      assert.isNull(result);
+      assert.isFalse(isStaleCalled);
+    });
+
     it("clear() drops in-flight chain state so the next call for the same cid takes the synchronous path", () => {
       ComponentRegistry.runExclusive(cid1, () => createDeferred().promise);
 
