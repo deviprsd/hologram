@@ -163,6 +163,11 @@ export default class ComponentRegistry {
   // committed synchronously, or a Promise that settles once its commit has
   // landed.
   //
+  // isStale is an optional caller-supplied thunk, re-checked on the queued path only (see
+  // isCidRegistered below for why that path alone needs a second look): true means whatever made
+  // fn() valid when it was queued no longer holds, so it's skipped exactly like an unregistered
+  // cid. What "stale" means is entirely the caller's concern - this queue doesn't know or care.
+  //
   // The cid is claimed SYNCHRONOUSLY, before fn() runs - not only once fn()
   // returns. That ordering is load-bearing: fn() itself can synchronously
   // trigger further dispatches against the same cid (e.g. a JS.exec loop
@@ -185,7 +190,7 @@ export default class ComponentRegistry {
   // the time the queued fn() runs, the prior occupant's commit has already
   // landed, because the claim it queues behind only settles once that
   // occupant's own commit does - see #settle.
-  static runExclusive(cid, fn) {
+  static runExclusive(cid, fn, isStale = null) {
     const key = Type.encodeMapKey(cid);
     const pending = ComponentRegistry.#actionChains.get(key);
     const idle = pending === undefined;
@@ -204,7 +209,14 @@ export default class ComponentRegistry {
       // would crash callNamedFunction on a null module. No-op instead. Only
       // reachable once queued - an idle dispatch against a genuinely
       // unregistered cid is a real bug and should keep crashing loudly.
-      if (!idle && !ComponentRegistry.isCidRegistered(cid)) {
+      //
+      // isStale is checked here for the same reason: a queued call was valid when it queued, but
+      // by the time its turn comes up the cid can be registered again for a different page's
+      // component, which isCidRegistered alone can't tell apart from the one it queued behind.
+      if (
+        !idle &&
+        (!ComponentRegistry.isCidRegistered(cid) || (isStale && isStale()))
+      ) {
         return null;
       }
 

@@ -149,13 +149,33 @@ export default class Hologram {
   // so it reads state after that commit lands instead of racing it. See
   // runExclusive's own comment for why this preserves the synchronous-throw
   // contract above.
+  //
+  // The epoch check runExclusive is handed here only ever runs on that queued path (see its own
+  // comment for why) - the idle/synchronous path executes unconditionally, on the trust that
+  // whoever is calling executeAction directly (#settleAction, or a lower-level caller that means
+  // to bypass admission) already made that call. Only a dispatch that actually waited behind
+  // another one needs re-checking, since #settleAction's own admission check is stale by the time
+  // a queued dispatch's turn comes up if a navigation landed in between.
   // TODO: make private (tested implicitely in feature tests)
   // Deps: [:maps.get/2]
   static executeAction(action, epoch = $.registryEpoch) {
     const target = Erlang_Maps["get/2"](Type.atom("target"), action);
 
-    return ComponentRegistry.runExclusive(target, () =>
-      Hologram.#executeActionNow(action, epoch),
+    return ComponentRegistry.runExclusive(
+      target,
+      () => Hologram.#executeActionNow(action, epoch),
+      () => {
+        if (!$.#isEpochStale(epoch)) {
+          return false;
+        }
+
+        console.warn(
+          "Hologram: dropped an action dispatched on a page that has been left:",
+          Interpreter.inspect(Erlang_Maps["get/2"](Type.atom("name"), action)),
+        );
+
+        return true;
+      },
     );
   }
 
@@ -1691,16 +1711,22 @@ export default class Hologram {
     });
   }
 
+  // Shared by #settleAction (checked at dispatch time) and executeAction's own isStale callback,
+  // handed to runExclusive to be re-checked at fire time on the queued path only - see
+  // executeAction's comment for why that second check exists.
+  static #isEpochStale(epoch) {
+    const currentEpoch = Math.max($.domEpoch, $.registryEpoch);
+    return epoch < currentEpoch || $.#deadEpochs.has(epoch);
+  }
+
   // The one place an action meets the registry, and the only thing that decides whether it runs.
   // An action carries the epoch of the page it was reasoning about when it was created, and this
   // compares that against where the client has got to since.
   static #settleAction(action, epoch) {
-    const currentEpoch = Math.max($.domEpoch, $.registryEpoch);
-
     // The page the action belonged to has been left, or its navigation failed before it could
     // mount - either way nothing can answer for it any more. The warning is the trace a button
     // that appears to do nothing leaves behind.
-    if (epoch < currentEpoch || $.#deadEpochs.has(epoch)) {
+    if ($.#isEpochStale(epoch)) {
       console.warn(
         "Hologram: dropped an action dispatched on a page that has been left:",
         Interpreter.inspect(Erlang_Maps["get/2"](Type.atom("name"), action)),

@@ -212,6 +212,43 @@ describe("Hologram", () => {
       assert.isNull(result);
       assert.equal(countOf(cid2), 1);
     });
+
+    // A dispatch queued behind an in-flight action on the same cid doesn't fire the moment
+    // #settleAction admits it - it fires once the in-flight one commits, which can be after a
+    // navigation lands. runExclusive re-checks this isStale callback on exactly that queued path
+    // (see component_registry_test.mjs's runExclusive() tests for the queueing behavior itself)
+    // - this only has to prove executeAction wires it to the right question: has this epoch,
+    // specifically, fallen behind since the dispatch that captured it.
+    it("hands runExclusive an isStale check that reports true once the given epoch falls behind", () => {
+      const warnStub = sinon.stub(console, "warn");
+      const runExclusiveStub = sinon
+        .stub(ComponentRegistry, "runExclusive")
+        .callsFake((_cid, fn) => fn());
+
+      try {
+        registerCid(cid1, 0);
+
+        Hologram.executeAction(buildAction("bump", cid1), 0);
+
+        const isStale = runExclusiveStub.firstCall.args[2];
+        assert.isFunction(isStale);
+
+        // Still the current epoch - nothing to report.
+        assert.isFalse(isStale());
+        sinon.assert.notCalled(warnStub);
+
+        // A navigation lands after this action was dispatched: epoch 0 is now behind.
+        Hologram.domEpoch = 1;
+        Hologram.registryEpoch = 1;
+
+        assert.isTrue(isStale());
+        sinon.assert.calledOnce(warnStub);
+      } finally {
+        Hologram.domEpoch = 0;
+        Hologram.registryEpoch = 0;
+        warnStub.restore();
+      }
+    });
   });
 
   describe("dispatchAction()", () => {
