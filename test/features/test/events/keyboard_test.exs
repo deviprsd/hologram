@@ -9,7 +9,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> fill_in(css("#my_input_key_down"), with: "a")
     |> assert_text(
       css("#result"),
-      ~r/\{:key_down, %\{event: %\{alt_key: false, code: "KeyA", ctrl_key: false, key: "a", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:key_down, %\{event: %\{alt_key: false, code: "KeyA", ctrl_key: false, is_composing: false, key: "a", meta_key: false, repeat: false, selection_end: 0, selection_start: 0, shift_key: false\}\}\}/
     )
   end
 
@@ -19,7 +19,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> fill_in(css("#my_input_key_up"), with: "a")
     |> assert_text(
       css("#result"),
-      ~r/\{:key_up, %\{event: %\{alt_key: false, code: "KeyA", ctrl_key: false, key: "a", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:key_up, %\{event: %\{alt_key: false, code: "KeyA", ctrl_key: false, is_composing: false, key: "a", meta_key: false, repeat: false, selection_end: 1, selection_start: 1, shift_key: false\}\}\}/
     )
   end
 
@@ -42,7 +42,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> send_keys(css("#my_input_enter"), [:enter])
     |> assert_text(
       css("#result"),
-      ~r/\{:enter, %\{event: %\{alt_key: false, code: "Enter", ctrl_key: false, key: "Enter", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:enter, %\{event: %\{alt_key: false, code: "Enter", ctrl_key: false, is_composing: false, key: "Enter", meta_key: false, repeat: false, selection_end: 0, selection_start: 0, shift_key: false\}\}\}/
     )
   end
 
@@ -54,7 +54,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> send_keys(css("#my_input_ctrl_k"), [:control, "k"])
     |> assert_text(
       css("#result"),
-      ~r/\{:ctrl_k, %\{event: %\{alt_key: false, code: "KeyK", ctrl_key: true, key: "k", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:ctrl_k, %\{event: %\{alt_key: false, code: "KeyK", ctrl_key: true, is_composing: false, key: "k", meta_key: false, repeat: false, selection_end: 1, selection_start: 1, shift_key: false\}\}\}/
     )
   end
 
@@ -64,7 +64,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> send_keys(css("#my_input_key_down_arrow_up"), [:up_arrow])
     |> assert_text(
       css("#result"),
-      ~r/\{:key_down_arrow_up, %\{event: %\{alt_key: false, code: "ArrowUp", ctrl_key: false, key: "ArrowUp", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:key_down_arrow_up, %\{event: %\{alt_key: false, code: "ArrowUp", ctrl_key: false, is_composing: false, key: "ArrowUp", meta_key: false, repeat: false, selection_end: 0, selection_start: 0, shift_key: false\}\}\}/
     )
   end
 
@@ -74,7 +74,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> send_keys(css("#my_input_key_up_arrow_up"), [:up_arrow])
     |> assert_text(
       css("#result"),
-      ~r/\{:key_up_arrow_up, %\{event: %\{alt_key: false, code: "ArrowUp", ctrl_key: false, key: "ArrowUp", meta_key: false, repeat: false, shift_key: false\}\}\}/
+      ~r/\{:key_up_arrow_up, %\{event: %\{alt_key: false, code: "ArrowUp", ctrl_key: false, is_composing: false, key: "ArrowUp", meta_key: false, repeat: false, selection_end: 0, selection_start: 0, shift_key: false\}\}\}/
     )
   end
 
@@ -84,7 +84,7 @@ defmodule HologramFeatureTests.Events.KeyboardTest do
     |> send_keys(css("#my_input_slash"), ["/"])
     |> assert_text(
       css("#result"),
-      ~r{\{:slash, %\{event: %\{alt_key: false, code: "Slash", ctrl_key: false, key: "/", meta_key: false, repeat: false, shift_key: false\}\}\}}
+      ~r{\{:slash, %\{event: %\{alt_key: false, code: "Slash", ctrl_key: false, is_composing: false, key: "/", meta_key: false, repeat: false, selection_end: 0, selection_start: 0, shift_key: false\}\}\}}
     )
   end
 end
