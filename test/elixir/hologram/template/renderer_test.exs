@@ -2664,6 +2664,19 @@ defmodule Hologram.Template.RendererTest do
                {{:element, "div", [{"$key", [text: "a1b2c3:4"]}], []}, %{}, @server}
     end
 
+    # A keyed {%for}'s auto-key expression (holo__item_key__) evaluates to nil whenever the item
+    # has no :id (see Hologram.Template.Marker.item_key/1) - unlike every other attribute, that
+    # must not remove "$key" from the tree, since the client's own template evaluation has no such
+    # nil-stripping and always sets the vnode key to "" for the same element. Dropping "$key" here
+    # would leave the tree's element unkeyed while the client's fresh render of it carries key ""
+    # - a parity break the client's diff would read as two different elements.
+    test "element node, $key attribute with a nil expression value is kept as empty text" do
+      node = {:element, "div", [{"$key", [expression: {nil}]}], []}
+
+      assert render_tree(node, @env, @server) ==
+               {{:element, "div", [{"$key", [text: ""]}], []}, %{}, @server}
+    end
+
     test "element node, event attribute is dropped" do
       # <button $click="my_action">abc</button>
       node = {:element, "button", [{"$click", [text: "my_action"]}], [{:text, "abc"}]}

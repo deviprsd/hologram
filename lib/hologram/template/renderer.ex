@@ -820,9 +820,21 @@ defmodule Hologram.Template.Renderer do
   # WARNING: must match the client renderer's #renderAttribute normalization: an empty value list
   # is a boolean attribute, a nil or false expression value removes the attribute, and everything
   # else collapses to one unescaped string.
+  #
+  # "$key" is exempt from the nil-removes-the-attribute rule: a keyed {%for}'s auto-key expression
+  # (holo__item_key__) evaluates to nil whenever the item has no :id (see
+  # Hologram.Template.Marker.item_key/1), same as any other attribute would - but the client's own
+  # template evaluation (#renderSlotKey) has no such stripping, and always sets the vnode key to
+  # the text form of whatever the expression evaluates to (nil -> ""). Stripping it here would
+  # leave the tree's own element unkeyed while the client's fresh render of the same element
+  # carries key "" - a parity break the client's diff would read as two different elements.
   defp render_tree_attribute(attr_dom)
 
   defp render_tree_attribute({name, []}), do: {name, []}
+
+  defp render_tree_attribute({"$key", [expression: {nil}]}) do
+    {"$key", [text: ""]}
+  end
 
   defp render_tree_attribute({_name, [expression: {nil}]}), do: nil
 
