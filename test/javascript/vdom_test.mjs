@@ -22,8 +22,8 @@ describe("Vdom", () => {
   describe("dedupeKeys()", () => {
     it("distinct keys", () => {
       const children = [
-        vnode("li", {key: "abc123:0"}, []),
-        vnode("li", {key: "abc123:1"}, []),
+        vnode("li", { key: "abc123:0" }, []),
+        vnode("li", { key: "abc123:1" }, []),
       ];
 
       Vdom.dedupeKeys(children);
@@ -34,11 +34,25 @@ describe("Vdom", () => {
       );
     });
 
+    it("distinct marker keys", () => {
+      const children = [
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("!", { key: "[h:1a2b3c:0:c]" }, "[h:1a2b3c:0:c]"),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:c]"],
+      );
+    });
+
     it("repeated keys", () => {
       const children = [
-        vnode("li", {key: "abc123:0"}, []),
-        vnode("li", {key: "abc123:0"}, []),
-        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", { key: "abc123:0" }, []),
+        vnode("li", { key: "abc123:0" }, []),
+        vnode("li", { key: "abc123:0" }, []),
       ];
 
       Vdom.dedupeKeys(children);
@@ -49,10 +63,25 @@ describe("Vdom", () => {
       );
     });
 
+    it("repeated marker keys", () => {
+      const children = [
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]:1", "[h:1a2b3c:0:o]:2"],
+      );
+    });
+
     it("renumbers the vnode key without touching anything else", () => {
       const children = [
-        vnode("li", {key: "abc123:0", attrs: {"data-x": "y"}}, ["a"]),
-        vnode("li", {key: "abc123:0", attrs: {"data-x": "y"}}, ["b"]),
+        vnode("li", { key: "abc123:0", attrs: { "data-x": "y" } }, ["a"]),
+        vnode("li", { key: "abc123:0", attrs: { "data-x": "y" } }, ["b"]),
       ];
 
       Vdom.dedupeKeys(children);
@@ -66,10 +95,26 @@ describe("Vdom", () => {
       assert.equal(children[1].data.attrs["data-x"], "y");
     });
 
+    it("renumbers the vnode key without touching the comment text", () => {
+      const children = [
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.text),
+        ["[h:1a2b3c:0:o]", "[h:1a2b3c:0:o]"],
+      );
+
+      assert.equal(children[1].data.key, "[h:1a2b3c:0:o]:1");
+    });
+
     it("unkeyed elements are left alone", () => {
       const children = [
-        vnode("div", {attrs: {}}, []),
-        vnode("div", {attrs: {}}, []),
+        vnode("div", { attrs: {} }, []),
+        vnode("div", { attrs: {} }, []),
       ];
 
       Vdom.dedupeKeys(children);
@@ -80,12 +125,28 @@ describe("Vdom", () => {
       );
     });
 
+    it("ordinary comments and elements", () => {
+      const children = [
+        vnode("!", "my comment"),
+        vnode("!", "my comment"),
+        vnode("div", { attrs: {} }, []),
+        vnode("div", { attrs: {} }, []),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        [undefined, undefined, undefined, undefined],
+      );
+    });
+
     // Every kind of key repeats through the same rule now - a "$key"-carrying element and a
     // resource-keyed script share one counter, unlike the old marker-only dedup.
     it("an element key and a resource key repeat through the same counter", () => {
       const children = [
-        vnode("li", {key: "abc123:0"}, []),
-        vnode("script", {key: "abc123:0", attrs: {src: "x.js"}}, []),
+        vnode("li", { key: "abc123:0" }, []),
+        vnode("script", { key: "abc123:0", attrs: { src: "x.js" } }, []),
       ];
 
       Vdom.dedupeKeys(children);
@@ -96,8 +157,48 @@ describe("Vdom", () => {
       );
     });
 
+    it("each key is counted on its own", () => {
+      const children = [
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("li", { attrs: {}, key: "1a2b3c:1" }, []),
+        vnode("li", { attrs: {}, key: "1a2b3c:2" }, []),
+        vnode("!", { key: "[h:1a2b3c:0:o]" }, "[h:1a2b3c:0:o]"),
+        vnode("li", { attrs: {}, key: "1a2b3c:1" }, []),
+        vnode("li", { attrs: {}, key: "1a2b3c:2" }, []),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        [
+          "[h:1a2b3c:0:o]",
+          "1a2b3c:1",
+          "1a2b3c:2",
+          "[h:1a2b3c:0:o]:1",
+          "1a2b3c:1:1",
+          "1a2b3c:2:1",
+        ],
+      );
+    });
+
+    it("repeated resource keys", () => {
+      // The same stylesheet named twice in one list still has to name two nodes.
+      const children = [
+        vnode("link", { attrs: {}, key: "__hologramLink__:/my.css" }, []),
+        vnode("link", { attrs: {}, key: "__hologramLink__:/my.css" }, []),
+      ];
+
+      Vdom.dedupeKeys(children);
+
+      assert.deepStrictEqual(
+        children.map((child) => child.key),
+        ["__hologramLink__:/my.css", "__hologramLink__:/my.css:1"],
+      );
+    });
+
     it("a children list of one is returned unchanged", () => {
-      const children = [vnode("li", {key: "abc123:0"}, [])];
+      const children = [vnode("li", { key: "abc123:0" }, [])];
       const result = Vdom.dedupeKeys(children);
 
       assert.equal(result, children);
@@ -107,8 +208,8 @@ describe("Vdom", () => {
   describe("finalizeChildren()", () => {
     it("delegates to dedupeKeys()", () => {
       const children = [
-        vnode("li", {key: "abc123:0"}, []),
-        vnode("li", {key: "abc123:0"}, []),
+        vnode("li", { key: "abc123:0" }, []),
+        vnode("li", { key: "abc123:0" }, []),
       ];
 
       Vdom.finalizeChildren(children);
@@ -117,6 +218,34 @@ describe("Vdom", () => {
         children.map((child) => child.key),
         ["abc123:0", "abc123:0:1"],
       );
+    });
+
+    // The shape issue #1019 was reported for: every iteration renders the same two places of
+    // the same template, so nothing in the list is unique until it is numbered.
+    it("a loop leaves every sibling it renders with its own key", () => {
+      const iteration = () => [
+        vnode("li", { attrs: {}, key: "1a2b3c:0" }, []),
+        vnode("p", { attrs: {}, key: "1a2b3c:1" }, []),
+      ];
+
+      const result = Vdom.finalizeChildren([
+        ...iteration(),
+        ...iteration(),
+        ...iteration(),
+      ]);
+
+      const keys = result.map((child) => child.key);
+
+      assert.deepStrictEqual(keys, [
+        "1a2b3c:0",
+        "1a2b3c:1",
+        "1a2b3c:0:1",
+        "1a2b3c:1:1",
+        "1a2b3c:0:2",
+        "1a2b3c:1:2",
+      ]);
+
+      assert.equal(new Set(keys).size, keys.length);
     });
   });
 
@@ -137,24 +266,24 @@ describe("Vdom", () => {
     // tree as the old side, the rendered tree as the new one.
     const adopt = (renderedChildren, html) => {
       const container = mount(html);
-      const rendered = vnode("div", {attrs: {}}, renderedChildren);
+      const rendered = vnode("div", { attrs: {} }, renderedChildren);
       const mirrored = Vdom.mirror(rendered, container);
 
-      return {container, mirrored, patched: () => patch(mirrored, rendered)};
+      return { container, mirrored, patched: () => patch(mirrored, rendered) };
     };
 
     it("adopts a matching tree, copying sel and key from the rendered side", () => {
       const container = mount('<div id="app"><p>hello</p></div>');
 
-      const rendered = vnode("div", {attrs: {id: "app"}, key: "my_key"}, [
-        vnode("p", {attrs: {}}, ["hello"]),
+      const rendered = vnode("div", { attrs: { id: "app" }, key: "my_key" }, [
+        vnode("p", { attrs: {} }, ["hello"]),
       ]);
 
       const mirrored = Vdom.mirror(rendered, container.firstChild);
 
       assert.equal(mirrored.sel, "div");
       assert.equal(mirrored.key, "my_key");
-      assert.deepStrictEqual(mirrored.data.attrs, {id: "app"});
+      assert.deepStrictEqual(mirrored.data.attrs, { id: "app" });
       assert.equal(mirrored.elm, container.firstChild);
 
       const [p] = mirrored.children;
@@ -167,8 +296,8 @@ describe("Vdom", () => {
     it("keeps the server's nodes through the boot patch and attaches listeners", () => {
       let clicks = 0;
 
-      const {container, patched} = adopt(
-        [vnode("button", {attrs: {}, on: {click: () => clicks++}}, ["go"])],
+      const { container, patched } = adopt(
+        [vnode("button", { attrs: {}, on: { click: () => clicks++ } }, ["go"])],
         "<button>go</button>",
       );
 
@@ -182,8 +311,8 @@ describe("Vdom", () => {
     });
 
     it("syncs attributes to the rendered side without replacing the node", () => {
-      const {container, patched} = adopt(
-        [vnode("p", {attrs: {class: "fresh"}}, [])],
+      const { container, patched } = adopt(
+        [vnode("p", { attrs: { class: "fresh" } }, [])],
         '<p class="stale" data-junk="1"></p>',
       );
 
@@ -196,8 +325,8 @@ describe("Vdom", () => {
     });
 
     it("adopts a text node whose content differs and patches it in place", () => {
-      const {container, patched} = adopt(
-        [vnode("p", {attrs: {}}, ["fresh"])],
+      const { container, patched } = adopt(
+        [vnode("p", { attrs: {} }, ["fresh"])],
         "<p>stale</p>",
       );
 
@@ -209,8 +338,8 @@ describe("Vdom", () => {
     });
 
     it("replaces a subtree whose tag diverges", () => {
-      const {container, patched} = adopt(
-        [vnode("div", {attrs: {}}, [])],
+      const { container, patched } = adopt(
+        [vnode("div", { attrs: {} }, [])],
         "<span>old</span>",
       );
 
@@ -223,8 +352,8 @@ describe("Vdom", () => {
     });
 
     it("removes DOM nodes the rendered side doesn't know about", () => {
-      const {container, patched} = adopt(
-        [vnode("p", {attrs: {}}, [])],
+      const { container, patched } = adopt(
+        [vnode("p", { attrs: {} }, [])],
         "<p></p><i>injected</i>",
       );
 
@@ -235,8 +364,8 @@ describe("Vdom", () => {
     });
 
     it("creates rendered nodes with no DOM counterpart", () => {
-      const {container, patched} = adopt(
-        [vnode("p", {attrs: {}}, []), vnode("em", {attrs: {}}, [])],
+      const { container, patched } = adopt(
+        [vnode("p", { attrs: {} }, []), vnode("em", { attrs: {} }, [])],
         "<p></p>",
       );
 
@@ -252,18 +381,18 @@ describe("Vdom", () => {
     // node-for-node prefix of the head, and the stylesheet after those scripts still has to be
     // adopted rather than re-fetched.
     it("passes over nodes the render omits and adopts what follows", () => {
-      const {container, patched} = adopt(
+      const { container, patched } = adopt(
         [
-          vnode("meta", {attrs: {charset: "utf-8"}}, []),
+          vnode("meta", { attrs: { charset: "utf-8" } }, []),
           vnode(
             "link",
             {
               key: "__hologramLink__:/app.css",
-              attrs: {rel: "stylesheet", href: "/app.css"},
+              attrs: { rel: "stylesheet", href: "/app.css" },
             },
             [],
           ),
-          vnode("style", {attrs: {}}, ["body { color: red; }"]),
+          vnode("style", { attrs: {} }, ["body { color: red; }"]),
         ],
         '<meta charset="utf-8">' +
           "<script>globalThis.Hologram = {}</script>" +
@@ -295,8 +424,8 @@ describe("Vdom", () => {
     it("does not let a text node take one further along", () => {
       // The element carries the key of its place, the way every rendered element does. A node
       // mirrored as itself carries none, so the two no longer match and the patch rebuilds it.
-      const {container, patched} = adopt(
-        [" ", vnode("p", {attrs: {}, key: "my_key"}, ["hello"])],
+      const { container, patched } = adopt(
+        [" ", vnode("p", { attrs: {}, key: "my_key" }, ["hello"])],
         "<p>hello</p> ",
       );
 
@@ -307,13 +436,13 @@ describe("Vdom", () => {
     });
 
     it("does not adopt a script element for a different source", () => {
-      const {container, patched} = adopt(
+      const { container, patched } = adopt(
         [
           vnode(
             "script",
             {
               key: "__hologramScript__:/fresh.js",
-              attrs: {src: "/fresh.js"},
+              attrs: { src: "/fresh.js" },
             },
             [],
           ),
@@ -336,11 +465,11 @@ describe("Vdom", () => {
     it("keeps a script whose rendered key matches, so it is not re-executed", () => {
       const rendered = vnode(
         "script",
-        {key: "__hologramScript__:my_src", attrs: {src: "my_src"}},
+        { key: "__hologramScript__:my_src", attrs: { src: "my_src" } },
         [],
       );
 
-      const {container, patched} = adopt(
+      const { container, patched } = adopt(
         [rendered],
         '<script src="my_src"></script>',
       );

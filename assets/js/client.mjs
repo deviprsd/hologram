@@ -24,11 +24,19 @@ export default class Client {
 
     const module = ComponentRegistry.getComponentModule(target);
 
+    // Sent so the server can read this tab's subscriptions from signed receipts rather
+    // than from its own node's registry, which holds nothing when the command lands on
+    // a node that does not hold the connection.
+    const subReceipts = Array.from(
+      App.subscriptionReceiptRegistry.entries.values(),
+    ).map((triple) => triple.data[2]);
+
     return Type.map([
       [Type.atom("instance_id"), Type.bitstring(App.instanceId)],
       [Type.atom("module"), module],
       [Type.atom("name"), Erlang_Maps["get/2"](Type.atom("name"), command)],
       [Type.atom("params"), Erlang_Maps["get/2"](Type.atom("params"), command)],
+      [Type.atom("sub_receipts"), Type.list(subReceipts)],
       [Type.atom("target"), target],
     ]);
   }
@@ -94,6 +102,13 @@ export default class Client {
     HttpTransport.restartPing(sendImmediatePing);
   }
 
+  // Asks the server to describe a page rather than render it, for a client that renders it itself.
+  //
+  // The answer is a page only when it says so: a page's middleware can answer the request instead,
+  // with any status it likes including a plain 200, so the marker header rather than the status is
+  // what tells the two apart. Anything that is not a page goes to onNotPage, for the caller to hand
+  // to the browser - which is also where an opaque redirect lands, redirects being left to the
+  // browser rather than followed here.
   static async fetchPage(toParam, onSuccess, onNotPage) {
     let pageModule, queryString;
 

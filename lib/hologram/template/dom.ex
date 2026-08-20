@@ -10,8 +10,10 @@ defmodule Hologram.Template.DOM do
 
   # Tags a key would name nothing new. "document" and "window" render no node at all, and "slot"
   # renders whatever is put in its place. The three page-level elements are each the only one of
-  # their kind, so a key cannot tell them from a sibling - and the client's boot path reaches them
-  # by name rather than through an ordinary children diff, which a key would make refuse.
+  # their kind, so a key cannot tell them from a sibling - and the patch reaches them by name
+  # rather than through an ordinary children diff, which a key would make it refuse: the root is
+  # rebuilt into a document that allows only one element, and head and body would be thrown away
+  # and rebuilt on every navigation, taking the stylesheets and the scroll position with them.
   @unkeyable_tags ["body", "document", "head", "html", "slot", "window"]
 
   @type attribute :: {String.t(), t} | {:spread, {any}}
@@ -39,6 +41,8 @@ defmodule Hologram.Template.DOM do
   """
   @spec build_ast(list(Parser.parsed_tag())) :: AST.t()
   def build_ast(tags) do
+    # The keys name places in this template, so they are built from the hash of the template as
+    # written, before any of them has been added to it.
     hash = template_hash(tags)
 
     {code, _last_tag_type} =
@@ -113,6 +117,27 @@ defmodule Hologram.Template.DOM do
   end
 
   defp apply_for_key_plan(tag, _index, _state), do: tag
+
+  @doc """
+  Names the template a key belongs to.
+
+  Distinguishes a key from another template's, since slot content is spliced into the surrounding
+  template's children and bare indexes would collide there. Derived from the tags rather than the
+  module name so that it stays stable across renames and needs no caller context. Two byte-identical
+  templates share a hash, which leaves their keys to be told apart by their position among siblings,
+  the same way a loop's repeats are.
+
+  `:erlang.phash2/2` is documented to return the same value for a given term regardless of machine
+  architecture and ERTS version, which is what lets tests assert key text verbatim.
+  """
+  @spec template_hash(list(Parser.parsed_tag())) :: String.t()
+  def template_hash(tags) do
+    tags
+    |> normalize_newlines()
+    |> :erlang.phash2(4_294_967_296)
+    |> Integer.to_string(36)
+    |> String.downcase()
+  end
 
   defp find_key_attr(attrs) do
     Enum.find(attrs, &match?({"$key", _value_parts}, &1))
@@ -781,22 +806,6 @@ defmodule Hologram.Template.DOM do
 
   defp render_item_key_source({:explicit, key_expr}) do
     "Hologram.Template.Marker.key_from_value(#{key_expr})"
-  end
-
-  # Distinguishes keys belonging to different templates, since slot content is spliced into the
-  # surrounding template's children and bare positions would collide there. Derived from the
-  # tags rather than the module name so that it stays stable across renames and needs no caller
-  # context. Two byte-identical templates share a hash, which leaves their keys told apart only by
-  # position among siblings, the same way a loop's repeats are.
-  #
-  # :erlang.phash2/2 is documented to return the same value for a given term regardless of machine
-  # architecture and ERTS version, which is what lets tests assert key text verbatim.
-  defp template_hash(tags) do
-    tags
-    |> normalize_newlines()
-    |> :erlang.phash2(4_294_967_296)
-    |> Integer.to_string(36)
-    |> String.downcase()
   end
 
   defp substitute_module_attributes({:@, meta_1, [{name, _meta_2, _args}]}) do

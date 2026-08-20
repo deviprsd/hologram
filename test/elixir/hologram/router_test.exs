@@ -48,7 +48,7 @@ defmodule Hologram.RouterTest do
     start_supervised!(Hologram.Realtime.SubscriptionRegistry)
 
     wait_for_process_cleanup(Handshake)
-    start_supervised!({Handshake, boot_sync_timeout_ms: 0})
+    start_supervised!(Handshake)
 
     :ok
   end
@@ -67,6 +67,7 @@ defmodule Hologram.RouterTest do
             ["amodule", "a#{Module2}"],
             ["aname", "amy_command"],
             ["aparams", %{"t" => "m", "d" => []}],
+            ["asub_receipts", %{"t" => "l", "d" => []}],
             ["atarget", "b0746573745f746172676574"]
           ]
         }
@@ -91,7 +92,7 @@ defmodule Hologram.RouterTest do
   end
 
   describe "/hologram/page" do
-    test "routes POST subsequent page request" do
+    test "routes POST page data request" do
       ETS.put(PageDigestRegistryStub.ets_table_name(), Module1, :dummy_module_1_digest)
 
       # Simulate that JSON has already been parsed upstream by Plug.Parsers
@@ -119,10 +120,10 @@ defmodule Hologram.RouterTest do
 
       response = Jason.decode!(conn.resp_body)
 
-      assert response["type"] == "page"
-      assert response["pageParams"] =~ "123"
-      assert response["pageParams"] =~ "xyz"
       assert Plug.Conn.get_resp_header(conn, "hologram-page-data") == ["true"]
+      assert response["type"] == "page"
+      # The page renders its params, so the tree carrying the render shows them cast.
+      assert response["tree"] =~ "a = 123, b = :xyz"
     end
   end
 

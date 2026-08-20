@@ -2,6 +2,7 @@
 
 import {
   assert,
+  assertBoxedError,
   defineRuntimeGlobals,
   registerWebApis,
   sinon,
@@ -17,6 +18,7 @@ import EventListeners from "../../assets/js/event_listeners.mjs";
 import GlobalRegistry from "../../assets/js/global_registry.mjs";
 import Hologram from "../../assets/js/hologram.mjs";
 import HologramBoxedError from "../../assets/js/errors/boxed_error.mjs";
+import HologramRuntimeError from "../../assets/js/errors/runtime_error.mjs";
 import InitActionQueue from "../../assets/js/init_action_queue.mjs";
 import Interpreter from "../../assets/js/interpreter.mjs";
 import Renderer from "../../assets/js/renderer.mjs";
@@ -210,21 +212,190 @@ describe("Hologram", () => {
       assert.isNull(result);
       assert.equal(countOf(cid2), 1);
     });
+  });
 
-    it("no-ops instead of crashing when the target's cid was deregistered before dispatch (issue #18)", () => {
-      registerCid(cid1, 0);
+  describe("dispatchAction()", () => {
+    let clock, executeActionStub;
 
-      // Nothing in the runtime ever removes a single entry - the only way a
-      // previously-registered cid stops being registered is a full-registry
-      // swap, which only happens on navigation (ComponentRegistry.populate()).
-      // A stale native-event listener or debounced timer armed before that
-      // swap can still fire afterwards, dispatching against a cid the fresh
-      // registry never heard of.
-      ComponentRegistry.populate(Type.map());
+    beforeEach(() => {
+      clock = sinon.useFakeTimers();
 
-      assert.doesNotThrow(() => {
-        const result = Hologram.executeAction(buildAction("bump", cid1));
-        assert.isNull(result);
+      executeActionStub = sinon
+        .stub(Hologram, "executeAction")
+        .callsFake((_action) => null);
+    });
+
+    afterEach(() => {
+      clock.restore();
+      executeActionStub.restore();
+    });
+
+    // The counterpart of the hold covered in loadNewPage(): with no page swap in flight the page
+    // on screen is the page the registry answers for, so there is nothing to wait for.
+    it("dispatches an action right away when no page swap is in flight", () => {
+      Hologram.dispatchAction("my_action", "my_component_1", {a: 1});
+
+      clock.tick(0);
+
+      sinon.assert.calledOnce(executeActionStub);
+
+      const action = executeActionStub.firstCall.args[0];
+
+      assert.deepStrictEqual(
+        Erlang_Maps["get/2"](Type.atom("name"), action),
+        Type.atom("my_action"),
+      );
+
+      assert.deepStrictEqual(
+        Erlang_Maps["get/2"](Type.atom("target"), action),
+        Type.bitstring("my_component_1"),
+      );
+
+      assert.deepStrictEqual(
+        Erlang_Maps["get/2"](Type.atom("params"), action),
+        Type.map([[Type.atom("a"), Type.integer(1)]]),
+      );
+    });
+  });
+
+  describe("executeAction()", () => {
+    let callNamedFunctionStub, renderStub;
+
+    const actionFor = (target) =>
+      Type.actionStruct({
+        name: Type.atom("test_action"),
+        params: Type.map(),
+        target: target,
+      });
+
+    beforeEach(() => {
+      ComponentRegistry.clear();
+
+      callNamedFunctionStub = sinon
+        .stub(Interpreter, "callNamedFunction")
+        .callsFake((_module, _fun, _args, _context) =>
+          Type.componentStruct({state: Type.map()}),
+        );
+
+      // The result of a dispatch is rendered, which needs a page these tests don't mount.
+      renderStub = sinon.stub(Hologram, "render").callsFake(() => null);
+    });
+
+    afterEach(() => {
+      ComponentRegistry.clear();
+      sinon.restore();
+    });
+
+    // The registry answers with plain null for a cid it does not hold, and null reaching
+    // callNamedFunction faults on reading a module name off it.
+    it("raises for a target the registry does not hold", () => {
+      assertBoxedError(
+        () => Hologram.executeAction(actionFor(Type.bitstring("nonexistent"))),
+        "ArgumentError",
+        'invalid action target, there is no component with CID: "nonexistent"',
+      );
+    });
+
+    it("doesn't dispatch to a target the registry does not hold", () => {
+      try {
+        Hologram.executeAction(actionFor(Type.bitstring("nonexistent")));
+      } catch {
+        // Asserted on in the case above - what matters here is what didn't run.
+      }
+
+      sinon.assert.notCalled(callNamedFunctionStub);
+    });
+
+    it("dispatches to a registered target", () => {
+      ComponentRegistry.putEntry(
+        cid1,
+        Type.map([
+          [Type.atom("module"), module7],
+          [Type.atom("struct"), Type.componentStruct({nextAction: Type.nil()})],
+        ]),
+      );
+
+      Hologram.executeAction(actionFor(cid1));
+
+      sinon.assert.calledOnce(callNamedFunctionStub);
+      sinon.assert.calledOnce(renderStub);
+
+      assert.deepStrictEqual(callNamedFunctionStub.firstCall.args[0], module7);
+
+      assert.deepStrictEqual(
+        callNamedFunctionStub.firstCall.args[1],
+        Type.atom("action"),
+      );
+    });
+
+    // A next action is a continuation of the one that produced it, so it belongs to the same page
+    // - which is not necessarily the page current by the time it is scheduled, since the parent
+    // may have been asynchronous.
+    describe("next action", () => {
+      let clock, nextActionStruct, scheduleActionStub;
+
+      beforeEach(() => {
+        clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        nextActionStruct = Type.actionStruct({
+          name: Type.atom("the_next_action"),
+          params: Type.map(),
+          target: cid1,
+        });
+
+        ComponentRegistry.putEntry(
+          cid1,
+          Type.map([
+            [Type.atom("module"), module7],
+            [
+              Type.atom("struct"),
+              Type.componentStruct({nextAction: Type.nil()}),
+            ],
+          ]),
+        );
+
+        callNamedFunctionStub.callsFake((_module, _fun, _args, _context) =>
+          Type.componentStruct({
+            nextAction: nextActionStruct,
+            state: Type.map(),
+          }),
+        );
+
+        scheduleActionStub = sinon
+          .stub(Hologram, "scheduleAction")
+          .callsFake((_action, _epoch) => null);
+      });
+
+      afterEach(() => clock.restore());
+
+      it("inherits the epoch its parent carried", () => {
+        Hologram.executeAction(actionFor(cid1), 7);
+
+        sinon.assert.calledOnceWithExactly(
+          scheduleActionStub,
+          nextActionStruct,
+          7,
+        );
+      });
+
+      // Reading the epoch afresh at this point would stamp the next action with whatever page the
+      // client has reached, which is exactly how a late continuation lands on a stranger.
+      it("does not take the epoch current when it is scheduled", () => {
+        Hologram.domEpoch = 3;
+        Hologram.registryEpoch = 3;
+
+        try {
+          Hologram.executeAction(actionFor(cid1), 1);
+
+          sinon.assert.calledOnceWithExactly(
+            scheduleActionStub,
+            nextActionStruct,
+            1,
+          );
+        } finally {
+          Hologram.domEpoch = 0;
+          Hologram.registryEpoch = 0;
+        }
       });
     });
   });
@@ -389,7 +560,7 @@ describe("Hologram", () => {
   });
 
   describe("executePrefetchPageAction()", () => {
-    let clientFetchPageStub,
+    let clientFetchPageDataStub,
       eventTargetNode,
       handlePrefetchPageSuccessStub,
       successCallbacks;
@@ -407,7 +578,7 @@ describe("Hologram", () => {
     beforeEach(() => {
       successCallbacks = [];
 
-      clientFetchPageStub = sinon
+      clientFetchPageDataStub = sinon
         .stub(Client, "fetchPage")
         .callsFake((_toParam, successCallback) => {
           successCallbacks.push(successCallback);
@@ -463,7 +634,7 @@ describe("Hologram", () => {
       assert.isAtMost(Math.abs(Date.now() - mapValue.timestamp), 100);
 
       sinon.assert.calledOnceWithExactly(
-        clientFetchPageStub,
+        clientFetchPageDataStub,
         module7,
         successCallbacks[0],
         sinon.match.func,
@@ -514,7 +685,7 @@ describe("Hologram", () => {
       assert.isAtMost(Math.abs(Date.now() - mapValue.timestamp), 100);
 
       sinon.assert.calledOnceWithExactly(
-        clientFetchPageStub,
+        clientFetchPageDataStub,
         module7,
         successCallbacks[0],
         sinon.match.func,
@@ -550,7 +721,7 @@ describe("Hologram", () => {
       assert.isTrue(Hologram.prefetchedPages.has(mapKey));
       assert.equal(Hologram.prefetchedPages.get(mapKey), mapValue);
 
-      sinon.assert.notCalled(clientFetchPageStub);
+      sinon.assert.notCalled(clientFetchPageDataStub);
       sinon.assert.notCalled(handlePrefetchPageSuccessStub);
     });
   });
@@ -696,8 +867,96 @@ describe("Hologram", () => {
         target: defaultTarget,
       });
 
-      sinon.assert.calledOnceWithExactly(executeActionStub, expectedAction);
+      sinon.assert.calledOnceWithExactly(executeActionStub, expectedAction, 0);
       sinon.assert.notCalled(scheduleActionStub);
+    });
+
+    // The window a forward navigation opens: the destination's markup is on screen and clickable
+    // while the registry still answers for the page being left, so the click waits for the mount
+    // rather than resolving against a page that never carried the button.
+    it("holds a click that lands while the destination is still mounting", () => {
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        Hologram.domEpoch = 1;
+
+        const dispatch = Hologram.handleUiEvent(
+          notIgnoredEvent,
+          eventType,
+          actionSpecDom,
+          defaultTarget,
+        );
+
+        dispatch();
+
+        sinon.assert.notCalled(executeActionStub);
+        sinon.assert.notCalled(scheduleActionStub);
+
+        // A held click and a dropped one both leave executeAction uncalled. The absence of the
+        // warning is what says this one is waiting for its page.
+        sinon.assert.notCalled(warnStub);
+      } finally {
+        Hologram.domEpoch = 0;
+        warnStub.restore();
+      }
+    });
+
+    // The mirror window, opened by a history restoration: the registry has moved on to the page
+    // being restored while the page the user clicked is still on screen, so the click is aimed at
+    // a page that has been left and nothing can answer for it.
+    it("drops a click from a page a restore has moved past", () => {
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        Hologram.registryEpoch = 1;
+
+        const dispatch = Hologram.handleUiEvent(
+          notIgnoredEvent,
+          eventType,
+          actionSpecDom,
+          defaultTarget,
+        );
+
+        dispatch();
+
+        sinon.assert.notCalled(executeActionStub);
+        sinon.assert.notCalled(scheduleActionStub);
+        sinon.assert.calledOnce(warnStub);
+      } finally {
+        Hologram.registryEpoch = 0;
+        warnStub.restore();
+      }
+    });
+
+    // The whole reason the stamp is read when the event fires rather than when the dispatch runs:
+    // a debounce or a throttle can hold a dispatch across a navigation, and it still belongs to
+    // the page the user was looking at. Reading the epoch late would silently re-home it to
+    // whatever page is on screen by then.
+    it("stamps a deferred dispatch with the page the event happened on", () => {
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        const dispatch = Hologram.handleUiEvent(
+          notIgnoredEvent,
+          eventType,
+          actionSpecDom,
+          defaultTarget,
+        );
+
+        // A navigation between the event and the dispatch it was held back from.
+        Hologram.domEpoch = 1;
+
+        dispatch();
+
+        // Dropped, because it belongs to the page that has been left. Read late, the stamp would
+        // have matched the destination and this would have been held for its mount instead.
+        sinon.assert.notCalled(executeActionStub);
+        sinon.assert.notCalled(scheduleActionStub);
+        sinon.assert.calledOnce(warnStub);
+      } finally {
+        Hologram.domEpoch = 0;
+        warnStub.restore();
+      }
     });
 
     it("regular action with delay", () => {
@@ -754,7 +1013,14 @@ describe("Hologram", () => {
         delay: Type.integer(500),
       });
 
-      sinon.assert.calledOnceWithExactly(scheduleActionStub, expectedAction);
+      // The epoch is the page the user acted on, recorded when the event fired rather than when
+      // the delay elapses.
+      sinon.assert.calledOnceWithExactly(
+        scheduleActionStub,
+        expectedAction,
+        Hologram.domEpoch,
+      );
+
       sinon.assert.notCalled(executeActionStub);
     });
 
@@ -1268,7 +1534,481 @@ describe("Hologram", () => {
         target: defaultTarget,
       });
 
-      sinon.assert.calledOnceWithExactly(executeActionStub, expectedAction);
+      sinon.assert.calledOnceWithExactly(executeActionStub, expectedAction, 0);
+    });
+  });
+
+  describe("loadNewPage()", () => {
+    let assignedUrls, assignStub, fetchPageStub;
+
+    const encodedModule7 = `Type.atom("Elixir.Hologram.Test.Fixtures.Module7")`;
+    const encodedNoParams = "Type.map([])";
+
+    const redirectTo = (to, encodedPageModule = encodedModule7) => ({
+      pageModule: encodedPageModule,
+      pageParams: encodedNoParams,
+      to: to,
+      type: "redirect",
+    });
+
+    const encodedText = (str) =>
+      `Type.tuple([Type.atom("text"), Type.bitstring("${str}")])`;
+
+    const encodedElement = (tagName, children = "") =>
+      `Type.tuple([Type.atom("element"), Type.bitstring("${tagName}"), Type.list([]), Type.list([${children}])])`;
+
+    const encodedBundleScript = (pageDigest) =>
+      `Type.tuple([Type.atom("element"), Type.bitstring("script"), Type.list([Type.tuple([Type.bitstring("src"), Type.keywordList([[Type.atom("text"), Type.bitstring("/hologram/page-${pageDigest}.js")]])])]), Type.list([])])`;
+
+    // What the server sends: the whole document, the page's own bundle script included.
+    const encodedTreeFor = (pageDigest, bodyText) =>
+      `Type.list([${encodedElement(
+        "html",
+        `${encodedElement("head", encodedBundleScript(pageDigest))},${encodedElement(
+          "body",
+          encodedText(bodyText),
+        )}`,
+      )}])`;
+
+    const payloadFor = (pageDigest, bodyText = "page content") => ({
+      pageDigest: pageDigest,
+      pageModule: encodedModule7,
+      tree: encodedTreeFor(pageDigest, bodyText),
+      type: "page",
+    });
+
+    const bundleScript = (pageDigest) =>
+      document.head.querySelector(
+        `script[src="/hologram/page-${pageDigest}.js"]`,
+      );
+
+    // The page a navigation patches against, which on a document load is the render mirrored
+    // onto what the server sent.
+    const seedCurrentPage = () => {
+      Hologram.virtualDocument = Vdom.mirror(
+        Renderer.renderTree(
+          Interpreter.evaluateJavaScriptExpression(
+            encodedTreeFor("current", "current page content"),
+          ),
+        ),
+        document.documentElement,
+      );
+    };
+
+    const removeBundleScripts = () =>
+      document.head
+        .querySelectorAll("script[src^='/hologram/page-']")
+        .forEach((script) => script.remove());
+
+    beforeEach(() => {
+      assignedUrls = [];
+
+      assignStub = sinon
+        .stub(Hologram, "leaveApp")
+        .callsFake((url) => assignedUrls.push(url));
+
+      fetchPageStub = sinon.stub(Client, "fetchPage");
+    });
+
+    afterEach(() => {
+      Client.fetchPage.restore();
+      assignStub.restore();
+
+      // A navigation opens a transition window and only a mount closes it, which these tests
+      // never reach - so it is closed here rather than left open for whatever runs next.
+      Hologram.domEpoch = 0;
+      Hologram.registryEpoch = 0;
+    });
+
+    // A page the client cannot ask for is one only the browser can reach.
+    it("hands a redirect target that names no page to the browser", async () => {
+      await Hologram.loadNewPage("/clicked", {
+        to: "https://example.com/x",
+        type: "redirect",
+      });
+
+      assert.deepStrictEqual(assignedUrls, ["https://example.com/x"]);
+      sinon.assert.notCalled(fetchPageStub);
+    });
+
+    it("follows a redirect by asking for the page it names", async () => {
+      fetchPageStub.callsFake((toParam, _onSuccess, _onNotPage) => {
+        assert.equal(
+          toParam.data[0].value,
+          "Elixir.Hologram.Test.Fixtures.Module7",
+        );
+        return null;
+      });
+
+      await Hologram.loadNewPage("/clicked", redirectTo("/target"));
+
+      sinon.assert.calledOnce(fetchPageStub);
+    });
+
+    // A redirect can point at a page that redirects again, and a cycle would otherwise fetch
+    // forever without anything to show for it.
+    it("gives up after too many redirect hops", async () => {
+      fetchPageStub.callsFake((_toParam, onSuccess, _onNotPage) =>
+        onSuccess(redirectTo("/loop")),
+      );
+
+      let thrownError = null;
+
+      try {
+        await Hologram.loadNewPage("/clicked", redirectTo("/loop"));
+      } catch (error) {
+        thrownError = error;
+      }
+
+      assert.match(thrownError?.message ?? "", /Too many redirects/);
+      assert.isAtMost(fetchPageStub.callCount, 10);
+    });
+
+    // The page the server described is patched in as soon as it arrives, so it is on screen a
+    // round trip after it was asked for rather than a round trip plus a bundle plus a render.
+    describe("showing the page the server described", () => {
+      let patchStub;
+
+      beforeEach(() => {
+        // jsdom has no rAF, and the patch runs inside one. Running it now keeps the test reading
+        // top to bottom.
+        window.requestAnimationFrame = (callback) => callback();
+        seedCurrentPage();
+      });
+
+      afterEach(() => {
+        delete window.requestAnimationFrame;
+        delete globalThis.Hologram.pageScriptLoaded;
+        Hologram.virtualDocument = null;
+
+        patchStub?.restore();
+        patchStub = null;
+
+        removeBundleScripts();
+      });
+
+      // The property the whole feature rests on: what the server described is on screen while the
+      // page's own code is still in flight.
+      it("puts the page on screen before its bundle has run", async () => {
+        globalThis.Hologram.pageScriptLoaded = true;
+
+        await Hologram.loadNewPage("/target", payloadFor("aaa", "new content"));
+
+        assert.include(document.body.textContent, "new content");
+        assert.isFalse(globalThis.Hologram.pageScriptLoaded);
+      });
+
+      // The swap advances the epoch of what is displayed while the registry's epoch stays put -
+      // the gap between the two is what marks the transition window until the mount closes it.
+      it("advances the epoch of what is on screen ahead of the registry", async () => {
+        assert.equal(Hologram.domEpoch, 0);
+        assert.equal(Hologram.registryEpoch, 0);
+
+        await Hologram.loadNewPage("/target", payloadFor("epoch1"));
+
+        assert.equal(Hologram.domEpoch, 1);
+        assert.equal(Hologram.registryEpoch, 0);
+      });
+
+      // The destination is on screen from the patch onward, but its mount waits on the bundle -
+      // so a dispatch that fires in between would run against a registry that is still the
+      // previous page's, and render that page over the destination.
+      it("drops a pending action before the destination is patched in", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        try {
+          Hologram.scheduleAction(
+            Type.actionStruct({
+              name: Type.atom("stale"),
+              params: Type.map(),
+              target: cid1,
+              delay: Type.integer(100),
+            }),
+          );
+
+          await Hologram.loadNewPage("/target", payloadFor("ddd"));
+
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+        }
+      });
+
+      // Everything the destination arms carries the destination's epoch, and the registry cannot
+      // answer for that page until it mounts - so it waits rather than running against the page
+      // being left, and rather than being swept.
+      it("holds what the destination arms until the mount", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        try {
+          await Hologram.loadNewPage("/target", payloadFor("fff"));
+
+          const action = Type.actionStruct({
+            name: Type.atom("armed_by_destination"),
+            params: Type.map(),
+            target: cid1,
+          });
+
+          Hologram.scheduleAction(action, Hologram.domEpoch);
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+
+          // A held action and a dropped one both leave executeAction uncalled. The absence of the
+          // warning is what says this one is waiting rather than gone.
+          sinon.assert.notCalled(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
+
+      // An action that reasoned about the registry - a server push, a command's reply - was right
+      // about the page it saw, but that page is being left, so it goes no further.
+      it("drops what reasoned about the page being left", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        try {
+          await Hologram.loadNewPage("/target", payloadFor("iii"));
+
+          Hologram.scheduleAction(
+            Type.actionStruct({
+              name: Type.atom("armed_by_the_registry"),
+              params: Type.map(),
+              target: cid1,
+            }),
+          );
+
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+          sinon.assert.calledOnce(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
+
+      // The widest window a dispatch can outlive its page in is the one its own delay gives it -
+      // the timer survives the navigation and only meets the settle rule once the delay is up.
+      it("drops an action whose delay outlives the page that armed it", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        try {
+          Hologram.scheduleAction(
+            Type.actionStruct({
+              name: Type.atom("armed_before_the_swap"),
+              params: Type.map(),
+              target: cid1,
+              delay: Type.integer(3000),
+            }),
+          );
+
+          clock.tick(1000);
+          sinon.assert.notCalled(executeActionStub);
+
+          await Hologram.loadNewPage("/target", payloadFor("jjj"));
+
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+          sinon.assert.calledOnce(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
+
+      // Nothing about the rule is per-action: everything the page being left had in flight goes,
+      // whatever delay each was given.
+      it("drops every action the page being left had pending", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        const pending = (name, delay) =>
+          Type.actionStruct({
+            name: Type.atom(name),
+            params: Type.map(),
+            target: cid1,
+            delay: Type.integer(delay),
+          });
+
+        try {
+          Hologram.scheduleAction(pending("pending_immediate", 0));
+          Hologram.scheduleAction(pending("pending_100ms", 100));
+          Hologram.scheduleAction(pending("pending_300ms", 300));
+
+          await Hologram.loadNewPage("/target", payloadFor("kkk"));
+
+          clock.tick(1000);
+
+          sinon.assert.notCalled(executeActionStub);
+          sinon.assert.calledThrice(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
+
+      // The destination's script runs during the patch, which for a page whose bundle is still
+      // being fetched is a whole fetch before the mount - so dispatching then would resolve the
+      // target against the page being left rather than against the page that carries the script.
+      it("holds an action the destination's script dispatches before the mount", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        try {
+          await Hologram.loadNewPage("/target", payloadFor("ggg"));
+
+          Hologram.dispatchAction("dispatched_by_script", "page", {value: 99});
+
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+
+          // A held action and a dropped one both leave executeAction uncalled. The absence of the
+          // warning is what says the script's dispatch is waiting for its page rather than having
+          // been resolved against the page being left.
+          sinon.assert.notCalled(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
+
+      it("fetches the bundle of a page this client has not run before", async () => {
+        await Hologram.loadNewPage("/target", payloadFor("bbb"));
+
+        assert.isNotNull(bundleScript("bbb"));
+      });
+
+      // A script is keyed by the source it loads, so a bundle already in the document would be
+      // adopted rather than run, and one only in memory would run a second time. Neither can
+      // announce the mount, so the patch never carries the bundle.
+      it("keeps the page's bundle out of the patch", async () => {
+        patchStub = sinon
+          .stub(Vdom, "patchVirtualDocument")
+          .returns(Hologram.virtualDocument);
+
+        await Hologram.loadNewPage("/target", payloadFor("ccc"));
+
+        const patchedHead = patchStub.firstCall.args[1].children.find(
+          (child) => child?.sel === "head",
+        );
+
+        assert.deepStrictEqual(patchedHead.children, []);
+      });
+    });
+
+    // A bundle that never loads would otherwise end the navigation in silence: nothing dispatches
+    // hologram:pageScriptLoaded, so the mount never runs and the page on screen stays put.
+    describe("page bundle that fails to load", () => {
+      beforeEach(() => {
+        window.requestAnimationFrame = (callback) => callback();
+        seedCurrentPage();
+      });
+
+      afterEach(() => {
+        delete window.requestAnimationFrame;
+        delete globalThis.Hologram.pageScriptLoaded;
+        Hologram.virtualDocument = null;
+        removeBundleScripts();
+      });
+
+      it("raises rather than leaving the navigation unfinished", async () => {
+        await Hologram.loadNewPage("/target-eee", payloadFor("eee"));
+
+        const script = bundleScript("eee");
+
+        assert.isNotNull(script);
+
+        assert.throws(
+          () => script.onerror(),
+          HologramRuntimeError,
+          "Failed to load page bundle: /hologram/page-eee.js",
+        );
+      });
+
+      // The mount that would have answered for this page is never going to run, so nothing it
+      // carries can be resolved. Holding would swallow every later dispatch for the rest of the
+      // session, so the epoch is recorded dead and what belongs to it is dropped - and said.
+      it("drops a dispatch once the mount can no longer happen", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+
+        const executeActionStub = sinon
+          .stub(Hologram, "executeAction")
+          .callsFake((_action) => null);
+
+        const warnStub = sinon.stub(console, "warn");
+
+        try {
+          await Hologram.loadNewPage("/target-hhh", payloadFor("hhh"));
+
+          assert.throws(
+            () => bundleScript("hhh").onerror(),
+            HologramRuntimeError,
+            "Failed to load page bundle: /hologram/page-hhh.js",
+          );
+
+          Hologram.scheduleAction(
+            Type.actionStruct({
+              name: Type.atom("after_bundle_failure"),
+              params: Type.map(),
+              target: cid1,
+            }),
+            Hologram.domEpoch,
+          );
+
+          clock.tick(5000);
+
+          sinon.assert.notCalled(executeActionStub);
+          sinon.assert.calledOnce(warnStub);
+        } finally {
+          clock.restore();
+          executeActionStub.restore();
+          warnStub.restore();
+        }
+      });
     });
   });
 
@@ -1843,7 +2583,35 @@ describe("Hologram", () => {
       clock.tick(0);
 
       // Now the action should have been executed
-      sinon.assert.calledOnceWithExactly(executeActionStub, action1);
+      sinon.assert.calledOnceWithExactly(executeActionStub, action1, 0);
+    });
+
+    // The ordinary case: nothing is in flight, so the page on screen is the page the registry
+    // answers for and the action it carries resolves against it.
+    it("executes an action stamped with the current stable epoch", () => {
+      Hologram.scheduleAction(action1);
+      clock.tick(0);
+
+      sinon.assert.calledOnceWithExactly(executeActionStub, action1, 0);
+    });
+
+    // The shape a history restoration leaves behind: the registry has moved on while the page the
+    // action came from is still on screen, so the page it was aimed at is already gone.
+    it("drops an action stamped below the current epoch", () => {
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        Hologram.registryEpoch = 1;
+
+        Hologram.scheduleAction(action1, 0);
+        clock.tick(0);
+
+        sinon.assert.notCalled(executeActionStub);
+        sinon.assert.calledOnce(warnStub);
+      } finally {
+        Hologram.registryEpoch = 0;
+        warnStub.restore();
+      }
     });
 
     it("schedules multiple actions independently", () => {
@@ -1863,8 +2631,8 @@ describe("Hologram", () => {
       clock.tick(0);
 
       sinon.assert.calledTwice(executeActionStub);
-      sinon.assert.calledWith(executeActionStub.getCall(0), action1);
-      sinon.assert.calledWith(executeActionStub.getCall(1), action2);
+      sinon.assert.calledWith(executeActionStub.getCall(0), action1, 0);
+      sinon.assert.calledWith(executeActionStub.getCall(1), action2, 0);
     });
 
     it("schedules action execution with custom delay", () => {
@@ -1888,7 +2656,7 @@ describe("Hologram", () => {
 
       // Action should execute after specified delay
       clock.tick(400);
-      sinon.assert.calledOnceWithExactly(executeActionStub, actionWithDelay);
+      sinon.assert.calledOnceWithExactly(executeActionStub, actionWithDelay, 0);
     });
 
     it("schedules multiple actions with different delays in correct order", () => {
@@ -1914,12 +2682,20 @@ describe("Hologram", () => {
 
       // After 100ms, only the first action should execute
       clock.tick(100);
-      sinon.assert.calledOnceWithExactly(executeActionStub, actionDelayed100);
+      sinon.assert.calledOnceWithExactly(
+        executeActionStub,
+        actionDelayed100,
+        0,
+      );
 
       // After another 200ms (total 300ms), the second action should execute
       clock.tick(200);
       sinon.assert.calledTwice(executeActionStub);
-      sinon.assert.calledWith(executeActionStub.getCall(1), actionDelayed300);
+      sinon.assert.calledWith(
+        executeActionStub.getCall(1),
+        actionDelayed300,
+        0,
+      );
     });
 
     it("handles action with zero delay same as no delay specified", () => {
@@ -1937,7 +2713,7 @@ describe("Hologram", () => {
 
       // Action should execute after 0ms timeout
       clock.tick(0);
-      sinon.assert.calledOnceWithExactly(executeActionStub, actionZeroDelay);
+      sinon.assert.calledOnceWithExactly(executeActionStub, actionZeroDelay, 0);
     });
   });
 });
