@@ -491,6 +491,18 @@ export default class Hologram {
   }
 
   // Made public to make tests easier
+  //
+  // Same bookkeeping loadNewPage does before it swaps the page (snapshot the current state, mint
+  // a new history id, push) - without the swap, for a same-page URL change (e.g. a drawer opening)
+  // that doesn't need a new render. Order matters: call this BEFORE mutating the state you want
+  // the checkpoint to exclude, since it snapshots whatever is live right now.
+  static async checkpointUrl(url) {
+    await $.#savePageSnapshot();
+    $.#historyId = Utils.randomUUID();
+    history.pushState($.#historyId, null, url);
+  }
+
+  // Made public to make tests easier
   // Deps: [:maps.get/2, :maps.get/3, :maps.put/3]
   static queueActionsFromServerInits() {
     for (const [cid, entry] of Object.values(ComponentRegistry.entries.data)) {
@@ -1183,6 +1195,7 @@ export default class Hologram {
 
     $.#pendingJsInteropActions = globalThis.Hologram._pendingJsInteropActions;
     globalThis.Hologram.dispatchAction = $.dispatchAction;
+    globalThis.Hologram.checkpointUrl = $.checkpointUrl;
     delete globalThis.Hologram._pendingJsInteropActions;
 
     Hologram.#isInitiated = true;
