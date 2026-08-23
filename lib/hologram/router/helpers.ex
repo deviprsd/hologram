@@ -81,12 +81,40 @@ defmodule Hologram.Router.Helpers do
     end
   end
 
+  # An optional param has no `opts`-level marker (`param/2,3`'s `opts` is
+  # accepted but never read anywhere -- see `Hologram.Page.param/3`) --
+  # whether `key` is optional is read straight off `path_acc`, the same
+  # route string `Hologram.Router.SearchTree.add_route/3` reads a trailing
+  # `?` off of. One source of truth instead of two that could disagree.
   defp process_param({key, _type, _opts}, {params_acc, path_acc}, page_module, original_params) do
-    ensure_param_exists!(params_acc, key, page_module)
+    optional_marker = ":#{key}?"
 
-    encoded_value = encode_param_value(original_params[key])
-    new_path = String.replace(path_acc, ":#{key}", encoded_value)
+    if String.contains?(path_acc, optional_marker) do
+      process_optional_param(key, params_acc, path_acc, optional_marker, original_params)
+    else
+      ensure_param_exists!(params_acc, key, page_module)
+
+      encoded_value = encode_param_value(original_params[key])
+      new_path = String.replace(path_acc, ":#{key}", encoded_value)
+      new_params = Keyword.drop(params_acc, [key])
+
+      {new_params, new_path}
+    end
+  end
+
+  defp process_optional_param(key, params_acc, path_acc, optional_marker, original_params) do
     new_params = Keyword.drop(params_acc, [key])
+
+    new_path =
+      if Keyword.has_key?(params_acc, key) do
+        encoded_value = encode_param_value(original_params[key])
+        String.replace(path_acc, optional_marker, encoded_value)
+      else
+        # Absent: drop the whole segment, including its leading `/`, rather
+        # than substituting nothing -- `/orders/` (trailing slash, empty
+        # segment) is not the same address as `/orders`.
+        String.replace(path_acc, "/" <> optional_marker, "")
+      end
 
     {new_params, new_path}
   end

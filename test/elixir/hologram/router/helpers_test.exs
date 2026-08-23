@@ -8,6 +8,8 @@ defmodule Hologram.Router.HelpersTest do
   alias Hologram.Test.Fixtures.Router.Helpers.Module1
   alias Hologram.Test.Fixtures.Router.Helpers.Module2
   alias Hologram.Test.Fixtures.Router.Helpers.Module3
+  alias Hologram.Test.Fixtures.Router.Helpers.Module4
+  alias Hologram.Test.Fixtures.Router.Helpers.Module5
 
   use_module_stub :asset_path_registry
 
@@ -93,6 +95,29 @@ defmodule Hologram.Router.HelpersTest do
                    fn ->
                      page_path(Module2, param_1: :abc, param_2: 123, param_3: "xyz", param_4: 987)
                    end
+    end
+
+    test "optional trailing param present" do
+      assert page_path(Module4, param: "xyz") ==
+               "/hologram-test-fixtures-router-helpers-module4/xyz"
+    end
+
+    test "optional trailing param absent" do
+      assert page_path(Module4, []) == "/hologram-test-fixtures-router-helpers-module4"
+    end
+
+    test "chain of two optional trailing params, both absent" do
+      assert page_path(Module5, []) == "/hologram-test-fixtures-router-helpers-module5"
+    end
+
+    test "chain of two optional trailing params, first present, second absent" do
+      assert page_path(Module5, id: "SC-4471") ==
+               "/hologram-test-fixtures-router-helpers-module5/SC-4471"
+    end
+
+    test "chain of two optional trailing params, both present" do
+      assert page_path(Module5, id: "SC-4471", panel: "certs") ==
+               "/hologram-test-fixtures-router-helpers-module5/SC-4471/certs"
     end
   end
 end
