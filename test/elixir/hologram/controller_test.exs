@@ -44,6 +44,7 @@ defmodule Hologram.ControllerTest do
   alias Hologram.Test.Fixtures.Controller.Module30
   alias Hologram.Test.Fixtures.Controller.Module31
   alias Hologram.Test.Fixtures.Controller.Module32
+  alias Hologram.Test.Fixtures.Controller.Module33
   alias Hologram.Test.Fixtures.Controller.Module4
   alias Hologram.Test.Fixtures.Controller.Module5
   alias Hologram.Test.Fixtures.Controller.Module6
@@ -276,6 +277,18 @@ defmodule Hologram.ControllerTest do
       url_path = "/hologram-test-fixtures-runtime-controller-module1/hello%20world/ccc/foo%2Fbar"
 
       assert extract_params(url_path, Module1) == %{"aaa" => "hello world", "bbb" => "foo/bar"}
+    end
+
+    test "optional trailing segment, present" do
+      url_path = "/hologram-test-fixtures-controller-module33/111"
+
+      assert extract_params(url_path, Module33) == %{"aaa" => "111"}
+    end
+
+    test "optional trailing segment, absent" do
+      url_path = "/hologram-test-fixtures-controller-module33"
+
+      assert extract_params(url_path, Module33) == %{}
     end
   end
 

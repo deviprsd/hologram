@@ -445,4 +445,61 @@ defmodule Hologram.Router.SearchTreeTest do
       assert match_route(%SearchTree.Node{}, "/") == false
     end
   end
+
+  describe "add_route/3, optional trailing segment" do
+    test "/aaa/:param?" do
+      result = add_route(%SearchTree.Node{}, "/aaa/:param?", :page_aaa_param_opt)
+
+      assert result == %SearchTree.Node{
+               value: nil,
+               children: %{
+                 "aaa" => %SearchTree.Node{
+                   value: :page_aaa_param_opt,
+                   children: %{
+                     "*" => %SearchTree.Node{
+                       value: :page_aaa_param_opt,
+                       children: %{}
+                     }
+                   }
+                 }
+               }
+             }
+    end
+
+    test "/:param? alone" do
+      result = add_route(%SearchTree.Node{}, "/:param?", :page_param_opt)
+
+      assert result == %SearchTree.Node{
+               value: :page_param_opt,
+               children: %{
+                 "*" => %SearchTree.Node{value: :page_param_opt, children: %{}}
+               }
+             }
+    end
+
+    test "a sibling static route at the same depth still wins over the optional wildcard" do
+      search_tree =
+        %SearchTree.Node{}
+        |> add_route("/orders/:id?", :page_orders)
+        |> add_route("/orders/export", :page_orders_export)
+
+      assert match_route(search_tree, "/orders/export") == :page_orders_export
+      assert match_route(search_tree, "/orders/10428") == :page_orders
+      assert match_route(search_tree, "/orders") == :page_orders
+    end
+  end
+
+  describe "match_route/2, optional trailing segment" do
+    setup do
+      [search_tree: add_route(%SearchTree.Node{}, "/aaa/:param?", :page_aaa_param_opt)]
+    end
+
+    test "segment present", %{search_tree: search_tree} do
+      assert match_route(search_tree, "/aaa/xyz") == :page_aaa_param_opt
+    end
+
+    test "segment absent", %{search_tree: search_tree} do
+      assert match_route(search_tree, "/aaa") == :page_aaa_param_opt
+    end
+  end
 end

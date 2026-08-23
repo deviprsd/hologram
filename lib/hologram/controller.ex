@@ -203,7 +203,11 @@ defmodule Hologram.Controller do
     |> Enum.zip(url_path_segments)
     |> Enum.reduce([], fn
       {":" <> key, value}, acc ->
-        [{key, URI.decode(value)} | acc]
+        # An optional trailing route segment is written `:name?`
+        # (`Hologram.Router.SearchTree.add_route/3`) -- strip the marker so
+        # the extracted key matches the plain param name `param/2,3`
+        # declared it under, not `"name?"`.
+        [{String.trim_trailing(key, "?"), URI.decode(value)} | acc]
 
       _non_param_segment, acc ->
         acc
