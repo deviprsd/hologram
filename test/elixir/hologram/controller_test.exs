@@ -45,6 +45,7 @@ defmodule Hologram.ControllerTest do
   alias Hologram.Test.Fixtures.Controller.Module31
   alias Hologram.Test.Fixtures.Controller.Module32
   alias Hologram.Test.Fixtures.Controller.Module33
+  alias Hologram.Test.Fixtures.Controller.Module34
   alias Hologram.Test.Fixtures.Controller.Module4
   alias Hologram.Test.Fixtures.Controller.Module5
   alias Hologram.Test.Fixtures.Controller.Module6
@@ -289,6 +290,24 @@ defmodule Hologram.ControllerTest do
       url_path = "/hologram-test-fixtures-controller-module33"
 
       assert extract_params(url_path, Module33) == %{}
+    end
+
+    test "chain of two optional trailing segments, both absent" do
+      url_path = "/hologram-test-fixtures-controller-module34"
+
+      assert extract_params(url_path, Module34) == %{}
+    end
+
+    test "chain of two optional trailing segments, first present, second absent" do
+      url_path = "/hologram-test-fixtures-controller-module34/SC-4471"
+
+      assert extract_params(url_path, Module34) == %{"id" => "SC-4471"}
+    end
+
+    test "chain of two optional trailing segments, both present" do
+      url_path = "/hologram-test-fixtures-controller-module34/SC-4471/certs"
+
+      assert extract_params(url_path, Module34) == %{"id" => "SC-4471", "panel" => "certs"}
     end
   end
 

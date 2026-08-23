@@ -502,4 +502,73 @@ defmodule Hologram.Router.SearchTreeTest do
       assert match_route(search_tree, "/aaa") == :page_aaa_param_opt
     end
   end
+
+  describe "add_route/3, multiple trailing optional segments (a chain)" do
+    test "/stock/:id?/:panel? -- all three prefixes registered" do
+      result = add_route(%SearchTree.Node{}, "/stock/:id?/:panel?", :page_stock)
+
+      assert result == %SearchTree.Node{
+               value: nil,
+               children: %{
+                 "stock" => %SearchTree.Node{
+                   value: :page_stock,
+                   children: %{
+                     "*" => %SearchTree.Node{
+                       value: :page_stock,
+                       children: %{
+                         "*" => %SearchTree.Node{value: :page_stock, children: %{}}
+                       }
+                     }
+                   }
+                 }
+               }
+             }
+    end
+
+    test "a sibling static route at the second level still wins over the optional wildcard chain" do
+      search_tree =
+        %SearchTree.Node{}
+        |> add_route("/stock/:id?/:panel?", :page_stock)
+        |> add_route("/stock/export", :page_stock_export)
+
+      assert match_route(search_tree, "/stock") == :page_stock
+      assert match_route(search_tree, "/stock/SC-4471") == :page_stock
+      assert match_route(search_tree, "/stock/SC-4471/certs") == :page_stock
+      assert match_route(search_tree, "/stock/export") == :page_stock_export
+    end
+
+    test "raises when a mandatory segment follows an optional one" do
+      assert_raise ArgumentError,
+                   ~s'optional route segments (`:name?`) must form an unbroken run at the end of the route, got: "/x/:id?/edit"',
+                   fn ->
+                     add_route(%SearchTree.Node{}, "/x/:id?/edit", :page_x)
+                   end
+    end
+
+    test "raises when an earlier optional segment is followed by another optional segment that isn't itself trailing" do
+      assert_raise ArgumentError,
+                   ~s'optional route segments (`:name?`) must form an unbroken run at the end of the route, got: "/x/:a?/bbb/:c?"',
+                   fn ->
+                     add_route(%SearchTree.Node{}, "/x/:a?/bbb/:c?", :page_x)
+                   end
+    end
+  end
+
+  describe "match_route/2, multiple trailing optional segments (a chain)" do
+    setup do
+      [search_tree: add_route(%SearchTree.Node{}, "/stock/:id?/:panel?", :page_stock)]
+    end
+
+    test "no optional segments present", %{search_tree: search_tree} do
+      assert match_route(search_tree, "/stock") == :page_stock
+    end
+
+    test "first optional segment present, second absent", %{search_tree: search_tree} do
+      assert match_route(search_tree, "/stock/SC-4471") == :page_stock
+    end
+
+    test "both optional segments present", %{search_tree: search_tree} do
+      assert match_route(search_tree, "/stock/SC-4471/certs") == :page_stock
+    end
+  end
 end
