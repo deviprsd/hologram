@@ -678,7 +678,52 @@ describe("Client", () => {
       sinon.assert.calledOnceWithExactly(
         hologramScheduleActionStub,
         Type.actionStruct({name: Type.atom("dummy_action")}),
+        Hologram.registryEpoch,
       );
+    });
+
+    it("stamps the next action with the epoch that was current when the command was sent, not the one current when the response arrives", async () => {
+      const originalRegistryEpoch = Hologram.registryEpoch;
+      Hologram.registryEpoch = 5;
+
+      let resolveFetch;
+      const fetchPromise = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+
+      fetchStub = sinon.stub(globalThis, "fetch").returns(fetchPromise);
+
+      const sendCommandPromise = Client.sendCommand(command);
+
+      // Simulates a page transition (Hologram.#showNewPage) completing while this
+      // command's fetch is still in flight — registryEpoch catches up to the new
+      // page before the response resolves. The stamped epoch must still be the one
+      // captured before the request went out, or a reply landing after the
+      // transition gets treated as belonging to the new (wrong) page instead of
+      // being recognized as stale.
+      Hologram.registryEpoch = 6;
+
+      resolveFetch({
+        ok: true,
+        json: sinon.stub().resolves({
+          action: 'Type.actionStruct({name: Type.atom("dummy_action")})',
+          selfEchoes: "Type.list([])",
+          status: 1,
+          subReceiptAdds: "Type.list([])",
+          subReceiptDrops: "Type.list([])",
+        }),
+      });
+
+      await sendCommandPromise;
+      await waitForEventLoop();
+
+      sinon.assert.calledOnceWithExactly(
+        hologramScheduleActionStub,
+        Type.actionStruct({name: Type.atom("dummy_action")}),
+        5,
+      );
+
+      Hologram.registryEpoch = originalRegistryEpoch;
     });
 
     it("command succeeds, next action is nil", async () => {

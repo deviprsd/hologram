@@ -158,6 +158,18 @@ export default class Client {
   }
 
   static async sendCommand(command) {
+    // Captured before the request goes out, not read from the (mutable, page-transition-bumped)
+    // registry epoch once the response comes back. `scheduleAction`'s own default parameter reads
+    // Hologram.registryEpoch at call time, which is correct for a same-tick caller but wrong here:
+    // this command can outlive the page that sent it (a `put_page` navigation can complete while
+    // this fetch is still in flight), and the epoch that should gate its reply is the one the
+    // command was sent under, not whatever epoch happens to be current when the response arrives.
+    // Without this, a reply landing after a page transition is stamped with the NEW page's epoch,
+    // so the staleness guard sees `epoch === currentEpoch` and admits it — even though its target
+    // cid only ever existed on the page that has since been left, raising `invalid action target`
+    // instead of being dropped as stale.
+    const epoch = Hologram.registryEpoch;
+
     const opts = {
       method: "POST",
       headers: {
@@ -199,14 +211,14 @@ export default class Client {
       const nextAction = Interpreter.evaluateJavaScriptExpression(action);
 
       if (!Type.isNil(nextAction)) {
-        Hologram.scheduleAction(nextAction);
+        Hologram.scheduleAction(nextAction, epoch);
       }
 
       const selfEchoes =
         Interpreter.evaluateJavaScriptExpression(encodedSelfEchoes);
 
       for (const action of selfEchoes.data) {
-        Hologram.scheduleAction(action);
+        Hologram.scheduleAction(action, epoch);
       }
     } catch (error) {
       if (error instanceof HologramRuntimeError) {
