@@ -1143,10 +1143,28 @@ export default class Hologram {
 
     window.addEventListener("popstate", Hologram.#handlePopstateEvent);
 
+    // Chrome does not tear down an EventSource across a full page navigation
+    // (Chromium issue 358538891). On local HTTP/1.1 dev, six leaked SSE streams
+    // exhaust the six-connection-per-origin pool and stall every further request
+    // to the origin, including unrelated ones. `pagehide` fires on both a real
+    // unload and a bfcache freeze, and both want the same teardown.
+    window.addEventListener("pagehide", () => {
+      Sse.suspend();
+    });
+
     window.addEventListener("pageshow", (event) => {
       // Reconnect when page is restored from bfcache OR when navigating back from external page
       if (event.persisted || !Client.isConnected()) {
         Client.connect(true);
+      }
+
+      // Gated on `persisted` alone, not folded into the condition above: on a fresh
+      // document `run()` already opens the stream at the end of the mount (see
+      // Sse.connect() call below), and `pageshow` fires there too with `persisted`
+      // false. Widening this to match the WebSocket condition would race that
+      // initial connect() - the eventSource === null guard there isn't await-safe.
+      if (event.persisted) {
+        Sse.resume();
       }
     });
 

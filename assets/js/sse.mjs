@@ -35,6 +35,16 @@ export default class Sse {
   static reconnectAttempts = 0;
   static stabilityTimer = null;
 
+  // Bumped by suspend() and never reset. A connect() invocation captures the epoch it
+  // started with and re-checks it after every await, so a continuation that was already
+  // in flight when suspend() ran can tell it has been superseded and stop instead of
+  // opening a stream nobody asked for anymore. isSuspended alone can't do this: it is
+  // cleared by resume(), so a stale continuation that resumes after resume() has already
+  // opened the real stream would pass a plain boolean check.
+  static connectionEpoch = 0;
+  static isSuspended = false;
+  static reconnectTimer = null;
+
   // Exponential backoff with ±RECONNECT_JITTER noise. Mirrors the established
   // pattern in `Hologram.Connection` so consecutive SSE reconnect failures
   // don't hammer the handshake endpoint.
@@ -62,6 +72,10 @@ export default class Sse {
   }
 
   static async connect() {
+    const epoch = $.connectionEpoch;
+
+    if ($.isSuspended) return;
+
     try {
       const preHandshakeReceiptCount =
         App.subscriptionReceiptRegistry.entries.size;
@@ -72,6 +86,11 @@ export default class Sse {
         body: Serializer.serialize($.buildHandshakePayload(), "server"),
       });
 
+      // A suspend() (and possibly a resume()) may have run while this fetch was in
+      // flight. Bail rather than act on a handshake for a page that is being torn
+      // down, or double-open a stream resume() already opened.
+      if (epoch !== $.connectionEpoch) return;
+
       if (!response.ok) {
         Logger.debug(`SSE handshake error: ${response.status}`);
         $.scheduleReconnect();
@@ -80,6 +99,8 @@ export default class Sse {
 
       const {handshakeId, refreshedReceipts: encodedRefreshed} =
         await response.json();
+
+      if (epoch !== $.connectionEpoch) return;
 
       const refreshed =
         Interpreter.evaluateJavaScriptExpression(encodedRefreshed);
@@ -96,9 +117,10 @@ export default class Sse {
         handshake_id: handshakeId,
       });
 
-      $.eventSource = new EventSource(`${$.SSE_PATH}?${params}`);
+      const eventSource = new EventSource(`${$.SSE_PATH}?${params}`);
+      $.eventSource = eventSource;
 
-      $.eventSource.addEventListener("action", (event) => {
+      eventSource.addEventListener("action", (event) => {
         const action = Interpreter.evaluateJavaScriptExpression(event.data);
         const target = Erlang_Maps["get/2"](Type.atom("target"), action);
 
@@ -113,12 +135,12 @@ export default class Sse {
         Hologram.scheduleAction(action);
       });
 
-      $.eventSource.addEventListener("add_sub_receipts", (event) => {
+      eventSource.addEventListener("add_sub_receipts", (event) => {
         const receipts = Interpreter.evaluateJavaScriptExpression(event.data);
         App.subscriptionReceiptRegistry.merge(receipts, Type.list());
       });
 
-      $.eventSource.addEventListener("broadcast", (event) => {
+      eventSource.addEventListener("broadcast", (event) => {
         const decoded = Interpreter.evaluateJavaScriptExpression(event.data);
         const [actionName, params, cidsList] = decoded.data;
 
@@ -135,17 +157,21 @@ export default class Sse {
         }
       });
 
-      $.eventSource.addEventListener("drop_sub_receipts", (event) => {
+      eventSource.addEventListener("drop_sub_receipts", (event) => {
         const keys = Interpreter.evaluateJavaScriptExpression(event.data);
         App.subscriptionReceiptRegistry.purge(keys);
       });
 
-      $.eventSource.addEventListener("refresh_sub_receipts", (event) => {
+      eventSource.addEventListener("refresh_sub_receipts", (event) => {
         const refreshed = Interpreter.evaluateJavaScriptExpression(event.data);
         App.subscriptionReceiptRegistry.merge(refreshed, Type.list());
       });
 
-      $.eventSource.onopen = () => {
+      eventSource.onopen = () => {
+        // A stream opening after this connect() was superseded (suspend() bumped the
+        // epoch, and possibly resume() already opened a newer one) reports nothing.
+        if (epoch !== $.connectionEpoch) return;
+
         GlobalRegistry.set("sseConnected?", true);
 
         // Opening reports liveness. Clearing the failure count is a separate judgement
@@ -162,18 +188,64 @@ export default class Sse {
       // handshake protocol from scratch after an exponential backoff delay.
       // No retry cap: the receipt-expiry path inside `connect()` handles the
       // "give up and reload" case organically once stored receipts age out.
-      $.eventSource.onerror = (event) => {
+      eventSource.onerror = (event) => {
+        // A superseded stream's failure isn't ours to react to: suspend() already
+        // closed and nulled $.eventSource (or resume() replaced it with a newer one),
+        // so touching $.eventSource here would close/reconnect the wrong stream.
+        if (epoch !== $.connectionEpoch) return;
+
         clearTimeout($.stabilityTimer);
 
         Logger.debug(`SSE error: ${event.type}`);
         GlobalRegistry.set("sseConnected?", false);
-        $.eventSource.close();
+        eventSource.close();
 
         $.scheduleReconnect();
       };
     } catch (error) {
+      if (epoch !== $.connectionEpoch) return;
+
       Logger.debug(`SSE handshake error: ${error}`);
       $.scheduleReconnect();
+    }
+  }
+
+  // Closes the current stream (if any) and blocks new connection attempts, including
+  // ones already in flight. Called on `pagehide`: Chrome does not tear down an
+  // EventSource across a full page navigation (Chromium issue 358538891), and on local
+  // HTTP/1.1 dev six leaked streams exhaust the six-connection-per-origin pool, stalling
+  // every further request to the origin - including unrelated ones.
+  static suspend() {
+    $.isSuspended = true;
+    $.connectionEpoch++;
+    $.clearReconnectTimer();
+
+    clearTimeout($.stabilityTimer);
+    $.stabilityTimer = null;
+
+    if ($.eventSource) {
+      $.eventSource.close();
+      $.eventSource = null;
+    }
+
+    GlobalRegistry.set("sseConnected?", false);
+  }
+
+  // Called on `pageshow` when the page is restored from bfcache. Re-opening is left to
+  // connect()'s own `eventSource === null` guard so a resume() with no matching suspend()
+  // (or a doubled pageshow) can't open a second stream.
+  static resume() {
+    $.isSuspended = false;
+
+    if ($.eventSource === null) {
+      $.connect();
+    }
+  }
+
+  static clearReconnectTimer() {
+    if ($.reconnectTimer) {
+      clearTimeout($.reconnectTimer);
+      $.reconnectTimer = null;
     }
   }
 
@@ -182,10 +254,12 @@ export default class Sse {
   // and the post-open EventSource onerror handler so a failure anywhere in the
   // connect lifecycle backs off identically instead of leaving realtime down.
   static scheduleReconnect() {
+    if ($.isSuspended) return;
+
     $.reconnectAttempts++;
     const delay = $.computeReconnectDelay($.reconnectAttempts);
 
-    setTimeout(() => $.connect(), delay);
+    $.reconnectTimer = setTimeout(() => $.connect(), delay);
   }
 }
 
