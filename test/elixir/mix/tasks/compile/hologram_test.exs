@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Compile.HologramTest do
 
   alias Hologram.Commons.FileUtils
   alias Hologram.Commons.PLT
+  alias Hologram.Commons.SerializationUtils
   alias Hologram.Commons.SystemUtils
   alias Hologram.Compiler
   alias Hologram.Compiler.CallGraph
@@ -42,10 +43,33 @@ defmodule Mix.Tasks.Compile.HologramTest do
     end)
   end
 
-  defp generate_old_bundle(name, opts) do
-    opts[:static_dir]
-    |> Path.join("#{name}.js")
-    |> File.write!(name)
+  defp generate_untracked_static_artifact(name, opts) do
+    path =
+      opts[:static_dir]
+      |> Path.join("#{name}.js")
+
+    File.write!(path, name)
+
+    path
+  end
+
+  defp static_artifacts_manifest_path(opts) do
+    Path.join(opts[:build_dir], Reflection.static_artifacts_manifest_file_name())
+  end
+
+  defp read_static_artifacts_manifest(opts) do
+    opts
+    |> static_artifacts_manifest_path()
+    |> File.read!()
+    |> SerializationUtils.deserialize()
+  end
+
+  defp write_static_artifacts_manifest(paths, opts) do
+    data = SerializationUtils.serialize(paths)
+
+    opts
+    |> static_artifacts_manifest_path()
+    |> File.write!(data)
   end
 
   # Telemetry handler that tracks how many compilations are inside the critical
@@ -149,14 +173,8 @@ defmodule Mix.Tasks.Compile.HologramTest do
     assert is_integer(module_digest_items[Module1])
   end
 
-  defp test_old_build_static_artifacts_cleanup(opts) do
-    refute opts[:static_dir]
-           |> Path.join("old_bundle_1.js")
-           |> File.exists?()
-
-    refute opts[:static_dir]
-           |> Path.join("old_bundle_2.js")
-           |> File.exists?()
+  defp test_untracked_static_artifacts_left_untouched(paths) do
+    Enum.each(paths, fn path -> assert File.exists?(path) end)
   end
 
   defp test_page_bundles(opts) do
@@ -307,12 +325,61 @@ defmodule Mix.Tasks.Compile.HologramTest do
     run(opts)
     test_build_artifacts(opts)
 
-    # Test case 2: when there are previous build artifacts
-    generate_old_bundle("old_bundle_1", opts)
-    generate_old_bundle("old_bundle_2", opts)
+    # Test case 2: re-running against the same build dir, with static-dir files present
+    # that this env's compiler never produced (e.g. left behind by another env's
+    # compiler sharing the same static dir - see "static artifacts manifest" below).
+    # They must survive: only artifacts this env's own manifest named as superseded
+    # get cleaned up.
+    untracked_paths = [
+      generate_untracked_static_artifact("untracked_bundle_1", opts),
+      generate_untracked_static_artifact("untracked_bundle_2", opts)
+    ]
+
     run(opts)
     test_build_artifacts(opts)
-    test_old_build_static_artifacts_cleanup(opts)
+    test_untracked_static_artifacts_left_untouched(untracked_paths)
+  end
+
+  describe "static artifacts manifest" do
+    test "a build writes a manifest listing the static artifacts it produced", %{
+      opts: initial_opts
+    } do
+      opts = setup_empty_assets_and_build_dirs(initial_opts)
+
+      run(opts)
+
+      manifest = read_static_artifacts_manifest(opts)
+
+      assert length(manifest) == (@num_pages + 1) * 2
+
+      Enum.each(manifest, fn path ->
+        assert String.starts_with?(path, opts[:static_dir])
+        assert File.exists?(path)
+      end)
+    end
+
+    test "a build deletes an artifact named in the previous manifest once it is superseded",
+         %{opts: initial_opts} do
+      opts = setup_empty_assets_and_build_dirs(initial_opts)
+
+      superseded_path = generate_untracked_static_artifact("stale_page_bundle", opts)
+      write_static_artifacts_manifest([superseded_path], opts)
+
+      run(opts)
+
+      refute File.exists?(superseded_path)
+    end
+
+    test "a build with no prior manifest deletes nothing", %{opts: initial_opts} do
+      opts = setup_empty_assets_and_build_dirs(initial_opts)
+
+      untracked_path = generate_untracked_static_artifact("untracked_bundle", opts)
+      refute File.exists?(static_artifacts_manifest_path(opts))
+
+      run(opts)
+
+      assert File.exists?(untracked_path)
+    end
   end
 
   test "stops the processes it spawns once compilation finishes", %{opts: initial_opts} do

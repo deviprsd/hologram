@@ -21,6 +21,7 @@ defmodule Mix.Tasks.Compile.Hologram do
   require Logger
 
   alias Hologram.Commons.PLT
+  alias Hologram.Commons.SerializationUtils
   alias Hologram.Commons.SystemUtils
   alias Hologram.Compiler
   alias Hologram.Compiler.CallGraph
@@ -174,10 +175,14 @@ defmodule Mix.Tasks.Compile.Hologram do
 
       entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
-      old_build_static_artifacts =
-        opts[:static_dir]
-        |> File.ls!()
-        |> Enum.map(fn file_name -> Path.join(opts[:static_dir], file_name) end)
+      # `opts[:static_dir]` resolves through `:code.priv_dir/1`, which in a standard Mix
+      # project is a symlink shared by every build environment (`_build/dev/lib/<app>/priv`
+      # and `_build/test/lib/<app>/priv` both point at the same source `priv/`). Scanning
+      # that directory for "what to delete" - as this used to do - deletes artifacts written
+      # by a *different* env's compiler (e.g. `mix test` deleting a running dev server's
+      # live bundles). Tracking this env's own previous output in `build_dir`, which is
+      # per-env, means each env only ever removes what it wrote itself.
+      previous_build_static_artifacts = load_static_artifacts_manifest(build_dir)
 
       bundles_info = Compiler.bundle(entry_files_info, opts)
 
@@ -192,8 +197,11 @@ defmodule Mix.Tasks.Compile.Hologram do
       PLT.dump(page_digest_plt, page_digest_plt_dump_path)
       CallGraph.dump(call_graph, call_graph_dump_path)
       PLT.dump(new_module_digest_plt, module_digest_plt_dump_path)
+      dump_static_artifacts_manifest(new_build_static_artifacts, build_dir)
 
-      Enum.each(old_build_static_artifacts -- new_build_static_artifacts, &File.rm!/1)
+      # File.rm/1 (not File.rm!/1): a concurrent build in the same env may already have
+      # removed an entry named in the manifest it started from.
+      Enum.each(previous_build_static_artifacts -- new_build_static_artifacts, &File.rm/1)
 
       Logger.info("Hologram: compiler finished")
 
@@ -218,9 +226,33 @@ defmodule Mix.Tasks.Compile.Hologram do
     Mix.env() not in [:dev, :test] or System.get_env("HOLOGRAM_START") == "1"
   end
 
+  defp dump_static_artifacts_manifest(static_artifacts, build_dir) do
+    path = static_artifacts_manifest_path(build_dir)
+    data = SerializationUtils.serialize(static_artifacts)
+
+    path
+    |> Path.dirname()
+    |> File.mkdir_p!()
+
+    File.write!(path, data)
+  end
+
   defp language_server_build?(opts) do
     path_components = Path.split(opts[:build_dir])
     Enum.any?(@ls_build_dirs, fn dir -> dir in path_components end)
+  end
+
+  # Absent on the first build after upgrading to this manifest (or after a fresh
+  # `_build` wipe): returning [] means this build deletes nothing on its first run,
+  # leaving any pre-existing artifacts as orphans for a *later* build's manifest diff
+  # to clean up, rather than risking a delete of another env's live assets.
+  defp load_static_artifacts_manifest(build_dir) do
+    manifest_path = static_artifacts_manifest_path(build_dir)
+
+    case File.read(manifest_path) do
+      {:ok, data} -> SerializationUtils.deserialize(data)
+      {:error, _reason} -> []
+    end
   end
 
   # The removal here shares the path-based race documented at
@@ -321,6 +353,10 @@ defmodule Mix.Tasks.Compile.Hologram do
   defp remove_unreadable_lock_file(lock_path) do
     Logger.info("Hologram: removing unreadable lock file")
     File.rm(lock_path)
+  end
+
+  defp static_artifacts_manifest_path(build_dir) do
+    Path.join(build_dir, Reflection.static_artifacts_manifest_file_name())
   end
 
   # Lists all apps of the enclosing umbrella project, whether the compiler runs in
