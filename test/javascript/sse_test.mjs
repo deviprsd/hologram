@@ -70,6 +70,10 @@ describe("Sse", () => {
 
     Sse.eventSource = null;
     Sse.reconnectAttempts = 0;
+    Sse.isSuspended = false;
+    Sse.connectionEpoch = 0;
+    Sse.reconnectTimer = null;
+    Sse.stabilityTimer = null;
 
     SubscriptionReceiptRegistry.entries.clear();
 
@@ -507,6 +511,164 @@ describe("Sse", () => {
     });
   });
 
+  describe("suspend()", () => {
+    it("closes the current stream and nulls the field", async () => {
+      stubHandshakeResponse();
+      await Sse.connect();
+
+      Sse.suspend();
+
+      sinon.assert.calledOnce(mockEventSource.close);
+      assert.isNull(Sse.eventSource);
+    });
+
+    it("cancels a pending reconnect timer, which then stays inert", async () => {
+      const clock = sinon.useFakeTimers();
+
+      sinon.stub(Math, "random").returns(0.5);
+      stubHandshakeResponse();
+
+      await Sse.connect();
+      Sse.eventSource.onerror({type: "error"});
+
+      assert.isNotNull(Sse.reconnectTimer);
+
+      Sse.suspend();
+
+      assert.isNull(Sse.reconnectTimer);
+
+      const openCallsBeforeTick = globalThis.EventSource.callCount;
+      clock.tick(Sse.MAX_RECONNECT_DELAY * 2);
+
+      assert.strictEqual(globalThis.EventSource.callCount, openCallsBeforeTick);
+    });
+
+    it("prevents connect() from opening a stream while suspended", async () => {
+      stubHandshakeResponse();
+
+      Sse.suspend();
+      await Sse.connect();
+
+      sinon.assert.notCalled(fetchStub);
+      sinon.assert.notCalled(globalThis.EventSource);
+    });
+
+    it("stops a connect() already in flight when it was suspended before resume() opened the real stream", async () => {
+      let resolveFetch;
+      fetchStub.returns(
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+      );
+
+      sinon
+        .stub(Interpreter, "evaluateJavaScriptExpression")
+        .callsFake((expression) =>
+          expression === "encoded-refreshed-receipts"
+            ? Type.list()
+            : Type.atom("noop"),
+        );
+
+      const supersededConnect = Sse.connect();
+
+      Sse.suspend();
+      Sse.resume();
+
+      resolveFetch({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          handshakeId: "resumed-handshake-id",
+          refreshedReceipts: "encoded-refreshed-receipts",
+        }),
+      });
+
+      await supersededConnect;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      sinon.assert.calledOnce(globalThis.EventSource);
+    });
+
+    it("does not schedule a reconnect from a superseded connect() whose fetch rejects", async () => {
+      let rejectFetch;
+      fetchStub.onCall(0).returns(
+        new Promise((_resolve, reject) => {
+          rejectFetch = reject;
+        }),
+      );
+      fetchStub.onCall(1).resolves({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          handshakeId: "resumed-handshake-id",
+          refreshedReceipts: "encoded-refreshed-receipts",
+        }),
+      });
+
+      sinon
+        .stub(Interpreter, "evaluateJavaScriptExpression")
+        .callsFake((expression) =>
+          expression === "encoded-refreshed-receipts"
+            ? Type.list()
+            : Type.atom("noop"),
+        );
+
+      const scheduleReconnectSpy = sinon.spy(Sse, "scheduleReconnect");
+
+      const supersededConnect = Sse.connect();
+
+      Sse.suspend();
+      Sse.resume();
+
+      rejectFetch(new Error("network down"));
+
+      await supersededConnect;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      sinon.assert.notCalled(scheduleReconnectSpy);
+      assert.strictEqual(globalThis.EventSource.callCount, 1);
+    });
+
+    it("does not throw when a suspended stream's onerror still fires", async () => {
+      stubHandshakeResponse();
+      await Sse.connect();
+
+      const onerror = Sse.eventSource.onerror;
+      const attemptsBefore = Sse.reconnectAttempts;
+
+      Sse.suspend();
+
+      assert.doesNotThrow(() => onerror({type: "error"}));
+      assert.strictEqual(Sse.reconnectAttempts, attemptsBefore);
+      assert.isNull(Sse.reconnectTimer);
+    });
+  });
+
+  describe("resume()", () => {
+    it("does not open a second stream when called without a prior suspend()", async () => {
+      stubHandshakeResponse();
+      await Sse.connect();
+
+      Sse.resume();
+
+      sinon.assert.calledOnce(globalThis.EventSource);
+    });
+
+    it("reopens a stream after suspend()", async () => {
+      stubHandshakeResponse();
+      await Sse.connect();
+
+      Sse.suspend();
+      assert.isNull(Sse.eventSource);
+
+      Sse.resume();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.strictEqual(Sse.isSuspended, false);
+      sinon.assert.calledTwice(globalThis.EventSource);
+    });
+  });
+
   describe("action event", () => {
     it("schedules the action when the target cid is mounted", async () => {
       const cid = Type.bitstring("c1");
@@ -581,7 +743,11 @@ describe("Sse", () => {
 
       sinon.assert.calledWith(
         scheduleStub,
-        Type.actionStruct({name: actionName, params: params, target: sidebar}),
+        Type.actionStruct({
+          name: actionName,
+          params: params,
+          target: sidebar,
+        }),
       );
     });
 
@@ -704,7 +870,9 @@ describe("Sse", () => {
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, receiptA);
       SubscriptionReceiptRegistry.entries.set(encodedBindingB, receiptB);
 
-      Sse.eventSource.listeners.drop_sub_receipts({data: "encoded-drop-keys"});
+      Sse.eventSource.listeners.drop_sub_receipts({
+        data: "encoded-drop-keys",
+      });
 
       assert.isFalse(SubscriptionReceiptRegistry.entries.has(encodedBindingA));
       assert.isTrue(SubscriptionReceiptRegistry.entries.has(encodedBindingB));
@@ -718,7 +886,9 @@ describe("Sse", () => {
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, receiptA);
 
-      Sse.eventSource.listeners.drop_sub_receipts({data: "encoded-drop-keys"});
+      Sse.eventSource.listeners.drop_sub_receipts({
+        data: "encoded-drop-keys",
+      });
 
       assert.isTrue(SubscriptionReceiptRegistry.entries.has(encodedBindingA));
     });
