@@ -13,6 +13,8 @@ defmodule Hologram.Reflection do
 
   @page_digest_plt_dump_file_name "page_digest.plt"
 
+  @static_artifacts_manifest_file_name "static_artifacts.manifest"
+
   @doc """
   Determines whether the given term is an alias.
 
@@ -667,6 +669,14 @@ defmodule Hologram.Reflection do
   @spec source_path(module()) :: String.t()
   def source_path(module) do
     to_string(module.module_info()[:compile][:source])
+  end
+
+  @doc """
+  Returns the static artifacts manifest file name.
+  """
+  @spec static_artifacts_manifest_file_name() :: String.t()
+  def static_artifacts_manifest_file_name do
+    @static_artifacts_manifest_file_name
   end
 
   @doc """
