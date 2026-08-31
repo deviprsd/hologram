@@ -1,5 +1,6 @@
 defmodule Mix.Tasks.Compile.HologramTest do
   use Hologram.Test.BasicCase, async: false
+  import ExUnit.CaptureLog
   import Mix.Tasks.Compile.Hologram
 
   alias Hologram.Commons.FileUtils
@@ -571,7 +572,8 @@ defmodule Mix.Tasks.Compile.HologramTest do
       refute File.exists?(@lock_path)
     end
 
-    test "lock file contains current OS-level process PID during compilation", %{opts: opts} do
+    test "lock file contains current OS-level process PID and owner Erlang pid during compilation",
+         %{opts: opts} do
       # Start compilation in a background task
       compilation_task =
         Task.async(fn ->
@@ -581,16 +583,56 @@ defmodule Mix.Tasks.Compile.HologramTest do
       # Wait for lock file to appear and read its content
       lock_content = wait_for_lock_file(@lock_path, 5_000)
 
-      # Verify the OS-level PID format
+      # Verify the {os_pid, owner_pid} format written by with_lock/2
       assert is_binary(lock_content)
-      assert {parsed_os_pid, ""} = Integer.parse(lock_content)
+      assert {parsed_os_pid, owner_pid} = SerializationUtils.deserialize(lock_content)
+      assert is_integer(parsed_os_pid)
       assert parsed_os_pid > 0
+      assert is_pid(owner_pid)
 
       # The OS-level PID should correspond to a running OS process
       assert SystemUtils.os_process_alive?(parsed_os_pid)
 
       # Clean up: kill the background compilation task
       Task.shutdown(compilation_task, :brutal_kill)
+    end
+
+    test "same-VM lock whose owning process has died is detected and removed even though the OS-level process is alive",
+         %{opts: opts} do
+      # Simulates a compile task that was force-killed (bypassing with_lock/2's `after`
+      # cleanup) while the dev server's own long-running OS process - the only thing
+      # os_process_alive?/1 can see - is very much still alive. A real repro needs a
+      # kill signal landing mid-critical-section; spawning a process and letting it exit
+      # produces the same end state - an Erlang pid that is not alive - deterministically.
+      dead_owner_pid = spawn(fn -> :ok end)
+      ref = Process.monitor(dead_owner_pid)
+      assert_receive {:DOWN, ^ref, :process, ^dead_owner_pid, _reason}
+
+      lock_content =
+        SerializationUtils.serialize({String.to_integer(System.pid()), dead_owner_pid})
+
+      FileUtils.write_p!(@lock_path, lock_content)
+
+      # Detected and removed on the very first check, not after waiting through
+      # with_lock/2's 1-second retry loop even once - that's the whole point of checking
+      # Process.alive?/1 on the specific owner instead of OS-level liveness of a PID that
+      # is always this same running node. A real compile's own duration is not a useful
+      # signal here (it varies with the environment), so this asserts on the absence of
+      # the retry-loop's log message instead of timing the whole run.
+      log = capture_log(fn -> run(opts) end)
+      refute log =~ "Hologram: compiler already running, waiting..."
+
+      refute File.exists?(@lock_path)
+    end
+
+    test "same-VM lock with malformed owner content is treated as invalid and removed",
+         %{opts: opts} do
+      lock_content = SerializationUtils.serialize({String.to_integer(System.pid()), :not_a_pid})
+      FileUtils.write_p!(@lock_path, lock_content)
+
+      run(opts)
+
+      refute File.exists?(@lock_path)
     end
   end
 end

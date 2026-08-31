@@ -226,6 +226,39 @@ defmodule Mix.Tasks.Compile.Hologram do
     Mix.env() not in [:dev, :test] or System.get_env("HOLOGRAM_START") == "1"
   end
 
+  # Bare-integer content is the legacy format (an OS-level PID only, nothing else) and is
+  # still accepted so a lock written by an older Hologram version, or one already on disk
+  # across an upgrade, keeps working. Anything else is expected to be the current
+  # {os_pid, owner_pid} term written by with_lock/2.
+  #
+  # os_pid == System.pid() is what tells apart "this exact running BEAM VM wrote this
+  # lock" from "some other invocation wrote it" - not node(), which returns the same
+  # :nonode@nohost sentinel for every non-distributed BEAM VM (the default, and normal,
+  # case for mix compile/mix test/mix phx.server) and so can't distinguish them.
+  defp decode_lock_owner(content) do
+    case Integer.parse(content) do
+      {os_pid, ""} ->
+        {:legacy, os_pid}
+
+      _not_legacy ->
+        try do
+          case SerializationUtils.deserialize(content) do
+            {os_pid, owner_pid} when is_integer(os_pid) and is_pid(owner_pid) ->
+              if os_pid == String.to_integer(System.pid()) do
+                {:same_vm, owner_pid}
+              else
+                {:other_vm, os_pid}
+              end
+
+            _unexpected_shape ->
+              :error
+          end
+        rescue
+          _error -> :error
+        end
+    end
+  end
+
   defp dump_static_artifacts_manifest(static_artifacts, build_dir) do
     path = static_artifacts_manifest_path(build_dir)
     data = SerializationUtils.serialize(static_artifacts)
@@ -295,6 +328,19 @@ defmodule Mix.Tasks.Compile.Hologram do
     end
   end
 
+  # A pid decoded from a lock whose os_pid matched System.pid() can still be foreign to
+  # this exact VM instance: if that OS-level pid was recycled by the OS after the VM that
+  # wrote the lock died uncleanly, and a later, unrelated VM happens to be started under
+  # the same OS pid, Process.alive?/1 on a pid from that prior incarnation returns false
+  # or raises depending on the pid's shape and the OTP version. Either outcome means the
+  # same thing here - the pid is definitionally not a valid identifier in this VM
+  # instance, so the lock is safe to remove regardless.
+  defp owner_process_alive?(owner_pid) do
+    Process.alive?(owner_pid)
+  rescue
+    _error -> false
+  end
+
   # Phoenix's code reloader (up to 1.8.9) treats the per-app compile.lock files in
   # the umbrella build dir as configuration inputs, and refuses to reload any
   # umbrella app whose compile.lock is newer than its Elixir compile manifest.
@@ -318,6 +364,19 @@ defmodule Mix.Tasks.Compile.Hologram do
 
   defp remove_lock_file_with_invalid_os_pid(lock_path) do
     Logger.info("Hologram: removing lock file with invalid OS-level PID format")
+    File.rm(lock_path)
+  end
+
+  # Same race as remove_lock_for_dead_process/2 below (removal is by path, not
+  # owner-verified), but the window is narrower: Process.alive?/1 is a single local BIF
+  # call, not a shelled-out `ps`/`tasklist` invocation, so the gap between diagnosing the
+  # owner dead and removing the file it left behind is microseconds rather than
+  # milliseconds.
+  defp remove_lock_for_dead_owner_process(lock_path, owner_pid) do
+    Logger.info(
+      "Hologram: removing stale lock file (owning process #{inspect(owner_pid)} no longer running)"
+    )
+
     File.rm(lock_path)
   end
 
@@ -404,9 +463,26 @@ defmodule Mix.Tasks.Compile.Hologram do
     maybe_remove_abandoned_empty_lock(lock_path)
   end
 
-  defp validate_lock_file_and_proceed_accordingly(lock_path, os_pid_str) do
-    case Integer.parse(os_pid_str) do
-      {os_pid, _remainder} ->
+  # A lock whose os_pid matches this VM's own can never be judged stale by OS-level
+  # liveness alone: mix holo/mix phx.server is one long-running OS process, and live
+  # reload triggers recompiles from inside that same process, so os_process_alive?/1 on
+  # its own pid is trivially always true, live compile or long-dead one. Checking
+  # Process.alive?/1 on the specific Erlang pid that acquired the lock (decode_lock_owner/1
+  # dispatches to {:same_vm, owner_pid} exactly when this applies) answers the real
+  # question instead: is the task that was compiling still running, not just the program.
+  defp validate_lock_file_and_proceed_accordingly(lock_path, content) do
+    case decode_lock_owner(content) do
+      {:legacy, os_pid} ->
+        if not SystemUtils.os_process_alive?(os_pid) do
+          remove_lock_for_dead_process(lock_path, os_pid)
+        end
+
+      {:same_vm, owner_pid} ->
+        if not owner_process_alive?(owner_pid) do
+          remove_lock_for_dead_owner_process(lock_path, owner_pid)
+        end
+
+      {:other_vm, os_pid} ->
         if not SystemUtils.os_process_alive?(os_pid) do
           remove_lock_for_dead_process(lock_path, os_pid)
         end
@@ -425,8 +501,19 @@ defmodule Mix.Tasks.Compile.Hologram do
 
     case File.open(lock_path, [:write, :exclusive]) do
       {:ok, file} ->
-        # Write OS-level PID to lock file for stale lock detection
-        IO.write(file, "#{System.pid()}")
+        # Write the OS-level PID and this process's own Erlang pid for stale lock
+        # detection - see the {:same_vm, owner_pid} clause of
+        # validate_lock_file_and_proceed_accordingly/2 for why both are needed.
+        # System.pid/0 returns a binary; stored as an integer to match the legacy
+        # format's Integer.parse/1 result and SystemUtils.os_process_alive?/1's spec.
+        # IO.binwrite/2 (not IO.write/2) is required: the content is a serialized
+        # Erlang term - arbitrary bytes, not valid UTF-8 text - and IO.write/2 tries to
+        # transcode its argument as unicode regardless of the file's own open mode.
+        IO.binwrite(
+          file,
+          SerializationUtils.serialize({String.to_integer(System.pid()), self()})
+        )
+
         File.close(file)
 
         try do
