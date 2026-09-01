@@ -346,11 +346,22 @@ defmodule Hologram.Compiler do
   """
   @spec bundle(list({term, T.file_path(), String.t()}), T.opts()) :: list(map)
   def bundle(entry_files_info, opts) do
+    # Unlike the other TaskUtils.async_many/2 call sites in this module (pure
+    # in-BEAM computation over module ASTs), each task here shells out to its
+    # own esbuild --minify subprocess. Left unbounded, a host app with dozens+
+    # of pages spawns that many concurrent esbuild processes at once, on top
+    # of the BEAM's already-elevated RSS from compiling the whole app -
+    # enough to OOM-kill memory-constrained build environments (e.g. Fly.io's
+    # 4GB remote builders). See github.com/deviprsd/hologram/issues/41.
     entry_files_info
-    |> TaskUtils.async_many(fn {entry_name, entry_file_path, bundle_name} ->
-      bundle(entry_name, entry_file_path, bundle_name, opts)
-    end)
-    |> Task.await_many(:infinity)
+    |> Task.async_stream(
+      fn {entry_name, entry_file_path, bundle_name} ->
+        bundle(entry_name, entry_file_path, bundle_name, opts)
+      end,
+      max_concurrency: System.schedulers_online(),
+      timeout: :infinity
+    )
+    |> Enum.map(fn {:ok, result} -> result end)
   end
 
   @doc """
