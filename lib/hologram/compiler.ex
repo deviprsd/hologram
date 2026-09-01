@@ -114,7 +114,7 @@ defmodule Hologram.Compiler do
     ir_plt
     |> PLT.get_all()
     |> Task.async_stream(fn {_module, ir} -> CallGraph.build(call_graph, ir) end,
-      max_concurrency: System.schedulers_online(),
+      max_concurrency: compile_max_concurrency(),
       timeout: :infinity
     )
     |> Stream.run()
@@ -156,7 +156,7 @@ defmodule Hologram.Compiler do
           end
         end)
       end,
-      max_concurrency: System.schedulers_online(),
+      max_concurrency: compile_max_concurrency(),
       timeout: :infinity
     )
     |> Stream.run()
@@ -181,7 +181,7 @@ defmodule Hologram.Compiler do
     Reflection.list_elixir_modules()
     |> Task.async_stream(
       &rebuild_module_digest_plt_entry!(&1, module_digest_plt, umbrella?),
-      max_concurrency: System.schedulers_online(),
+      max_concurrency: compile_max_concurrency(),
       timeout: :infinity
     )
     |> Stream.run()
@@ -755,6 +755,15 @@ defmodule Hologram.Compiler do
             "page '#{module_name}' doesn't have a layout module specified (use the layout/1 macro to fix it)"
       end
     end)
+  end
+
+  # Default preserves current behavior (safe to saturate cores on for pure in-BEAM
+  # work, unlike bundle/2's OS-subprocess spawning where bundle_max_concurrency's
+  # small fixed default matters). Overridable for hosts where a cloud builder's
+  # reported core count and its actual memory budget are mismatched - see
+  # github.com/deviprsd/hologram/issues/48.
+  defp compile_max_concurrency do
+    Application.get_env(:hologram, :compile_max_concurrency, System.schedulers_online())
   end
 
   defp create_entry_file(js, entry_name, tmp_dir) do
