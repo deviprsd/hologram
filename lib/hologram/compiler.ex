@@ -1032,9 +1032,10 @@ defmodule Hologram.Compiler do
   # build_ir_plt/1, build_module_digest_plt!/1, patch_ir_plt!/2,
   # rebuild_ir_plt_entry!/3 and rebuild_module_digest_plt_entry!/3 - their
   # bodies go back to resolving the beam path with :code.which/1 directly.
-  defp resolve_beam_source(module, true), do: Reflection.beam_source(module)
+  @spec resolve_beam_source(module, boolean) :: T.file_path() | nil
+  def resolve_beam_source(module, true), do: Reflection.beam_source(module)
 
-  defp resolve_beam_source(module, false) do
+  def resolve_beam_source(module, false) do
     beam_path = :code.which(module)
 
     if beam_path != :non_existing do
