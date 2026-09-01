@@ -349,16 +349,22 @@ defmodule Hologram.Compiler do
     # Unlike the other TaskUtils.async_many/2 call sites in this module (pure
     # in-BEAM computation over module ASTs), each task here shells out to its
     # own esbuild --minify subprocess. Left unbounded, a host app with dozens+
-    # of pages spawns that many concurrent esbuild processes at once, on top
-    # of the BEAM's already-elevated RSS from compiling the whole app -
-    # enough to OOM-kill memory-constrained build environments (e.g. Fly.io's
-    # 4GB remote builders). See github.com/deviprsd/hologram/issues/41.
+    # of pages spawns that many concurrent esbuild processes at once - enough
+    # to OOM-kill memory-constrained build environments on its own, with
+    # nothing else competing for memory. CPU count is the wrong axis to bound
+    # on: a build machine can report a generous scheduler count relative to
+    # its actual (much smaller) memory ceiling, so System.schedulers_online()
+    # isn't a safe default here the way it is for in-BEAM work. Default to a
+    # small fixed number instead, overridable per host app for bigger
+    # hardware. See github.com/deviprsd/hologram/issues/41.
+    max_concurrency = Application.get_env(:hologram, :bundle_max_concurrency, 2)
+
     entry_files_info
     |> Task.async_stream(
       fn {entry_name, entry_file_path, bundle_name} ->
         bundle(entry_name, entry_file_path, bundle_name, opts)
       end,
-      max_concurrency: System.schedulers_online(),
+      max_concurrency: max_concurrency,
       timeout: :infinity
     )
     |> Enum.map(fn {:ok, result} -> result end)
