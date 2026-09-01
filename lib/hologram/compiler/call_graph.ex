@@ -3,7 +3,6 @@ defmodule Hologram.Compiler.CallGraph do
 
   alias Hologram.Commons.PLT
   alias Hologram.Commons.SerializationUtils
-  alias Hologram.Commons.TaskUtils
   alias Hologram.Commons.Types, as: T
   alias Hologram.Compiler.CallGraph
   alias Hologram.Compiler.Digraph
@@ -1048,25 +1047,45 @@ defmodule Hologram.Compiler.CallGraph do
   """
   @spec patch(t, PLT.t(), map) :: t
   def patch(call_graph, ir_plt, diff) do
-    remove_tasks =
-      TaskUtils.async_many(diff.removed_modules, &remove_module_vertices(call_graph, &1))
+    # Bounded the same way as build_module_digest_plt!/1, build_ir_plt/1 and
+    # build_call_graph/1 (pure in-BEAM work, safe to saturate cores on, unlike
+    # Compiler.bundle/2's OS-subprocess spawning). On a cold build (no persisted
+    # module-digest PLT - the normal case on a fresh CI/Docker builder),
+    # diff.added_modules is essentially every loaded module across every OTP
+    # app, so the unbounded Task.async this used to do (one process per module,
+    # all at once, right after ir_plt has just finished being built) could
+    # reach into the thousands with zero back-pressure. See
+    # github.com/deviprsd/hologram/issues/46.
+    max_concurrency = System.schedulers_online()
 
-    update_tasks =
-      TaskUtils.async_many(diff.edited_modules, fn module ->
+    diff.removed_modules
+    |> Task.async_stream(&remove_module_vertices(call_graph, &1),
+      max_concurrency: max_concurrency,
+      timeout: :infinity
+    )
+    |> Stream.run()
+
+    diff.edited_modules
+    |> Task.async_stream(
+      fn module ->
         remote_incoming_edges = remote_incoming_edges(call_graph, module)
 
         call_graph
         |> remove_module_vertices(module)
         |> build_for_module(ir_plt, module)
         |> add_edges(remote_incoming_edges)
-      end)
+      end,
+      max_concurrency: max_concurrency,
+      timeout: :infinity
+    )
+    |> Stream.run()
 
-    add_tasks =
-      TaskUtils.async_many(diff.added_modules, &build_for_module(call_graph, ir_plt, &1))
-
-    Task.await_many(remove_tasks, :infinity)
-    Task.await_many(update_tasks, :infinity)
-    Task.await_many(add_tasks, :infinity)
+    diff.added_modules
+    |> Task.async_stream(&build_for_module(call_graph, ir_plt, &1),
+      max_concurrency: max_concurrency,
+      timeout: :infinity
+    )
+    |> Stream.run()
 
     refresh_protocol_dispatch_edges(call_graph, diff.added_modules ++ diff.edited_modules)
 
