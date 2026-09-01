@@ -175,6 +175,13 @@ defmodule Mix.Tasks.Compile.Hologram do
 
       entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
+      # ir_plt isn't read again after create_page_entry_files/4 above (not dumped to
+      # disk, no other consumer downstream) - freeing it here means Compiler.bundle/2's
+      # concurrent esbuild subprocesses, the phase with the highest total memory
+      # pressure, don't have to compete with an ETS table that's already dead weight.
+      # See github.com/deviprsd/hologram/issues/44.
+      PLT.stop(ir_plt)
+
       # `opts[:static_dir]` resolves through `:code.priv_dir/1`, which in a standard Mix
       # project is a symlink shared by every build environment (`_build/dev/lib/<app>/priv`
       # and `_build/test/lib/<app>/priv` both point at the same source `priv/`). Scanning
