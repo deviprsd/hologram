@@ -113,8 +113,11 @@ defmodule Hologram.Compiler do
 
     ir_plt
     |> PLT.get_all()
-    |> TaskUtils.async_many(fn {_module, ir} -> CallGraph.build(call_graph, ir) end)
-    |> Task.await_many(:infinity)
+    |> Task.async_stream(fn {_module, ir} -> CallGraph.build(call_graph, ir) end,
+      max_concurrency: System.schedulers_online(),
+      timeout: :infinity
+    )
+    |> Stream.run()
 
     CallGraph.add_non_discoverable_edges(call_graph)
   end
@@ -142,17 +145,21 @@ defmodule Hologram.Compiler do
 
     modules
     |> Enum.chunk_every(chunk_size)
-    |> TaskUtils.async_many(fn module_chunk ->
-      Enum.each(module_chunk, fn module ->
-        beam_source = resolve_beam_source(module, umbrella?)
+    |> Task.async_stream(
+      fn module_chunk ->
+        Enum.each(module_chunk, fn module ->
+          beam_source = resolve_beam_source(module, umbrella?)
 
-        if beam_source do
-          ir = IR.for_module(module, beam_source)
-          PLT.put(ir_plt, module, ir)
-        end
-      end)
-    end)
-    |> Task.await_many(:infinity)
+          if beam_source do
+            ir = IR.for_module(module, beam_source)
+            PLT.put(ir_plt, module, ir)
+          end
+        end)
+      end,
+      max_concurrency: System.schedulers_online(),
+      timeout: :infinity
+    )
+    |> Stream.run()
 
     ir_plt
   end
@@ -172,8 +179,12 @@ defmodule Hologram.Compiler do
     umbrella? = Reflection.umbrella?()
 
     Reflection.list_elixir_modules()
-    |> TaskUtils.async_many(&rebuild_module_digest_plt_entry!(&1, module_digest_plt, umbrella?))
-    |> Task.await_many(:infinity)
+    |> Task.async_stream(
+      &rebuild_module_digest_plt_entry!(&1, module_digest_plt, umbrella?),
+      max_concurrency: System.schedulers_online(),
+      timeout: :infinity
+    )
+    |> Stream.run()
 
     module_digest_plt
   end
