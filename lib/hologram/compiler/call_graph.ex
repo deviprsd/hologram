@@ -1055,8 +1055,12 @@ defmodule Hologram.Compiler.CallGraph do
     # app, so the unbounded Task.async this used to do (one process per module,
     # all at once, right after ir_plt has just finished being built) could
     # reach into the thousands with zero back-pressure. See
-    # github.com/deviprsd/hologram/issues/46.
-    max_concurrency = System.schedulers_online()
+    # github.com/deviprsd/hologram/issues/46. Configurable, not hardcoded, for the
+    # same reason as Compiler's compile_max_concurrency/0: a cloud builder's
+    # reported core count and its actual memory budget can be mismatched. See
+    # github.com/deviprsd/hologram/issues/48.
+    max_concurrency =
+      Application.get_env(:hologram, :compile_max_concurrency, System.schedulers_online())
 
     diff.removed_modules
     |> Task.async_stream(&remove_module_vertices(call_graph, &1),
