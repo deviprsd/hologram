@@ -151,14 +151,6 @@ defmodule Mix.Tasks.Compile.HologramCi do
       # (issue #44) - this task was simply missing the same fix.
       PLT.stop(ir_plt)
 
-      # ir_plt isn't read again after this point (not dumped to disk, no other consumer
-      # downstream) - freeing it here means Compiler.bundle/2's concurrent esbuild
-      # subprocesses, the phase with the highest total memory pressure, don't have to
-      # compete with an ETS table that's already dead weight. Matches
-      # Mix.Tasks.Compile.Hologram.compile/1's own ordering (issue #44) - this task was
-      # simply missing the same fix.
-      PLT.stop(ir_plt)
-
       bundles_info = Compiler.bundle(entry_files_info, opts)
 
       {page_digest_plt, page_digest_plt_dump_path} =
