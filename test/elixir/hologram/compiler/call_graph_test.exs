@@ -954,6 +954,79 @@ defmodule Hologram.Compiler.CallGraphTest do
              ]
     end
 
+    # encode_named_function_call/4 (encoder.ex) picks between :orelse and
+    # orelse_async at ENCODE time, based on context.async? -- a flag this
+    # build pass has no view of. Missing the async pair here produced a
+    # real `Erlang["orelse_async/2"]` reference in a compiled page with
+    # no matching bundled definition -- reported live as
+    # `:erlang.orelse_async/2 is undefined`.
+    test "remote function call using :erlang.orelse/2 also adds the async pair", %{
+      empty_call_graph: call_graph
+    } do
+      ir = %IR.RemoteFunctionCall{
+        module: %IR.AtomType{value: :erlang},
+        function: :orelse,
+        args: [
+          %IR.RemoteFunctionCall{
+            module: %IR.AtomType{value: :erlang},
+            function: :"=:=",
+            args: [%IR.Variable{name: :x}, %IR.AtomType{value: nil}]
+          },
+          %IR.RemoteFunctionCall{
+            module: %IR.AtomType{value: :erlang},
+            function: :"=:=",
+            args: [%IR.Variable{name: :x}, %IR.StringType{value: ""}]
+          }
+        ]
+      }
+
+      result = build(call_graph, ir, {Module1, :my_fun_1, 4})
+
+      assert result == call_graph
+
+      assert sorted_vertices(call_graph) == [
+               {Module1, :my_fun_1, 4},
+               {:erlang, :"=:=", 2},
+               {:erlang, :orelse, 2},
+               {:erlang, :orelse_async, 2}
+             ]
+
+      assert sorted_edges(call_graph) == [
+               {{Module1, :my_fun_1, 4}, {:erlang, :"=:=", 2}},
+               {{Module1, :my_fun_1, 4}, {:erlang, :orelse, 2}},
+               {{Module1, :my_fun_1, 4}, {:erlang, :orelse_async, 2}}
+             ]
+    end
+
+    # See the :orelse test above for the full reasoning.
+    test "remote function call using :erlang.andalso/2 also adds the async pair", %{
+      empty_call_graph: call_graph
+    } do
+      ir = %IR.RemoteFunctionCall{
+        module: %IR.AtomType{value: :erlang},
+        function: :andalso,
+        args: [
+          %IR.AtomType{value: true},
+          %IR.AtomType{value: false}
+        ]
+      }
+
+      result = build(call_graph, ir, {Module1, :my_fun_1, 4})
+
+      assert result == call_graph
+
+      assert sorted_vertices(call_graph) == [
+               {Module1, :my_fun_1, 4},
+               {:erlang, :andalso, 2},
+               {:erlang, :andalso_async, 2}
+             ]
+
+      assert sorted_edges(call_graph) == [
+               {{Module1, :my_fun_1, 4}, {:erlang, :andalso, 2}},
+               {{Module1, :my_fun_1, 4}, {:erlang, :andalso_async, 2}}
+             ]
+    end
+
     test "remote function call using :erlang.error/3, error_info with module key", %{
       empty_call_graph: call_graph
     } do

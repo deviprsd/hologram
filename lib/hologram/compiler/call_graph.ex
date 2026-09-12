@@ -706,6 +706,34 @@ defmodule Hologram.Compiler.CallGraph do
     |> build(args, from_vertex)
   end
 
+  # encode_named_function_call/4 (encoder.ex) picks between :andalso/:orelse
+  # and their _async pair at ENCODE time, based on context.async? -- a flag
+  # this call-graph build pass, which only sees IR structure, has no view
+  # of. Both variants are added unconditionally so the bundle carries
+  # whichever one encoding actually reaches for; the generic clause below
+  # would otherwise only ever discover the plain (never the _async) name,
+  # since that name never appears in the IR itself. Missing this produced
+  # a real `Erlang["orelse_async/2"]` reference with no matching
+  # `Interpreter.defineErlangFunction` registration in the bundle --
+  # reported at runtime as `:erlang.orelse_async/2 is undefined`.
+  def build(
+        call_graph,
+        %IR.RemoteFunctionCall{
+          module: %IR.AtomType{value: :erlang},
+          function: function,
+          args: args
+        },
+        from_vertex
+      )
+      when function in [:andalso, :orelse] do
+    async_function = :"#{function}_async"
+
+    call_graph
+    |> add_edge(from_vertex, {:erlang, function, Enum.count(args)})
+    |> add_edge(from_vertex, {:erlang, async_function, Enum.count(args)})
+    |> build(args, from_vertex)
+  end
+
   def build(
         call_graph,
         %IR.RemoteFunctionCall{
