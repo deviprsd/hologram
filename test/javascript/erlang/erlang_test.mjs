@@ -1762,6 +1762,87 @@ describe("Erlang", () => {
     });
   });
 
+  // SYNC/ASYNC PAIR with "andalso/2" above -- a real production bug this
+  // guards against: encode_closure/2 (encoder.ex) emits an async closure
+  // whenever the enclosing context is itself async, and andalso/2's own
+  // sync body inspected the unresolved Promise it got back as if it were
+  // already the resolved boxed value -- every `x and y` compiled inside
+  // async code raised {:badarg, <the Promise itself>} instead of working.
+  describe("andalso_async/2", () => {
+    const andalsoAsync = Erlang["andalso_async/2"];
+
+    it("returns false if the first argument is false", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(false), right: Type.atom("abc")},
+      });
+
+      const result = await andalsoAsync(
+        async (context) => context.vars.left,
+        async (context) => context.vars.right,
+        context,
+      );
+
+      assertBoxedFalse(result);
+    });
+
+    it("returns the second argument if the first argument is true", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(true), right: Type.atom("abc")},
+      });
+
+      const result = await andalsoAsync(
+        async (context) => context.vars.left,
+        async (context) => context.vars.right,
+        context,
+      );
+
+      assert.deepStrictEqual(result, Type.atom("abc"));
+    });
+
+    it("doesn't evaluate the second argument if the first argument is false", async () => {
+      const result = await andalsoAsync(
+        async (_context) => Type.boolean(false),
+        async (_context) => {
+          throw new Error("impossible");
+        },
+        contextFixture(),
+      );
+
+      assertBoxedFalse(result);
+    });
+
+    it("raises ArgumentError if the first argument is not a boolean", async () => {
+      const context = contextFixture({
+        vars: {left: Type.nil(), right: Type.boolean(true)},
+      });
+
+      await assertBoxedErrorAsync(
+        () =>
+          andalsoAsync(
+            async (context) => context.vars.left,
+            async (context) => context.vars.right,
+            context,
+          ),
+        "ArgumentError",
+        "argument error: nil",
+      );
+    });
+
+    it("also works with sync closures (await on a non-promise is always safe)", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(false), right: Type.atom("abc")},
+      });
+
+      const result = await andalsoAsync(
+        (context) => context.vars.left,
+        (context) => context.vars.right,
+        context,
+      );
+
+      assertBoxedFalse(result);
+    });
+  });
+
   describe("append_element/2", () => {
     const append_element = Erlang["append_element/2"];
 
@@ -11131,6 +11212,103 @@ describe("Erlang", () => {
       }
 
       assert.deepStrictEqual(caught.stacktrace, []);
+    });
+  });
+
+  // SYNC/ASYNC PAIR with "orelse/2" above -- see andalso_async/2's own
+  // comment for the full root cause (the same bug, same shape, on the
+  // `or`/`in [a, b]` side instead of `and`).
+  describe("orelse_async/2", () => {
+    const orelseAsync = Erlang["orelse_async/2"];
+
+    it("returns true if the first argument is true", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(true), right: Type.atom("abc")},
+      });
+
+      const result = await orelseAsync(
+        async (context) => context.vars.left,
+        async (context) => context.vars.right,
+        context,
+      );
+
+      assertBoxedTrue(result);
+    });
+
+    it("returns the second argument if the first argument is false", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(false), right: Type.atom("abc")},
+      });
+
+      const result = await orelseAsync(
+        async (context) => context.vars.left,
+        async (context) => context.vars.right,
+        context,
+      );
+
+      assert.deepStrictEqual(result, Type.atom("abc"));
+    });
+
+    it("doesn't evaluate the second argument if the first argument is true", async () => {
+      const result = await orelseAsync(
+        async (_context) => Type.boolean(true),
+        async (_context) => {
+          throw new Error("impossible");
+        },
+        contextFixture(),
+      );
+
+      assertBoxedTrue(result);
+    });
+
+    it("raises ArgumentError if the first argument is not a boolean", async () => {
+      const context = contextFixture({
+        vars: {left: Type.nil(), right: Type.boolean(true)},
+      });
+
+      await assertBoxedErrorAsync(
+        () =>
+          orelseAsync(
+            async (context) => context.vars.left,
+            async (context) => context.vars.right,
+            context,
+          ),
+        "ArgumentError",
+        "argument error: nil",
+      );
+    });
+
+    it("also works with sync closures (await on a non-promise is always safe)", async () => {
+      const context = contextFixture({
+        vars: {left: Type.boolean(true), right: Type.atom("abc")},
+      });
+
+      const result = await orelseAsync(
+        (context) => context.vars.left,
+        (context) => context.vars.right,
+        context,
+      );
+
+      assertBoxedTrue(result);
+    });
+
+    // The exact real-world shape this bug was found in: `x in [nil, ""]`
+    // compiled inside an async action body -- confirmed live in a real
+    // app (a "confirm cancellation" click crashed with
+    // {:badarg, <unresolved Promise>} on this exact expression).
+    it("reproduces the real orelse-in-async-context bug this exists to fix", async () => {
+      const emptyBitstring = Type.bitstring("");
+      const context = contextFixture({
+        vars: {cancelReason: Type.bitstring("Fresh repro test")},
+      });
+
+      const result = await orelseAsync(
+        async (ctx) => Erlang["=:=/2"](ctx.vars.cancelReason, Type.nil()),
+        async (ctx) => Erlang["=:=/2"](ctx.vars.cancelReason, emptyBitstring),
+        context,
+      );
+
+      assertBoxedFalse(result);
     });
   });
 

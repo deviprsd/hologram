@@ -298,6 +298,32 @@ const Erlang = {
   // End andalso/2
   // Deps: []
 
+  // Start andalso_async/2
+  // SYNC/ASYNC PAIR with andalso/2 above (see Interpreter.try/asyncTry for
+  // the same naming shape). encode_closure/2 (encoder.ex) emits an async
+  // closure whenever the enclosing context is itself async
+  // (`context.async? == true`) -- andalso/2's own sync body called such a
+  // closure directly and inspected the Promise it got back as if it were
+  // already the resolved boxed value, so `Type.isBoolean(left)` was always
+  // false and every `x and y`/`a andalso b` compiled inside async code
+  // raised `{:badarg, <the unawaited Promise itself>}` -- confirmed live,
+  // and confusingly reported as an unrelated "message derivation failed"
+  // crash, since the message formatter then choked trying to describe a
+  // bare Promise as an argument. This variant is used instead whenever
+  // encode_closure built its operands as async (see encoder.ex's
+  // encode_named_function_call/4 clause for :andalso).
+  "andalso_async/2": async (leftFun, rightFun, context) => {
+    const left = await leftFun(context);
+
+    if (!Type.isBoolean(left)) {
+      Interpreter.raiseFramelessError(["badarg", left]);
+    }
+
+    return Type.isTrue(left) ? await rightFun(context) : left;
+  },
+  // End andalso_async/2
+  // Deps: []
+
   // Start append_element/2
   "append_element/2": (tuple, term) => {
     if (!Type.isTuple(tuple)) {
@@ -3062,6 +3088,22 @@ const Erlang = {
     return Type.isTrue(left) ? left : rightFun(context);
   },
   // End orelse/2
+  // Deps: []
+
+  // Start orelse_async/2
+  // SYNC/ASYNC PAIR with orelse/2 above -- see andalso_async/2's own
+  // comment for the full root cause (the same bug, same shape, on the
+  // `or`/`in [a, b]` side instead of `and`).
+  "orelse_async/2": async (leftFun, rightFun, context) => {
+    const left = await leftFun(context);
+
+    if (!Type.isBoolean(left)) {
+      Interpreter.raiseFramelessError(["badarg", left]);
+    }
+
+    return Type.isTrue(left) ? left : await rightFun(context);
+  },
+  // End orelse_async/2
   // Deps: []
 
   // Start pid_to_list/1

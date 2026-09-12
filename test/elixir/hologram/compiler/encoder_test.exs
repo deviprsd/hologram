@@ -2903,6 +2903,28 @@ defmodule Hologram.Compiler.EncoderTest do
                ~s'Erlang["andalso/2"]((context) => Type.integer(1n), (context) => Type.integer(2n), context)'
     end
 
+    # A real production bug this guards against: encode_closure/2 emits an
+    # async closure whenever context.async? is true, but the plain
+    # andalso/2 JS function's own body is sync and can't await one --
+    # every `x and y`/`in [a, b]`-with-2-values compiled inside an async
+    # action body raised {:badarg, <the unawaited Promise itself>}
+    # instead of working (confirmed live). Must route to andalso_async/2
+    # and be awaited, matching the async-MFA branch's own shape below.
+    test "async - :erlang.andalso/2 call routes to andalso_async/2 and is awaited" do
+      # :erlang.andalso(1, 2)
+      ir = %IR.RemoteFunctionCall{
+        module: %IR.AtomType{value: :erlang},
+        function: :andalso,
+        args: [
+          %IR.IntegerType{value: 1},
+          %IR.IntegerType{value: 2}
+        ]
+      }
+
+      assert encode_ir(ir, %Context{async?: true}) ==
+               ~s'(await Erlang["andalso_async/2"](async (context) => Type.integer(1n), async (context) => Type.integer(2n), context))'
+    end
+
     test ":erlang.apply/3 call with non-variable args" do
       # :erlang.apply(MyModule, :my_fun, [1, 2])
       ir = %IR.RemoteFunctionCall{
@@ -2953,6 +2975,25 @@ defmodule Hologram.Compiler.EncoderTest do
 
       assert encode_ir(ir) ==
                ~s'Erlang["orelse/2"]((context) => Type.integer(1n), (context) => Type.integer(2n), context)'
+    end
+
+    # See the :andalso async test above for the full reasoning -- the
+    # same async/sync split applies here (this is the exact shape
+    # `x in [nil, ""]` compiles to, the real expression that crashed
+    # live).
+    test "async - :erlang.orelse/2 call routes to orelse_async/2 and is awaited" do
+      # :erlang.orelse(1, 2)
+      ir = %IR.RemoteFunctionCall{
+        module: %IR.AtomType{value: :erlang},
+        function: :orelse,
+        args: [
+          %IR.IntegerType{value: 1},
+          %IR.IntegerType{value: 2}
+        ]
+      }
+
+      assert encode_ir(ir, %Context{async?: true}) ==
+               ~s'(await Erlang["orelse_async/2"](async (context) => Type.integer(1n), async (context) => Type.integer(2n), context))'
     end
 
     test "async - wraps call with await when target MFA is in async_mfas" do

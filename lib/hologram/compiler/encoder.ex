@@ -1009,7 +1009,15 @@ defmodule Hologram.Compiler.Encoder do
     left_js = encode_closure(left, context)
     right_js = encode_closure(right, context)
 
-    "Erlang[\"andalso/2\"](#{left_js}, #{right_js}, context)"
+    # encode_closure/2 emits an async closure whenever context.async? is
+    # true -- andalso/2's own sync body can't await one, so this must
+    # route to the async-aware pair (andalso_async/2) and be awaited
+    # itself, exactly like the async-MFA branch below.
+    if context.async? do
+      "(await Erlang[\"andalso_async/2\"](#{left_js}, #{right_js}, context))"
+    else
+      "Erlang[\"andalso/2\"](#{left_js}, #{right_js}, context)"
+    end
   end
 
   # Encoded as Interpreter.callNamedFunction() instead of Erlang["apply/3"]()
@@ -1027,7 +1035,13 @@ defmodule Hologram.Compiler.Encoder do
     left_js = encode_closure(left, context)
     right_js = encode_closure(right, context)
 
-    "Erlang[\"orelse/2\"](#{left_js}, #{right_js}, context)"
+    # See the :andalso clause above for the full reasoning -- the same
+    # async/sync split applies here.
+    if context.async? do
+      "(await Erlang[\"orelse_async/2\"](#{left_js}, #{right_js}, context))"
+    else
+      "Erlang[\"orelse/2\"](#{left_js}, #{right_js}, context)"
+    end
   end
 
   defp encode_named_function_call(%IR.AtomType{} = module, function, args, context) do
