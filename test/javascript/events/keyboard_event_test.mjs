@@ -71,6 +71,37 @@ describe("KeyboardEvent", () => {
     );
   });
 
+  it("buildOperationParam(), event.key is undefined (confirmed real, not just a spec edge case)", () => {
+    const event = {
+      altKey: false,
+      code: "",
+      ctrlKey: false,
+      key: undefined,
+      metaKey: false,
+      repeat: false,
+      shiftKey: false,
+      target: {},
+    };
+
+    const result = KeyboardEvent.buildOperationParam(event);
+
+    assert.deepStrictEqual(
+      result,
+      Type.map([
+        [Type.atom("alt_key"), Type.boolean(false)],
+        [Type.atom("code"), Type.bitstring("")],
+        [Type.atom("ctrl_key"), Type.boolean(false)],
+        [Type.atom("is_composing"), Type.boolean(false)],
+        [Type.atom("key"), Type.nil()],
+        [Type.atom("meta_key"), Type.boolean(false)],
+        [Type.atom("repeat"), Type.boolean(false)],
+        [Type.atom("selection_end"), Type.nil()],
+        [Type.atom("selection_start"), Type.nil()],
+        [Type.atom("shift_key"), Type.boolean(false)],
+      ]),
+    );
+  });
+
   it("isEventIgnored()", () => {
     assert.isFalse(KeyboardEvent.isEventIgnored({}));
   });
@@ -155,6 +186,12 @@ describe("KeyboardEvent", () => {
           shiftKey: true,
         }),
       );
+    });
+
+    it("is a clean non-match, not a crash, when event.key is undefined", () => {
+      const filter = Type.list([Type.bitstring("enter")]);
+
+      assert.isFalse(KeyboardEvent.matchesKeyFilter(filter, {key: undefined}));
     });
   });
 });

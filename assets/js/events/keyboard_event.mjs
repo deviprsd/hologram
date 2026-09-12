@@ -24,7 +24,17 @@ export default class KeyboardEvent {
       // True while an IME composition session (e.g. Japanese/Chinese input) is in progress -
       // a handler committing on Enter needs this to avoid firing mid-composition.
       [Type.atom("is_composing"), Type.boolean(event.isComposing ?? false)],
-      [Type.atom("key"), Type.bitstring(event.key)],
+      // event.key is undefined for some real keydown events (confirmed live,
+      // not just a spec edge case) - an unguarded Type.bitstring(undefined)
+      // here produced a malformed bitstring that only surfaced much later,
+      // as an unrelated-looking crash in whatever string operation an
+      // action ran on it (and then again in the error formatter trying to
+      // describe that failure). nil is the same fallback this function
+      // already uses for selection_start/selection_end above.
+      [
+        Type.atom("key"),
+        event.key != null ? Type.bitstring(event.key) : Type.nil(),
+      ],
       [Type.atom("meta_key"), Type.boolean(event.metaKey)],
       [Type.atom("repeat"), Type.boolean(event.repeat)],
       // event.target only exposes selectionStart/selectionEnd on text-editable elements
@@ -54,6 +64,12 @@ export default class KeyboardEvent {
   // event. Each value is either a modifier key, checked against the event's boolean flag, or
   // the key itself, compared against the lowercased event.key (already the canonical form).
   static matchesKeyFilter(filterValues, event) {
+    // event.key is undefined for some real keydown events - no registered
+    // filter can match a key that isn't there, so this is a clean
+    // non-match rather than a crash (same early-bail shape hotkeys.mjs's
+    // own live-event matcher already uses for the same condition).
+    if (event.key == null) return false;
+
     const eventKey = event.key.toLowerCase();
 
     return filterValues.data.every((boxedValue) => {
