@@ -2,7 +2,6 @@
 
 import {
   assert,
-  assertBoxedError,
   defineRuntimeGlobals,
   registerWebApis,
   sinon,
@@ -325,22 +324,32 @@ describe("Hologram", () => {
       sinon.restore();
     });
 
-    // The registry answers with plain null for a cid it does not hold, and null reaching
-    // callNamedFunction faults on reading a module name off it.
-    it("raises for a target the registry does not hold", () => {
-      assertBoxedError(
-        () => Hologram.executeAction(actionFor(Type.bitstring("nonexistent"))),
-        "ArgumentError",
-        'invalid action target, there is no component with CID: "nonexistent"',
-      );
+    // A held action can carry an epoch that matches the current one while its target still
+    // belongs to the page that was left (see #executeActionNow's own comment) - same shape as a
+    // stale dispatch, just missed by the epoch check, so it gets the same drop-and-warn treatment
+    // rather than crashing the page over a component that no longer exists.
+    it("drops a target the registry does not hold, instead of raising", () => {
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        assert.doesNotThrow(() =>
+          Hologram.executeAction(actionFor(Type.bitstring("nonexistent"))),
+        );
+
+        sinon.assert.calledOnceWithExactly(
+          warnStub,
+          "Hologram: dropped an action dispatched on a page that has been left:",
+          Interpreter.inspect(Type.atom("test_action")),
+        );
+      } finally {
+        warnStub.restore();
+      }
     });
 
     it("doesn't dispatch to a target the registry does not hold", () => {
-      try {
-        Hologram.executeAction(actionFor(Type.bitstring("nonexistent")));
-      } catch {
-        // Asserted on in the case above - what matters here is what didn't run.
-      }
+      sinon.stub(console, "warn");
+
+      Hologram.executeAction(actionFor(Type.bitstring("nonexistent")));
 
       sinon.assert.notCalled(callNamedFunctionStub);
     });
