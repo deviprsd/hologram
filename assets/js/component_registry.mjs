@@ -17,8 +17,18 @@ export default class ComponentRegistry {
   // runExclusive()'s #occupy.
   static #actionChains = new Map();
 
+  // A cid removed by a page transition still needs to be told apart from one that
+  // was never real: a dispatch targeting a cid the page just left is a stale race
+  // (safe to drop), while a dispatch targeting a cid that never existed anywhere
+  // is a genuine bug (should raise). This holds the previous page's cids - one
+  // transition of grace, enough to cover an in-flight fetch/timer/observer
+  // resolving shortly after put_page - without accumulating every cid from every
+  // page ever visited in a long-running SPA session. See isCidKnown().
+  static #previousCids = new Set();
+
   static clear() {
     ComponentRegistry.entries = Type.map();
+    ComponentRegistry.#previousCids = new Set();
     ComponentRegistry.#actionChains = new Map();
     RenderCache.clear();
     ItemCache.clear();
@@ -91,12 +101,31 @@ export default class ComponentRegistry {
     return Erlang_Maps["get/3"](cid, ComponentRegistry.entries, null);
   }
 
+  // True when cid is registered now, or was registered on the page just left.
+  // These are the two cases a dispatcher failure treats as "not a bug" - a stale
+  // race, not a real invalid target - and drops with a warning instead of
+  // raising. A cid that matches neither was never real on any page the client
+  // has been on, which is what actually distinguishes a race from a typo'd or
+  // otherwise-invalid target. See #previousCids for why only one page of grace.
+  static isCidKnown(cid) {
+    return (
+      ComponentRegistry.isCidRegistered(cid) ||
+      ComponentRegistry.#previousCids.has(Type.encodeMapKey(cid))
+    );
+  }
+
   // Deps: [:maps.is_key/2]
   static isCidRegistered(cid) {
     return Type.isTrue(Erlang_Maps["is_key/2"](cid, ComponentRegistry.entries));
   }
 
   static populate(entries) {
+    ComponentRegistry.#previousCids = new Set(
+      Type.mapEntries(ComponentRegistry.entries).map(
+        ([encodedKey]) => encodedKey,
+      ),
+    );
+
     ComponentRegistry.entries = entries;
     ComponentRegistry.#actionChains = new Map();
     RenderCache.clear();

@@ -2,7 +2,6 @@
 
 import {
   assert,
-  assertBoxedError,
   defineRuntimeGlobals,
   registerWebApis,
   sinon,
@@ -325,24 +324,67 @@ describe("Hologram", () => {
       sinon.restore();
     });
 
-    // The registry answers with plain null for a cid it does not hold, and null reaching
-    // callNamedFunction faults on reading a module name off it.
-    it("raises for a target the registry does not hold", () => {
-      assertBoxedError(
-        () => Hologram.executeAction(actionFor(Type.bitstring("nonexistent"))),
-        "ArgumentError",
-        'invalid action target, there is no component with CID: "nonexistent"',
+    // A held action can carry an epoch that matches the current one while its target still
+    // belongs to the page that was left (see #executeActionNow's own comment) - same shape as a
+    // stale dispatch, just missed by the epoch check, so it gets the same drop-and-warn treatment
+    // rather than crashing the page over a component that no longer exists. isCidKnown is what
+    // makes this provably that case rather than a genuinely invalid target: cid1 was registered on
+    // the page populate() just replaced, so ComponentRegistry has actually seen it.
+    it("drops a target the page just left, instead of raising", () => {
+      ComponentRegistry.putEntry(
+        cid1,
+        Type.map([
+          [Type.atom("module"), module7],
+          [Type.atom("struct"), Type.componentStruct({nextAction: Type.nil()})],
+        ]),
       );
+
+      ComponentRegistry.populate(Type.map());
+
+      const warnStub = sinon.stub(console, "warn");
+
+      try {
+        assert.doesNotThrow(() => Hologram.executeAction(actionFor(cid1)));
+
+        sinon.assert.calledOnceWithExactly(
+          warnStub,
+          "Hologram: dropped an action dispatched on a page that has been left:",
+          Interpreter.inspect(Type.atom("test_action")),
+        );
+      } finally {
+        warnStub.restore();
+      }
     });
 
-    it("doesn't dispatch to a target the registry does not hold", () => {
-      try {
-        Hologram.executeAction(actionFor(Type.bitstring("nonexistent")));
-      } catch {
-        // Asserted on in the case above - what matters here is what didn't run.
-      }
+    it("doesn't dispatch to a target the page just left", () => {
+      ComponentRegistry.putEntry(
+        cid1,
+        Type.map([
+          [Type.atom("module"), module7],
+          [Type.atom("struct"), Type.componentStruct({nextAction: Type.nil()})],
+        ]),
+      );
+
+      ComponentRegistry.populate(Type.map());
+
+      sinon.stub(console, "warn");
+
+      Hologram.executeAction(actionFor(cid1));
 
       sinon.assert.notCalled(callNamedFunctionStub);
+    });
+
+    // A cid the client has never seen on any page - not currently registered, and not the
+    // previous page's either - is not a stale race isCidKnown can vouch for. It is what a
+    // genuinely invalid target (typo'd cid, a dispatch built against the wrong page) looks like,
+    // and that is a real bug worth surfacing loudly rather than swallowing.
+    it("raises for a target that was never registered on any page", () => {
+      assert.throws(
+        () =>
+          Hologram.executeAction(actionFor(Type.bitstring("nonexistent"))),
+        HologramBoxedError,
+        'invalid action target, there is no component with CID: "nonexistent"',
+      );
     });
 
     it("dispatches to a registered target", () => {

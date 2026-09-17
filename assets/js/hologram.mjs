@@ -203,18 +203,33 @@ export default class Hologram {
     const params = Erlang_Maps["get/2"](Type.atom("params"), action);
     const target = Erlang_Maps["get/2"](Type.atom("target"), action);
 
-    // getComponentModule() answers with plain null for a cid the registry does not hold, and null
-    // reaching callNamedFunction faults on reading a module name off it - a raw TypeError naming
-    // neither the cid nor the action, which handleUncaughtError drops because it isn't boxed.
-    // An action reaches here only through #settleAction, which admits it when its epoch is the
-    // current one and the two epochs agree - so it was created while the registry answered for
-    // the page it answers for now. A target that does not resolve is therefore a cid that page
-    // never held, not a dispatch that outlived its own page - raised boxed, the way the error
-    // overlay reads it.
+    // #settleAction admits an action once its epoch matches the current one, on the assumption
+    // that a matching epoch means it was created while the registry still answered for the page
+    // it targets. A held action can break that: it is released once the registry catches up to
+    // the epoch it was stamped with, which is the destination page's epoch for at least one
+    // dispatch source (an async caller that reads the current epoch at fire time rather than at
+    // the moment it was bound) - so a target that belonged only to the page just left can still
+    // arrive here with an epoch that matches the new one, missed by the epoch check.
+    //
+    // A missing target is not automatically that case, though: it is equally what a genuinely
+    // invalid target (typo'd cid, a dispatch built against the wrong page) looks like from here,
+    // and that is a real bug worth raising loudly, not a race worth swallowing. isCidKnown tells
+    // the two apart - true only for a cid the client has actually seen (registered now, or on the
+    // page just left) - so only the provable race gets the drop-and-warn treatment; anything else
+    // falls through to raise, same as if this check did not exist.
     if (!ComponentRegistry.isCidRegistered(target)) {
-      Interpreter.raiseArgumentError(
-        `invalid action target, there is no component with CID: ${Interpreter.inspect(target)}`,
+      if (!ComponentRegistry.isCidKnown(target)) {
+        Interpreter.raiseArgumentError(
+          `invalid action target, there is no component with CID: ${Interpreter.inspect(target)}`,
+        );
+      }
+
+      console.warn(
+        "Hologram: dropped an action dispatched on a page that has been left:",
+        Interpreter.inspect(name),
       );
+
+      return null;
     }
 
     const componentModule = ComponentRegistry.getComponentModule(target);

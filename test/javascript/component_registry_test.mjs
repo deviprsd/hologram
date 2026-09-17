@@ -245,6 +245,35 @@ describe("ComponentRegistry", () => {
     });
   });
 
+  describe("isCidKnown()", () => {
+    it("is true for a cid registered now", () => {
+      assert.isTrue(ComponentRegistry.isCidKnown(cid2));
+    });
+
+    it("is true for a cid registered on the page populate() just replaced", () => {
+      ComponentRegistry.populate(Type.map([[cid3, entry3]]));
+
+      assert.isTrue(ComponentRegistry.isCidKnown(cid2));
+    });
+
+    it("is false for a cid that was never registered", () => {
+      assert.isFalse(ComponentRegistry.isCidKnown(cid3));
+    });
+
+    it("is false once a second populate() has moved past the page that held the cid", () => {
+      ComponentRegistry.populate(Type.map([[cid3, entry3]]));
+      ComponentRegistry.populate(Type.map([[cid4, entry3]]));
+
+      assert.isFalse(ComponentRegistry.isCidKnown(cid2));
+    });
+
+    it("is false after clear()", () => {
+      ComponentRegistry.clear();
+
+      assert.isFalse(ComponentRegistry.isCidKnown(cid2));
+    });
+  });
+
   it("populate()", () => {
     ComponentRegistry.populate("dummyentries");
     assert.equal(ComponentRegistry.entries, "dummyentries");
