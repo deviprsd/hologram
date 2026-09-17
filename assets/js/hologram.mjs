@@ -209,10 +209,21 @@ export default class Hologram {
     // the epoch it was stamped with, which is the destination page's epoch for at least one
     // dispatch source (an async caller that reads the current epoch at fire time rather than at
     // the moment it was bound) - so a target that belonged only to the page just left can still
-    // arrive here with an epoch that matches the new one. That is the same shape as a stale
-    // dispatch, just missed by the epoch check, so it gets the same treatment: drop it, don't
-    // crash the page over a target that answered for a component that no longer exists.
+    // arrive here with an epoch that matches the new one, missed by the epoch check.
+    //
+    // A missing target is not automatically that case, though: it is equally what a genuinely
+    // invalid target (typo'd cid, a dispatch built against the wrong page) looks like from here,
+    // and that is a real bug worth raising loudly, not a race worth swallowing. isCidKnown tells
+    // the two apart - true only for a cid the client has actually seen (registered now, or on the
+    // page just left) - so only the provable race gets the drop-and-warn treatment; anything else
+    // falls through to raise, same as if this check did not exist.
     if (!ComponentRegistry.isCidRegistered(target)) {
+      if (!ComponentRegistry.isCidKnown(target)) {
+        Interpreter.raiseArgumentError(
+          `invalid action target, there is no component with CID: ${Interpreter.inspect(target)}`,
+        );
+      }
+
       console.warn(
         "Hologram: dropped an action dispatched on a page that has been left:",
         Interpreter.inspect(name),
