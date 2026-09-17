@@ -78,6 +78,12 @@ export default class Hologram {
   static domEpoch = 0;
 
   // Made public to make tests easier
+  // Whether a render is on the stack - its patch walking the live DOM, or its event bindings
+  // being reconciled onto it. Set by render() alone: a patch made outside a render is not
+  // covered, and has to keep a dispatch out by its own means.
+  static isRendering = false;
+
+  // Made public to make tests easier
   static prefetchedPages = new Map();
 
   // Made public to make tests easier
@@ -104,11 +110,20 @@ export default class Hologram {
   // Epochs whose navigation failed before it could mount - nothing can ever answer for them.
   static #deadEpochs = new Set();
 
+  // Actions that arrived while a render was on the stack, waiting for it to finish.
+  static #deferredActions = [];
+
   // Actions belonging to a page that cannot answer for them yet, waiting for its mount.
   static #heldActions = [];
 
   static #historyId = null;
   static #isInitiated = false;
+
+  // A navigation's mount data, held between #showNewPage and the mount. The two are not always
+  // adjacent: when the destination's code has not loaded yet the mount runs from the bundle's
+  // announcement instead, so the state waits here rather than being passed along.
+  static #mountData = null;
+
   static #pageModule = null;
   static #pageParams = null;
   static #pendingJsInteropActions = [];
@@ -547,48 +562,62 @@ export default class Hologram {
   static render() {
     const startTime = performance.now();
 
-    const newVirtualDocument = Renderer.renderPage(
-      Hologram.#pageModule,
-      Hologram.#pageParams,
-    );
+    // A synchronous DOM event can reach a dispatch from inside this render: removing the element
+    // that has focus makes the browser fire focusout before the removal returns, and the document
+    // listener flushes that element's pending debounced dispatches there and then. An action
+    // running at that point renders into a tree this render is still walking, and the two renders
+    // leave the DOM and the virtual document describing different pages. While this flag is set a
+    // dispatch waits instead of running.
+    $.isRendering = true;
 
-    // On a full document load there is no previous render to diff against, only the page the
-    // server sent, so the old side is built by mirroring this render onto it. The patch then
-    // adopts those nodes instead of recreating the whole page.
-    if (Hologram.virtualDocument === null) {
-      Hologram.virtualDocument = Vdom.mirror(
-        newVirtualDocument,
-        document.documentElement,
+    try {
+      const newVirtualDocument = Renderer.renderPage(
+        Hologram.#pageModule,
+        Hologram.#pageParams,
       );
+
+      // On a full document load there is no previous render to diff against, only the page the
+      // server sent, so the old side is built by mirroring this render onto it. The patch then
+      // adopts those nodes instead of recreating the whole page.
+      if (Hologram.virtualDocument === null) {
+        Hologram.virtualDocument = Vdom.mirror(
+          newVirtualDocument,
+          document.documentElement,
+        );
+      }
+
+      Hologram.virtualDocument = Vdom.patchVirtualDocument(
+        Hologram.virtualDocument,
+        newVirtualDocument,
+      );
+
+      // A memoized subtree's controlled inputs skipped patch's own hook.update along with the rest of
+      // their diff, so re-sync them now that patch (and thus .elm) is settled - same timing the hook
+      // would have used.
+      Renderer.replayFormInputs();
+
+      // renderPage() collected this render's <window>/<document> bindings into Renderer.listenerBindings
+      // and its deferred element bindings (reach, resize) into Renderer.reachBindings and
+      // Renderer.resizeBindings. Now that the DOM is patched, reconcile them into real listeners on
+      // their targets. The deferred bindings are resolved here because their target is a live DOM
+      // element, which exists only after patch. Each resolve also drops a binding whose once modifier
+      // has fired, so reconcile tears it down. Every page-entry path reaches render() through
+      // #mountPage, so this also tears down a previous page's listeners on navigation.
+      EventListenerRegistry.reconcile([
+        ...Renderer.resolveListenerBindings(),
+        ...Renderer.resolveReachBindings(),
+        ...Renderer.resolveResizeBindings(),
+      ]);
+
+      // Reach listeners persist across renders, so reconcile alone does not re-run them. Recheck them
+      // now that the DOM is patched, so each re-syncs the children it watches and recomputes - firing
+      // again as content this render added extends or fills the container.
+      EventListeners.recheckScrollEdges();
+    } finally {
+      // A template expression is app code and can raise, so the flag is cleared on the way out
+      // either way. Leaving it set would silence every dispatch from here on.
+      $.isRendering = false;
     }
-
-    Hologram.virtualDocument = Vdom.patchVirtualDocument(
-      Hologram.virtualDocument,
-      newVirtualDocument,
-    );
-
-    // A memoized subtree's controlled inputs skipped patch's own hook.update along with the rest of
-    // their diff, so re-sync them now that patch (and thus .elm) is settled - same timing the hook
-    // would have used.
-    Renderer.replayFormInputs();
-
-    // renderPage() collected this render's <window>/<document> bindings into Renderer.listenerBindings
-    // and its deferred element bindings (reach, resize) into Renderer.reachBindings and
-    // Renderer.resizeBindings. Now that the DOM is patched, reconcile them into real listeners on
-    // their targets. The deferred bindings are resolved here because their target is a live DOM
-    // element, which exists only after patch. Each resolve also drops a binding whose once modifier
-    // has fired, so reconcile tears it down. Every page-entry path reaches render() through
-    // #mountPage, so this also tears down a previous page's listeners on navigation.
-    EventListenerRegistry.reconcile([
-      ...Renderer.resolveListenerBindings(),
-      ...Renderer.resolveReachBindings(),
-      ...Renderer.resolveResizeBindings(),
-    ]);
-
-    // Reach listeners persist across renders, so reconcile alone does not re-run them. Recheck them
-    // now that the DOM is patched, so each re-syncs the children it watches and recomputes - firing
-    // again as content this render added extends or fills the container.
-    EventListeners.recheckScrollEdges();
 
     console.log("Hologram: page rendered in", PerformanceTimer.diff(startTime));
     console.log(
@@ -597,6 +626,16 @@ export default class Hologram {
       "/",
       ItemCache.misses,
     );
+
+    // Drained after the reconcile above rather than straight after the patch: a deferred action
+    // renders, and a render collects the page's <window>/<document> bindings into
+    // Renderer.listenerBindings. Running one earlier would leave this render reconciling the
+    // other render's bindings.
+    //
+    // Reached only when the render finished. A render that raised left the DOM and the virtual
+    // document describing different pages, and running the queue against that repairs nothing -
+    // it waits for the next render that finishes.
+    $.#drainDeferredActions();
   }
 
   static run() {
@@ -940,6 +979,32 @@ export default class Hologram {
     });
   }
 
+  // Runs what a render held back, in the order it arrived. Settled rather than executed: a
+  // deferred action never got an answer from the settle rule, so it meets the same rules as any
+  // other, against the page the client is on by the time it runs.
+  //
+  // One action is no reason to drop the rest: a single focusout flushes every pending slot on the
+  // element at once, so a queue of several is the ordinary case, and they have nothing to do with
+  // one another. Every one is delivered and the first error is raised once the queue is empty -
+  // the same bargain the debouncer makes with the callbacks it flushes.
+  static #drainDeferredActions() {
+    let firstError;
+
+    while ($.#deferredActions.length > 0) {
+      const {action, epoch} = $.#deferredActions.shift();
+
+      try {
+        $.#settleAction(action, epoch);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+
+    if (firstError !== undefined) {
+      throw firstError;
+    }
+  }
+
   // Takes the page's own bundle out of the document the server described, leaving every other
   // script it carries to be patched in and run.
   //
@@ -1081,6 +1146,12 @@ export default class Hologram {
   }
 
   static async #handlePopstateEvent(event) {
+    // The same boundary as #showNewPage, on the history's side of it: nothing of the destination
+    // exists yet, so every debounced or throttled dispatch still pending belongs to the page being
+    // left. It cannot wait for the restore below, which a popstate carrying no snapshot skips.
+    Debouncer.cancelAll();
+    Throttler.cancelAll();
+
     await $.#savePageSnapshot();
     $.#historyId = event.state;
 
@@ -1254,8 +1325,14 @@ export default class Hologram {
   // What the page was mounted with, left behind by the script the server wrote into the page.
   // A navigation reaches it the same way a document load does, by patching in the page the
   // server described, that script included.
+  // A navigation carries the mount data as payload fields, which #showNewPage decodes and holds.
+  // A loaded document has no payload, so it carries the same six values as an inline script that
+  // defines pageMountData - the one channel markup has for structured state.
   static #loadMountData() {
-    const mountData = globalThis.Hologram.pageMountData(Hologram.#deps);
+    const mountData =
+      $.#mountData ?? globalThis.Hologram.pageMountData(Hologram.#deps);
+
+    $.#mountData = null;
 
     Hologram.#pageModule = mountData.pageModule;
     Hologram.#pageParams = mountData.pageParams;
@@ -1304,17 +1381,13 @@ export default class Hologram {
   }
 
   static #mountPage(isPageModuleRegistered = false) {
+    // Nothing pending from the page the user left is dropped here. It is dropped at the instant
+    // the user leaves instead - in #showNewPage and #handlePopstateEvent - which is the last
+    // point at which every pending timer provably belongs to the page being left.
+    //
     // Whichever pointer ran ahead during the transition, the mount is where they converge: from
     // here the page on screen and the page the registry answers for are the same page.
     $.domEpoch = $.registryEpoch = Math.max($.domEpoch, $.registryEpoch);
-
-    // Every page-entry path funnels through here (client-side navigation, back/forward
-    // restoration, initial mount), so this is where dispatches still pending from the previous
-    // page are dropped - the context they were meant for no longer exists. Cancel, not flush: a
-    // dispatch must never execute on a page the user has left. On the initial mount both
-    // cancellations are no-ops.
-    Debouncer.cancelAll();
-    Throttler.cancelAll();
 
     let mountData = null;
 
@@ -1345,6 +1418,10 @@ export default class Hologram {
     }
 
     window.requestAnimationFrame(() => {
+      // The registry arrives with every struct's props empty - this render is what writes them, so
+      // that the payload doesn't carry each prop value a second time - which is one more reason
+      // nothing above may run a handler before this call, and why every drain below it stays below
+      // it.
       $.render();
 
       if ($.#scrollPosition) {
@@ -1447,6 +1524,15 @@ export default class Hologram {
     // hand.
     $.#pendingJsInteropActions = [];
 
+    // A debounce or a throttle holds its dispatch in a timer rather than in a queue, and a timer
+    // outlives the page that armed it. This line is the last instant that is still only the page
+    // being left - nothing of the destination is on screen, none of its listeners are attached,
+    // none of its scripts have run - so every timer pending here provably belongs to the page
+    // being left, and cancelling all of them takes nothing from the destination. Cancel, not
+    // flush: a dispatch must never execute on a page the user has left.
+    Debouncer.cancelAll();
+    Throttler.cancelAll();
+
     // The patch below puts the destination's markup on screen and runs its scripts, so the epoch
     // of what is displayed advances here, ahead of the registry - the mount brings the registry
     // level. What the destination's script dispatches from here on carries that epoch and waits
@@ -1467,7 +1553,25 @@ export default class Hologram {
       $.#loadPageBundle($.#pageBundlePath(payload.pageDigest));
     }
 
-    const tree = Interpreter.evaluateJavaScriptExpression(payload.tree);
+    // Readable before the patch, rather than as a side effect of a script the patch inserts and
+    // the browser then runs. The page module is already decoded above, so it is reused.
+    $.#mountData = {
+      componentRegistry: Interpreter.evaluateJavaScriptExpression(
+        payload.componentRegistry,
+      ),
+      pageModule: pageModule,
+      pageParams: Interpreter.evaluateJavaScriptExpression(payload.pageParams),
+      selfEchoes: Interpreter.evaluateJavaScriptExpression(payload.selfEchoes),
+      subReceiptAdds: Interpreter.evaluateJavaScriptExpression(
+        payload.subReceiptAdds,
+      ),
+      subReceiptDrops: Interpreter.evaluateJavaScriptExpression(
+        payload.subReceiptDrops,
+      ),
+    };
+
+    // See: docs/navigation_payload_wire_format.md
+    const tree = Renderer.decodeTree(payload.tree);
     const newVirtualDocument = Renderer.renderTree(tree);
 
     $.#dropPageBundleScript(newVirtualDocument, payload.pageDigest);
@@ -1770,6 +1874,13 @@ export default class Hologram {
     // the one being moved to, and it cannot answer until it mounts.
     if ($.domEpoch !== $.registryEpoch) {
       $.#heldActions.push({action: action, epoch: epoch});
+      return;
+    }
+
+    // A render is on the stack, so the DOM it is walking is mid-update and this action's own
+    // render would walk the same tree behind it. It waits, and runs when that render is done.
+    if ($.isRendering) {
+      $.#deferredActions.push({action: action, epoch: epoch});
       return;
     }
 

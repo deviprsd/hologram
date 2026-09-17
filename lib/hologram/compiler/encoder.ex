@@ -22,6 +22,26 @@ defmodule Hologram.Compiler.Encoder do
   # with the opaque `MapSet.t()` in the spec.
   @dialyzer {:no_opaque, {:encode_term!, 1}}
 
+  # The only characters a term's text cannot carry into the JavaScript this module emits.
+  # Everything else - tabs, other control chars, non-printable and astral Unicode - is legal
+  # inside a string literal and inside a script element, and travels as itself.
+  #
+  #   \\   would eat the character after it
+  #   "    would close the literal
+  #   \n   and \r are not allowed inside a literal at all
+  #   NUL  is rewritten to U+FFFD by the HTML parser inside script data
+  #   <    so that "</script" can never form in a page's inline script
+  #
+  # A binary that is not valid UTF-8 is not escaped at all: a string literal is read back as
+  # text, so such bytes have no spelling in one, and the binary travels as hex instead - see
+  # encode_bytes/1.
+  @escapable_chars [<<0>>, "\n", "\r", "\"", "<", "\\"]
+
+  # A compiled pattern holds a reference, which no module attribute can carry, and compiling one
+  # costs more than escaping a short atom. So it is built once and kept where every process can
+  # read it.
+  @escapable_chars_pattern_key {__MODULE__, :escapable_chars_pattern}
+
   @doc """
   Encodes Elixir or Erlang alias as JavaScript class name.
 
@@ -55,6 +75,21 @@ defmodule Hologram.Compiler.Encoder do
       end
 
     Enum.map_join(class_segments, "_", &:string.titlecase/1)
+  end
+
+  @doc """
+  Encodes the given string as a JavaScript string literal that can be printed into a script
+  element: the quotes and backslashes a literal cannot hold raw, the line breaks it cannot span,
+  and the `<` that could spell the closing tag of the element around it are escaped.
+
+  ## Examples
+
+      iex> encode_as_string(~S|a"b\\c</script>|)
+      ~S|"a\\"b\\\\c\\u{3C}/script>"|
+  """
+  @spec encode_as_string(String.t()) :: String.t()
+  def encode_as_string(str) do
+    encode_as_string(str, true)
   end
 
   @doc """
@@ -193,7 +228,7 @@ defmodule Hologram.Compiler.Encoder do
     captured_function_js = encode_as_string(captured_function, true)
 
     captured_module_str =
-      if Reflection.elixir_module?(captured_module) do
+      if Reflection.elixir_module?(captured_module, context.ir_plt) do
         Reflection.module_name(captured_module)
       else
         ":#{captured_module}"
@@ -217,7 +252,15 @@ defmodule Hologram.Compiler.Encoder do
         %IR.BitstringSegment{value: %IR.StringType{value: value}, modifiers: modifiers},
         context
       ) do
-    value_str = encode_primitive_type(:string, value, true)
+    # Text goes as a string; bytes that are not text go as a bitstring, which the client splices
+    # in whole. See encode_bytes/1.
+    value_str =
+      if String.valid?(value) do
+        encode_primitive_type(:string, value, true)
+      else
+        encode_bytes(value)
+      end
+
     encode_bitstring_segment(value_str, modifiers, context)
   end
 
@@ -533,7 +576,11 @@ defmodule Hologram.Compiler.Encoder do
   end
 
   def encode_ir(%IR.StringType{value: value}, _context) do
-    encode_primitive_type(:bitstring, value, true)
+    if String.valid?(value) do
+      encode_primitive_type(:bitstring, value, true)
+    else
+      encode_bytes(value)
+    end
   end
 
   # TODO: catch_clauses, else_clauses, after_block
@@ -641,22 +688,26 @@ defmodule Hologram.Compiler.Encoder do
   Generates the ERTS registration statement carrying the metadata of the given modules.
 
   Each bundle registers the modules it defines, so a stacktrace frame can name the application a
-  module belongs to and the source file it was compiled from. Returns an empty string when client
-  stacktraces are disabled, or when none of the modules can be loaded to read their metadata
-  from.
+  module belongs to and the source file it was compiled from. The metadata of a module held by the
+  given map (see `Hologram.Compiler.build_module_metadata/1`) is taken from it; any other module's
+  is read from the loaded module, and the map may be nil. Returns an empty string when client
+  stacktraces are disabled, or when none of the modules has metadata to register.
 
   ## Examples
 
-      iex> encode_module_metadata_registration([Aaa.Bbb])
+      iex> encode_module_metadata_registration([Aaa.Bbb], %{Aaa.Bbb => %{app: :my_app, file: "lib/aaa/bbb.ex"}})
       "ERTS.registerModuleMetadata({\"Aaa.Bbb\": {app: \"my_app\", file: \"lib/aaa/bbb.ex\"}});"
   """
-  @spec encode_module_metadata_registration(list(module)) :: String.t()
-  def encode_module_metadata_registration(modules) do
+  @spec encode_module_metadata_registration(
+          list(module),
+          %{module => %{app: atom | nil, file: String.t() | nil}} | nil
+        ) :: String.t()
+  def encode_module_metadata_registration(modules, module_metadata) do
     entries =
       if Hologram.client_stacktraces?() do
         modules
         |> Enum.sort()
-        |> Enum.map(fn module -> {module, encode_module_metadata(module)} end)
+        |> Enum.map(fn module -> {module, encode_module_metadata(module, module_metadata)} end)
         |> Enum.reject(fn {_module, metadata} -> metadata == "{}" end)
         |> Enum.map_join(", ", fn {module, metadata} ->
           ~s/"#{Reflection.module_name(module)}": #{metadata}/
@@ -834,6 +885,15 @@ defmodule Hologram.Compiler.Encoder do
     "\n#{expr_js};"
   end
 
+  # A string literal carries text and nothing else: the client reads it back through UTF-8, so a
+  # byte that is not valid UTF-8 has no spelling in one - an escape naming the byte comes back as
+  # the UTF-8 bytes of the character it named. A binary holding such a byte travels as the hex of
+  # its bytes instead, and the client rebuilds them as they were. Lowercase, which is the one
+  # spelling of hex the client writes and the server reads. Linear, like the escaping it replaces.
+  defp encode_bytes(binary) do
+    ~s/Type.bitstring("#{Base.encode16(binary, case: :lower)}", "hex")/
+  end
+
   # The clause head is rendered at build time, but which of its parts failed to
   # match is known only at raise time, so each guard leaf travels with its own
   # closure for the client to evaluate. The leaves line up with the guard IR,
@@ -987,12 +1047,11 @@ defmodule Hologram.Compiler.Encoder do
   # "(app vsn) file:line" prefix as server frames - the version comes from
   # ERTS.appVersions, keyed by the app named here.
   # Nil values are omitted rather than encoded as null.
-  defp encode_module_metadata(module) do
+  defp encode_module_metadata(module, module_metadata) do
     entries =
-      if Code.ensure_loaded?(module) do
-        [app: Application.get_application(module), file: Reflection.relative_source_path(module)]
-      else
-        []
+      case module_metadata do
+        %{^module => %{app: app, file: file}} -> [app: app, file: file]
+        _no_precomputed_metadata -> loaded_module_metadata(module)
       end
 
     fields =
@@ -1105,75 +1164,48 @@ defmodule Hologram.Compiler.Encoder do
     encode_as_string(name, false) <> "_#{version}"
   end
 
-  defp escape_non_printable_and_special_chars(str)
+  defp escapable_chars_pattern do
+    case :persistent_term.get(@escapable_chars_pattern_key, nil) do
+      nil ->
+        pattern = :binary.compile_pattern(@escapable_chars)
+        :persistent_term.put(@escapable_chars_pattern_key, pattern)
+        pattern
 
-  defp escape_non_printable_and_special_chars("\\" <> rest) do
-    "\\\\" <> escape_non_printable_and_special_chars(rest)
+      pattern ->
+        pattern
+    end
   end
 
-  defp escape_non_printable_and_special_chars("\"" <> rest) do
-    "\\\"" <> escape_non_printable_and_special_chars(rest)
+  defp escape_char(0), do: "\\u{0}"
+  defp escape_char(?\n), do: "\\n"
+  defp escape_char(?\r), do: "\\r"
+  defp escape_char(?"), do: "\\\""
+  defp escape_char(?<), do: "\\u{3C}"
+  defp escape_char(?\\), do: "\\\\"
+
+  # Every escapable char is one byte, so a match is always one byte wide.
+  defp escape_matches(str, position, [], acc) do
+    Enum.reverse([binary_part(str, position, byte_size(str) - position) | acc])
   end
 
-  defp escape_non_printable_and_special_chars("\a" <> rest) do
-    "\\x07" <> escape_non_printable_and_special_chars(rest)
+  defp escape_matches(str, position, [{index, _length} | rest], acc) do
+    run = binary_part(str, position, index - position)
+    escaped = escape_char(:binary.at(str, index))
+
+    escape_matches(str, index + 1, rest, [escaped, run | acc])
   end
 
-  defp escape_non_printable_and_special_chars("\b" <> rest) do
-    "\\b" <> escape_non_printable_and_special_chars(rest)
+  # Copies the stretches between the chars that have to be escaped rather than rebuilding the
+  # text character by character: one native scan, and each stretch is a sub-binary that is never
+  # copied until the result is assembled. Linear in the length of the text, where growing the
+  # result with `<>` on the way out of a per-character recursion was quadratic.
+  #
+  # Takes text. A binary that is not valid UTF-8 never gets here - see encode_bytes/1.
+  defp escape_non_printable_and_special_chars(str) do
+    str
+    |> escape_matches(0, :binary.matches(str, escapable_chars_pattern()), [])
+    |> IO.iodata_to_binary()
   end
-
-  defp escape_non_printable_and_special_chars("\f" <> rest) do
-    "\\f" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars("\n" <> rest) do
-    "\\n" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars("\r" <> rest) do
-    "\\r" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars("\t" <> rest) do
-    "\\t" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars("\v" <> rest) do
-    "\\v" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  # Line separator character (LS)
-  # (JavaScript editors have problems with this char)
-  defp escape_non_printable_and_special_chars(<<8_232::utf8>> <> rest) do
-    "\\u{2028}" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  # Paragraph separator character (PS)
-  # (JavaScript editors have problems with this char)
-  defp escape_non_printable_and_special_chars(<<8_233::utf8>> <> rest) do
-    "\\u{2029}" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars(<<code::utf8, rest::binary>>) do
-    char = <<code::utf8>>
-
-    escaped_char =
-      if String.printable?(char) do
-        char
-      else
-        "\\u{#{Integer.to_string(code, 16)}}"
-      end
-
-    escaped_char <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars(<<char::integer, rest::binary>>) do
-    # No need to pad with 0, because chars smaller that 16 will be encoded differently
-    "\\x#{Integer.to_string(char, 16)}" <> escape_non_printable_and_special_chars(rest)
-  end
-
-  defp escape_non_printable_and_special_chars(""), do: ""
 
   defp has_async_call?(clauses, context) do
     MapSet.size(context.async_mfas) > 0 and
@@ -1205,6 +1237,14 @@ defmodule Hologram.Compiler.Encoder do
   end
 
   defp has_match_operator?(_ast), do: false
+
+  defp loaded_module_metadata(module) do
+    if Code.ensure_loaded?(module) do
+      [app: Application.get_application(module), file: Reflection.relative_source_path(module)]
+    else
+      []
+    end
+  end
 
   # A stacktrace frame reports the line the function currently running has
   # reached, so each call records its own line before it is made - the way the

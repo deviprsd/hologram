@@ -13,6 +13,7 @@ import CallStack from "../../assets/js/erts/call_stack.mjs";
 import Client from "../../assets/js/client.mjs";
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
 import Config from "../../assets/js/config.mjs";
+import Debouncer from "../../assets/js/debouncer.mjs";
 import EventListenerRegistry from "../../assets/js/event_listener_registry.mjs";
 import EventListeners from "../../assets/js/event_listeners.mjs";
 import GlobalRegistry from "../../assets/js/global_registry.mjs";
@@ -22,6 +23,7 @@ import HologramRuntimeError from "../../assets/js/errors/runtime_error.mjs";
 import InitActionQueue from "../../assets/js/init_action_queue.mjs";
 import Interpreter from "../../assets/js/interpreter.mjs";
 import Renderer from "../../assets/js/renderer.mjs";
+import Throttler from "../../assets/js/throttler.mjs";
 import Type from "../../assets/js/type.mjs";
 import UncaughtErrorOverlay from "../../assets/js/uncaught_error_overlay.mjs";
 import Vdom from "../../assets/js/vdom.mjs";
@@ -1588,29 +1590,41 @@ describe("Hologram", () => {
       type: "redirect",
     });
 
-    const encodedText = (str) =>
-      `Type.tuple([Type.atom("text"), Type.bitstring("${str}")])`;
+    // The wire form: an element is [tagName, attributes, children], attributes are a flat
+    // name/value run, and text is a bare string.
+    const wireElement = (tagName, attributes = [], children = []) => [
+      tagName,
+      attributes,
+      children,
+    ];
 
-    const encodedElement = (tagName, children = "") =>
-      `Type.tuple([Type.atom("element"), Type.bitstring("${tagName}"), Type.list([]), Type.list([${children}])])`;
-
-    const encodedBundleScript = (pageDigest) =>
-      `Type.tuple([Type.atom("element"), Type.bitstring("script"), Type.list([Type.tuple([Type.bitstring("src"), Type.keywordList([[Type.atom("text"), Type.bitstring("/hologram/page-${pageDigest}.js")]])])]), Type.list([])])`;
+    const wireBundleScript = (pageDigest) =>
+      wireElement("script", ["src", `/hologram/page-${pageDigest}.js`]);
 
     // What the server sends: the whole document, the page's own bundle script included.
-    const encodedTreeFor = (pageDigest, bodyText) =>
-      `Type.list([${encodedElement(
+    const treeFor = (pageDigest, bodyText) => [
+      wireElement(
         "html",
-        `${encodedElement("head", encodedBundleScript(pageDigest))},${encodedElement(
-          "body",
-          encodedText(bodyText),
-        )}`,
-      )}])`;
+        [],
+        [
+          wireElement("head", [], [wireBundleScript(pageDigest)]),
+          wireElement("body", [], [bodyText]),
+        ],
+      ),
+    ];
+
+    // The mount data the server used to write into an inline script, carried as payload fields.
+    const encodedComponentRegistry = `Type.map([[Type.bitstring("page"), Type.map([[Type.atom("module"), ${encodedModule7}], [Type.atom("struct"), Type.componentStruct({state: Type.map([[Type.atom("count"), Type.integer(7)]])})]])]])`;
 
     const payloadFor = (pageDigest, bodyText = "page content") => ({
+      componentRegistry: encodedComponentRegistry,
       pageDigest: pageDigest,
       pageModule: encodedModule7,
-      tree: encodedTreeFor(pageDigest, bodyText),
+      pageParams: encodedNoParams,
+      selfEchoes: "Type.list([])",
+      subReceiptAdds: "Type.list([])",
+      subReceiptDrops: "Type.list([])",
+      tree: treeFor(pageDigest, bodyText),
       type: "page",
     });
 
@@ -1624,9 +1638,7 @@ describe("Hologram", () => {
     const seedCurrentPage = () => {
       Hologram.virtualDocument = Vdom.mirror(
         Renderer.renderTree(
-          Interpreter.evaluateJavaScriptExpression(
-            encodedTreeFor("current", "current page content"),
-          ),
+          Renderer.decodeTree(treeFor("current", "current page content")),
         ),
         document.documentElement,
       );
@@ -1722,6 +1734,43 @@ describe("Hologram", () => {
         patchStub = null;
 
         removeBundleScripts();
+      });
+
+      // The point of carrying the state beside the render: it is readable without any script
+      // having run, so it no longer depends on the patch inserting one and the browser executing
+      // it. No mount data script exists in this tree at all.
+      it("makes the page's mount data readable before the patch", async () => {
+        delete globalThis.Hologram.pageMountData;
+        globalThis.Hologram.pageScriptLoaded = true;
+
+        await Hologram.loadNewPage("/target", payloadFor("mount-data"));
+
+        // Nothing defined the carrier, so the mount can only have read the payload.
+        assert.isUndefined(globalThis.Hologram.pageMountData);
+        assert.notInclude(document.head.innerHTML, "pageMountData");
+      });
+
+      // That the mount then consumes it is a feature test's job - the mount is not reachable from
+      // here, since it needs either the destination's code already registered or its bundle to
+      // announce itself. What is provable here is that the payload's fields are decoded during
+      // the swap: a field that cannot be evaluated fails it.
+      it("decodes the payload's mount data during the swap", async () => {
+        globalThis.Hologram.pageScriptLoaded = true;
+
+        const payload = {
+          ...payloadFor("bad-registry"),
+          componentRegistry: "Type.map([[[",
+        };
+
+        let thrown = null;
+
+        try {
+          await Hologram.loadNewPage("/target", payload);
+        } catch (error) {
+          thrown = error;
+        }
+
+        assert.isNotNull(thrown);
       });
 
       // The property the whole feature rests on: what the server described is on screen while the
@@ -1950,6 +1999,79 @@ describe("Hologram", () => {
           clock.restore();
           executeActionStub.restore();
           warnStub.restore();
+        }
+      });
+
+      // A debounce holds its dispatch in a timer, and a timer outlives the page that armed it.
+      // The destination is on screen from the patch onward and, when its bundle has still to
+      // arrive, stays that way for a whole round trip before the mount - long enough for a window
+      // opened on the page being left to elapse against the page that replaced it.
+      it("drops a debounced dispatch the page being left had pending", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+        const element = document.createElement("div");
+
+        let dispatched = false;
+
+        try {
+          Debouncer.run(element, "my_slot", 2000, () => (dispatched = true));
+
+          await Hologram.loadNewPage("/target", payloadFor("debounce-pending"));
+
+          clock.tick(5000);
+
+          assert.isFalse(dispatched);
+        } finally {
+          clock.restore();
+        }
+      });
+
+      // The trailing edge is the throttle's equivalent of a pending debounce: a call held for the
+      // end of a window that has not closed yet.
+      it("drops a throttled dispatch the page being left was holding", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+        const element = document.createElement("div");
+
+        let leadingEdgeCount = 0;
+        let trailingEdgeCount = 0;
+
+        try {
+          Throttler.run(element, "my_slot", 2000, () => leadingEdgeCount++);
+          Throttler.run(element, "my_slot", 2000, () => trailingEdgeCount++);
+
+          assert.equal(leadingEdgeCount, 1);
+          assert.equal(trailingEdgeCount, 0);
+
+          await Hologram.loadNewPage("/target", payloadFor("throttle-held"));
+
+          clock.tick(5000);
+
+          assert.equal(leadingEdgeCount, 1);
+          assert.equal(trailingEdgeCount, 0);
+        } finally {
+          clock.restore();
+        }
+      });
+
+      // A statement about the registries, not a scenario the browser reaches: a destination's
+      // bindings are wired by the mount's render, not by the navigation's patch, so nothing it
+      // owns can arm a window before it mounts. What this pins is that starting a navigation
+      // schedules no later sweep.
+      it("keeps a debounced dispatch armed after the navigation began", async () => {
+        const clock = sinon.useFakeTimers({shouldClearNativeTimers: true});
+        const element = document.createElement("div");
+
+        let dispatched = false;
+
+        try {
+          await Hologram.loadNewPage("/target", payloadFor("debounce-armed"));
+
+          Debouncer.run(element, "my_slot", 2000, () => (dispatched = true));
+
+          clock.tick(5000);
+
+          assert.isTrue(dispatched);
+        } finally {
+          clock.restore();
         }
       });
 
@@ -2490,11 +2612,47 @@ describe("Hologram", () => {
   });
 
   describe("render()", () => {
+    let clock = null;
+
+    const deferredAction1 = Type.actionStruct({
+      name: Type.atom("deferred_action_1"),
+      params: Type.map(),
+      target: cid1,
+    });
+
+    const deferredAction2 = Type.actionStruct({
+      name: Type.atom("deferred_action_2"),
+      params: Type.map(),
+      target: cid1,
+    });
+
     afterEach(() => {
+      clock?.restore();
+      clock = null;
+      Hologram.isRendering = false;
       Hologram.virtualDocument = null;
       Renderer.listenerBindings = [];
       sinon.restore();
     });
+
+    // The seam for a dispatch that arrives from inside the patch: a scheduled action whose timer
+    // is fired by hand while the patch stub is on the stack, which is where a focusout flush
+    // reaches the settle rule in a real page.
+    const stubRender = (patchFake) => {
+      clock = sinon.useFakeTimers();
+
+      sinon.stub(Renderer, "renderPage").returns({
+        sel: "html",
+        data: {},
+        children: [],
+      });
+
+      sinon.stub(EventListenerRegistry, "reconcile");
+      sinon.stub(EventListeners, "recheckScrollEdges");
+      sinon.stub(Vdom, "patchVirtualDocument").callsFake(patchFake);
+
+      Hologram.virtualDocument = {sel: "html", data: {}, children: []};
+    };
 
     it("reconciles the global and resolved observer bindings collected during the render", () => {
       const listenerBindings = [
@@ -2582,6 +2740,144 @@ describe("Hologram", () => {
         previousVirtualDocument,
         renderedVirtualDocument,
       );
+    });
+
+    // A dispatch arriving while the flag is set has to wait for the render to finish, so the flag
+    // has to be set for the whole of the render and cleared by the time it returns.
+    it("marks itself as running while it patches", () => {
+      const renderedVirtualDocument = {sel: "html", data: {}, children: []};
+
+      sinon.stub(Renderer, "renderPage").returns(renderedVirtualDocument);
+      sinon.stub(EventListenerRegistry, "reconcile");
+      sinon.stub(EventListeners, "recheckScrollEdges");
+
+      let isRenderingDuringPatch = null;
+
+      sinon.stub(Vdom, "patchVirtualDocument").callsFake(() => {
+        isRenderingDuringPatch = Hologram.isRendering;
+      });
+
+      Hologram.virtualDocument = {sel: "html", data: {}, children: []};
+
+      Hologram.render();
+
+      assert.isTrue(isRenderingDuringPatch);
+      assert.isFalse(Hologram.isRendering);
+    });
+
+    // A page's template expressions are app code and can raise. A render that died with the flag
+    // still set would leave every dispatch after it waiting for a render that had already ended.
+    it("stops marking itself as running when the render raises", () => {
+      sinon.stub(Renderer, "renderPage").throws(new Error("render failed"));
+
+      assert.throws(() => Hologram.render(), Error, "render failed");
+
+      assert.isFalse(Hologram.isRendering);
+    });
+
+    // An undelayed dispatch settles synchronously, so one arriving from inside the patch would
+    // otherwise run there and render into the tree the patch is walking.
+    it("holds a dispatch that arrives while it is running, and runs it once it is done", () => {
+      const calls = [];
+
+      sinon
+        .stub(Hologram, "executeAction")
+        .callsFake(() => calls.push("execute action"));
+
+      stubRender(() => {
+        Hologram.scheduleAction(deferredAction1);
+        clock.tick(0);
+        calls.push("finish patch");
+      });
+
+      Hologram.render();
+
+      assert.deepStrictEqual(calls, ["finish patch", "execute action"]);
+    });
+
+    it("runs held dispatches in the order they arrived", () => {
+      const executeActionStub = sinon.stub(Hologram, "executeAction");
+
+      stubRender(() => {
+        Hologram.scheduleAction(deferredAction1);
+        Hologram.scheduleAction(deferredAction2);
+        clock.tick(0);
+      });
+
+      Hologram.render();
+
+      sinon.assert.calledTwice(executeActionStub);
+
+      assert.deepStrictEqual(executeActionStub.getCall(0).args, [
+        deferredAction1,
+        0,
+      ]);
+
+      assert.deepStrictEqual(executeActionStub.getCall(1).args, [
+        deferredAction2,
+        0,
+      ]);
+    });
+
+    // A single focusout flushes every pending slot on the element at once, so a queue of several
+    // is the ordinary case and they have nothing to do with one another - the same bargain the
+    // debouncer makes with the callbacks it flushes.
+    it("delivers every held dispatch when one of them raises, and raises the first error", () => {
+      const executed = [];
+
+      sinon.stub(Hologram, "executeAction").callsFake((action) => {
+        executed.push(action);
+
+        if (action === deferredAction1) {
+          throw new Error("action failed");
+        }
+      });
+
+      stubRender(() => {
+        Hologram.scheduleAction(deferredAction1);
+        Hologram.scheduleAction(deferredAction2);
+        clock.tick(0);
+      });
+
+      assert.throws(() => Hologram.render(), Error, "action failed");
+
+      assert.deepStrictEqual(executed, [deferredAction1, deferredAction2]);
+    });
+
+    // A render that raised left the DOM and the virtual document describing different pages, so
+    // running the queue against that repairs nothing. It waits for a render that finishes.
+    it("keeps a held dispatch when the render raises, and runs it on the next render", () => {
+      const executeActionStub = sinon.stub(Hologram, "executeAction");
+
+      let patchCount = 0;
+
+      stubRender(() => {
+        patchCount += 1;
+
+        if (patchCount === 1) {
+          Hologram.scheduleAction(deferredAction1);
+          clock.tick(0);
+        }
+      });
+
+      let reconcileCount = 0;
+
+      // The reconcile runs after the patch, so the dispatch is already held when this raises.
+      EventListenerRegistry.reconcile.callsFake(() => {
+        reconcileCount += 1;
+
+        if (reconcileCount === 1) {
+          throw new Error("reconcile failed");
+        }
+      });
+
+      assert.throws(() => Hologram.render(), Error, "reconcile failed");
+
+      sinon.assert.notCalled(executeActionStub);
+
+      Hologram.render();
+
+      sinon.assert.calledOnceWithExactly(executeActionStub, deferredAction1, 0);
     });
   });
 

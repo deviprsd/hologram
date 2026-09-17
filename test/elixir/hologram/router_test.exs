@@ -57,6 +57,10 @@ defmodule Hologram.RouterTest do
     test "routes POST command request" do
       {masked_csrf_token, unmasked_csrf_token} = CSRFProtection.generate_tokens()
 
+      # A command reaches a component the server rendered, so its module, and the command name
+      # the request carries, are loaded.
+      Code.ensure_loaded!(Module2)
+
       # Simulate that JSON has already been parsed upstream by Plug.Parsers
       parsed_json = [
         2,
@@ -106,10 +110,13 @@ defmodule Hologram.RouterTest do
         }
       ]
 
+      # An atom param is cast to an atom that already exists, one the app's own code holds.
+      param_atom = :xyz
+
       conn =
         :post
         |> Plug.Test.conn(
-          "/hologram/page/Hologram.Test.Fixtures.Router.Module1?a=123&b=xyz",
+          "/hologram/page/Hologram.Test.Fixtures.Router.Module1?a=123&b=#{param_atom}",
           ""
         )
         |> Plug.Conn.put_req_header("content-type", "application/json")
@@ -122,7 +129,7 @@ defmodule Hologram.RouterTest do
       assert Plug.Conn.get_resp_header(conn, "hologram-page-data") == ["true"]
       assert response["type"] == "page"
       # The page renders its params, so the tree carrying the render shows them cast.
-      assert response["tree"] =~ "a = 123, b = :xyz"
+      assert Jason.encode!(response["tree"]) =~ "a = 123, b = #{inspect(param_atom)}"
     end
   end
 
@@ -215,13 +222,16 @@ defmodule Hologram.RouterTest do
     test "request path is matched" do
       ETS.put(PageDigestRegistryStub.ets_table_name(), Module1, :dummy_module_1_digest)
 
+      # An atom param is cast to an atom that already exists, one the app's own code holds.
+      param_atom = :xyz
+
       conn =
         :get
-        |> Plug.Test.conn("/hologram-test-fixtures-router-module1/123/xyz")
+        |> Plug.Test.conn("/hologram-test-fixtures-router-module1/123/#{param_atom}")
         |> Plug.Test.init_test_session(%{})
         |> call([])
 
-      assert String.contains?(conn.resp_body, "Module1 page, a = 123, b = :xyz")
+      assert String.contains?(conn.resp_body, "Module1 page, a = 123, b = #{inspect(param_atom)}")
 
       # Initial pages include runtime script
       assert String.contains?(conn.resp_body, "hologram/runtime")

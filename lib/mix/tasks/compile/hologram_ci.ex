@@ -103,7 +103,12 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
       umbrella? = Reflection.umbrella?()
       page_modules = Reflection.list_pages()
-      Compiler.validate_page_modules(page_modules)
+
+      Compiler.validate_page_modules(
+        page_modules,
+        page_module_info_plt(page_modules, umbrella?, sup)
+      )
+
       templatables = page_modules ++ Reflection.list_components()
 
       # Seed with what CallGraph.list_runtime_mfas/2's and CallGraph.list_page_mfas/3's
@@ -182,6 +187,23 @@ defmodule Mix.Tasks.Compile.HologramCi do
     ]
   end
 
+  # Compiler.validate_page_modules/2 reads route/layout off a module info PLT rather than
+  # calling the page module directly - scoped to just page_modules (via Reflection.beam_info/1,
+  # the same per-module read Hologram.Compiler.build_module_info_plt!/3 does internally) rather
+  # than that function's own Reflection.list_candidate_modules/0 sweep, which would reintroduce
+  # exactly the whole-OTP-app scan this task exists to avoid.
+  defp page_module_info_plt(page_modules, umbrella?, sup) do
+    plt = PLT.start(supervisor: sup)
+
+    Enum.each(page_modules, fn page_module ->
+      if beam_source = Compiler.resolve_beam_source(page_module, umbrella?) do
+        PLT.put(plt, page_module, Reflection.beam_info(beam_source))
+      end
+    end)
+
+    plt
+  end
+
   # Unchanged from before page_batch_size existed: build the full reachable set into
   # one ir_plt, then render every page from it in one pass, in
   # Mix.Tasks.Compile.Hologram.compile/1's own order (clone+strip -> list_runtime_mfas
@@ -215,14 +237,41 @@ defmodule Mix.Tasks.Compile.HologramCi do
     runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime, page_modules)
     app_versions = Compiler.build_app_versions(call_graph_for_runtime)
 
+    # Filled by the entry file renderers as they go: each reachable function's JavaScript
+    # is produced once per compile in the common case and read back by every entry file
+    # that needs it - shared across the runtime entry file and every page below.
+    encode_plt = PLT.start(supervisor: sup)
+
     runtime_entry_file_path =
-      Compiler.create_runtime_entry_file(runtime_mfas, ir_plt, async_mfas, app_versions, opts)
+      Compiler.create_runtime_entry_file(
+        runtime_mfas,
+        ir_plt,
+        encode_plt,
+        async_mfas,
+        app_versions,
+        opts
+      )
 
     call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph_for_runtime, runtime_mfas)
 
+    # Every page loads the runtime script, so the JS bindings it registers are available
+    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # them into every page.
+    runtime_js_binding_modules =
+      runtime_mfas
+      |> Compiler.list_js_import_modules(ir_plt, nil)
+      |> MapSet.new()
+
     page_entry_files_info =
       page_modules
-      |> Compiler.create_page_entry_files(call_graph_for_pages, ir_plt, async_mfas, opts)
+      |> Compiler.create_page_entry_files(
+        call_graph_for_pages,
+        ir_plt,
+        encode_plt,
+        async_mfas,
+        runtime_js_binding_modules,
+        opts
+      )
       |> Enum.map(fn {entry_name, entry_file_path} ->
         {entry_name, entry_file_path, "page"}
       end)
@@ -314,8 +363,28 @@ defmodule Mix.Tasks.Compile.HologramCi do
       umbrella?
     )
 
+    # Filled by the entry file renderers as they go: each reachable function's JavaScript
+    # is produced once per compile in the common case and read back by every entry file
+    # that needs it - shared across the runtime entry file and every batch below.
+    encode_plt = PLT.start(supervisor: sup)
+
     runtime_entry_file_path =
-      Compiler.create_runtime_entry_file(runtime_mfas, ir_plt, async_mfas, app_versions, opts)
+      Compiler.create_runtime_entry_file(
+        runtime_mfas,
+        ir_plt,
+        encode_plt,
+        async_mfas,
+        app_versions,
+        opts
+      )
+
+    # Every page loads the runtime script, so the JS bindings it registers are available
+    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # them into every page.
+    runtime_js_binding_modules =
+      runtime_mfas
+      |> Compiler.list_js_import_modules(ir_plt, nil)
+      |> MapSet.new()
 
     page_entry_files_info =
       Enum.flat_map(batches_with_specific_modules, fn {batch_pages, batch_modules} ->
@@ -335,7 +404,9 @@ defmodule Mix.Tasks.Compile.HologramCi do
           |> Compiler.create_page_entry_files(
             batch_call_graph_for_pages,
             ir_plt,
+            encode_plt,
             async_mfas,
+            runtime_js_binding_modules,
             opts
           )
           |> Enum.map(fn {entry_name, entry_file_path} ->
@@ -539,7 +610,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
     page_graph = CallGraph.get_graph(call_graph_for_pages)
 
     server_callback_analysis_by_templatable =
-      CallGraph.server_callback_analysis_by_templatable(page_graph, templatables)
+      CallGraph.server_callback_analysis_by_templatable(page_graph, templatables, nil)
 
     page_mfas_by_page =
       Map.new(page_modules, fn page_module ->
@@ -547,7 +618,8 @@ defmodule Mix.Tasks.Compile.HologramCi do
          CallGraph.list_page_mfas(
            call_graph_for_pages,
            page_module,
-           server_callback_analysis_by_templatable
+           server_callback_analysis_by_templatable,
+           nil
          )}
       end)
 

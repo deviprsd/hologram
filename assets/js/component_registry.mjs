@@ -1,5 +1,6 @@
 "use strict";
 
+import Interpreter from "./interpreter.mjs";
 import ItemCache from "./item_cache.mjs";
 import RenderCache from "./render_cache.mjs";
 import Type from "./type.mjs";
@@ -100,6 +101,40 @@ export default class ComponentRegistry {
     ComponentRegistry.#actionChains = new Map();
     RenderCache.clear();
     ItemCache.clear();
+  }
+
+  // #878: was an in-place mutation of the struct's props field, bypassing
+  // putComponentStruct entirely - same in-place-mutation removal as
+  // clearNextAction and putComponentStruct itself (see #878 note there for
+  // why entries.data can no longer be mutated directly).
+  //
+  // Called on every render (see #renderStatefulComponent), not only at init,
+  // with a props map #castProps rebuilds fresh from template evaluation each
+  // time - so unlike clearNextAction's state value, this key's incoming value
+  // is a new object reference even when every entry inside it is unchanged.
+  // maps:put/3's own identity fast path (see erlang/maps.mjs) only ever
+  // compares references, so it can't catch that case here - deep-equality
+  // guard it explicitly, or an unchanged re-render would rebuild the struct
+  // (and its whole path-copy) and call RenderCache.markDirty on every render,
+  // defeating the memoization #878 exists for.
+  static putComponentProps(cid, props) {
+    const componentStruct = ComponentRegistry.getComponentStruct(cid);
+    const currentProps = Erlang_Maps["get/2"](
+      Type.atom("props"),
+      componentStruct,
+    );
+
+    if (Interpreter.isStrictlyEqual(currentProps, props)) {
+      return;
+    }
+
+    const updatedStruct = Erlang_Maps["put/3"](
+      Type.atom("props"),
+      props,
+      componentStruct,
+    );
+
+    ComponentRegistry.putComponentStruct(cid, updatedStruct);
   }
 
   // #878: was an in-place mutation of ComponentRegistry.entries.data,

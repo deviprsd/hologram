@@ -37,6 +37,7 @@ defmodule Hologram.Template.RendererTest do
   alias Hologram.Test.Fixtures.Template.Renderer.Module35
   alias Hologram.Test.Fixtures.Template.Renderer.Module36
   alias Hologram.Test.Fixtures.Template.Renderer.Module37
+  alias Hologram.Test.Fixtures.Template.Renderer.Module38
   alias Hologram.Test.Fixtures.Template.Renderer.Module39
   alias Hologram.Test.Fixtures.Template.Renderer.Module4
   alias Hologram.Test.Fixtures.Template.Renderer.Module40
@@ -71,7 +72,11 @@ defmodule Hologram.Template.RendererTest do
   alias Hologram.Test.Fixtures.Template.Renderer.Module86
   alias Hologram.Test.Fixtures.Template.Renderer.Module87
   alias Hologram.Test.Fixtures.Template.Renderer.Module88
+  alias Hologram.Test.Fixtures.Template.Renderer.Module89
   alias Hologram.Test.Fixtures.Template.Renderer.Module9
+  alias Hologram.Test.Fixtures.Template.Renderer.Module90
+  alias Hologram.Test.Fixtures.Template.Renderer.Module91
+  alias Hologram.Test.Fixtures.Template.Renderer.Module92
 
   @csrf_token "test-csrf-token"
   @env %Renderer.Env{}
@@ -141,12 +146,14 @@ defmodule Hologram.Template.RendererTest do
                   "component_3" => %{
                     module: Module3,
                     struct: %Component{
+                      props: %{cid: "component_3"},
                       state: %{a: 1, b: 2}
                     }
                   },
                   "component_7" => %{
                     module: Module7,
                     struct: %Component{
+                      props: %{cid: "component_7"},
                       state: %{c: 3, d: 4}
                     }
                   }
@@ -306,12 +313,14 @@ defmodule Hologram.Template.RendererTest do
                   "component_3" => %{
                     module: Module3,
                     struct: %Component{
+                      props: %{cid: "component_3"},
                       state: %{a: 1, b: 2}
                     }
                   },
                   "component_7" => %{
                     module: Module7,
                     struct: %Component{
+                      props: %{cid: "component_7"},
                       state: %{c: 3, d: 4}
                     }
                   }
@@ -668,8 +677,14 @@ defmodule Hologram.Template.RendererTest do
                {
                  "abc<div>state_a = 1, state_b = 2</div>xyz<div>state_c = 3, state_d = 4</div>",
                  %{
-                   "component_3" => %{module: Module3, struct: %Component{state: %{a: 1, b: 2}}},
-                   "component_7" => %{module: Module7, struct: %Component{state: %{c: 3, d: 4}}}
+                   "component_3" => %{
+                     module: Module3,
+                     struct: %Component{props: %{cid: "component_3"}, state: %{a: 1, b: 2}}
+                   },
+                   "component_7" => %{
+                     module: Module7,
+                     struct: %Component{props: %{cid: "component_7"}, state: %{c: 3, d: 4}}
+                   }
                  },
                  %Server{
                    cookies: %{
@@ -700,8 +715,14 @@ defmodule Hologram.Template.RendererTest do
                {
                  "abc<div>state_a = 1</div><div>state_b = 2</div>xyz<div>state_c = 3</div><div>state_d = 4</div>",
                  %{
-                   "component_51" => %{module: Module51, struct: %Component{state: %{a: 1, b: 2}}},
-                   "component_52" => %{module: Module52, struct: %Component{state: %{c: 3, d: 4}}}
+                   "component_51" => %{
+                     module: Module51,
+                     struct: %Component{props: %{cid: "component_51"}, state: %{a: 1, b: 2}}
+                   },
+                   "component_52" => %{
+                     module: Module52,
+                     struct: %Component{props: %{cid: "component_52"}, state: %{c: 3, d: 4}}
+                   }
                  },
                  %Server{
                    cookies: %{
@@ -781,6 +802,107 @@ defmodule Hologram.Template.RendererTest do
 
       assert {"prop_aaa = 987", _component_registry, _server_struct} =
                render_dom(node, @env, @server)
+    end
+
+    test "required prop given" do
+      node = {:component, Module89, [{"aaa", [text: "my_value"]}], []}
+
+      assert render_dom(node, @env, @server) == {"prop_aaa = my_value", %{}, @server}
+    end
+
+    test "required prop missing" do
+      node = {:component, Module89, [], []}
+
+      expected_msg =
+        ~s/component "Hologram.Test.Fixtures.Template.Renderer.Module89" is missing required prop "aaa"/
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, @env, @server)
+      end
+    end
+
+    test "required prop missing, rendered from a parent template" do
+      node = {:component, Module89, [], []}
+      env = %Renderer.Env{parent_module: Module64}
+
+      expected_msg =
+        ~s/component "Hologram.Test.Fixtures.Template.Renderer.Module89" is missing required prop "aaa", / <>
+          ~s/rendered from "Hologram.Test.Fixtures.Template.Renderer.Module64"/
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, env, @server)
+      end
+    end
+
+    test "required prop declared to take value from context, value in context" do
+      node = {:component, Module90, [], []}
+      env = %Renderer.Env{context: %{my_context_key: "my_value"}}
+
+      assert render_dom(node, env, @server) == {"prop_aaa = my_value", %{}, @server}
+    end
+
+    test "required prop declared to take value from context, value not in context" do
+      node = {:component, Module90, [], []}
+
+      expected_msg =
+        ~s/component "Hologram.Test.Fixtures.Template.Renderer.Module90" is missing required prop "aaa"/
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, @env, @server)
+      end
+    end
+
+    test "prop value in the :values list" do
+      node = {:component, Module91, [{"aaa", [expression: {:small}]}], []}
+
+      assert render_dom(node, @env, @server) == {"component vars = %{aaa: :small}", %{}, @server}
+    end
+
+    # A value written in a template is rejected by the compiler, so what reaches this check comes
+    # from a spread or from context.
+    test "prop value not in the :values list, arriving through a spread" do
+      node = {:component, Module91, [{:spread, {%{aaa: :huge}}}], []}
+
+      expected_msg =
+        ~s/prop "aaa" of component "Hologram.Test.Fixtures.Template.Renderer.Module91" / <>
+          "must be one of [:small, :large], got: :huge"
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, @env, @server)
+      end
+    end
+
+    test "prop value not in the :values list names the template it was rendered from" do
+      node = {:component, Module91, [{:spread, {%{aaa: :huge}}}], []}
+      env = %Renderer.Env{parent_module: Module64}
+
+      expected_msg =
+        ~s/prop "aaa" of component "Hologram.Test.Fixtures.Template.Renderer.Module91" / <>
+          "must be one of [:small, :large], got: :huge, " <>
+          ~s/rendered from "Hologram.Test.Fixtures.Template.Renderer.Module64"/
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, env, @server)
+      end
+    end
+
+    test "prop value from context not in the :values list" do
+      node = {:component, Module92, [], []}
+      env = %Renderer.Env{context: %{my_context_key: :huge}}
+
+      expected_msg =
+        ~s/prop "aaa" of component "Hologram.Test.Fixtures.Template.Renderer.Module92" / <>
+          "must be one of [:small, :large], got: :huge"
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, env, @server)
+      end
+    end
+
+    test "absent prop with a :values list doesn't raise" do
+      node = {:component, Module91, [], []}
+
+      assert render_dom(node, @env, @server) == {"component vars = %{}", %{}, @server}
     end
   end
 
@@ -986,7 +1108,12 @@ defmodule Hologram.Template.RendererTest do
 
       assert render_dom(node, @env, @server) ==
                {"<div>abc</div>",
-                %{"my_component" => %{module: Module1, struct: %Component{state: %{}}}}, @server}
+                %{
+                  "my_component" => %{
+                    module: Module1,
+                    struct: %Component{props: %{cid: "my_component"}, state: %{}}
+                  }
+                }, @server}
     end
 
     test "with props" do
@@ -1001,7 +1128,49 @@ defmodule Hologram.Template.RendererTest do
 
       assert render_dom(node, @env, @server) ==
                {"<div>prop_a = ddd, prop_b = 222, prop_c = fff333hhh</div>",
-                %{"my_component" => %{module: Module2, struct: %Component{state: %{}}}}, @server}
+                %{
+                  "my_component" => %{
+                    module: Module2,
+                    struct: %Component{
+                      props: %{a: "ddd", b: 222, c: "fff333hhh", cid: "my_component"},
+                      state: %{}
+                    }
+                  }
+                }, @server}
+    end
+
+    test "with a prop that has a default value" do
+      node =
+        {:component, Module65,
+         [{"cid", [text: "my_component"]}, {"prop_2", [expression: {:xyz}]}], []}
+
+      assert {_html, component_registry, _server_struct} = render_dom(node, @env, @server)
+
+      assert component_registry["my_component"].struct.props == %{
+               cid: "my_component",
+               prop_1: "abc",
+               prop_2: :xyz,
+               prop_3: 123
+             }
+    end
+
+    test "with a prop injected from context" do
+      node = {:component, Module38, [{"cid", [text: "my_component"]}], []}
+      env = %Renderer.Env{context: %{{:my_scope, :my_key} => 123}}
+
+      assert {_html, component_registry, _server_struct} = render_dom(node, env, @server)
+
+      assert component_registry["my_component"].struct.props == %{aaa: 123, cid: "my_component"}
+    end
+
+    test "with an attribute that isn't declared as a prop" do
+      node =
+        {:component, Module1,
+         [{"cid", [text: "my_component"]}, {"my_undeclared_prop", [text: "my_value"]}], []}
+
+      assert {_html, component_registry, _server_struct} = render_dom(node, @env, @server)
+
+      assert component_registry["my_component"].struct.props == %{cid: "my_component"}
     end
 
     test "with state / only component struct returned from init/3" do
@@ -1010,7 +1179,10 @@ defmodule Hologram.Template.RendererTest do
       assert render_dom(node, @env, @server) ==
                {"<div>state_a = 1, state_b = 2</div>",
                 %{
-                  "my_component" => %{module: Module69, struct: %Component{state: %{a: 1, b: 2}}}
+                  "my_component" => %{
+                    module: Module69,
+                    struct: %Component{props: %{cid: "my_component"}, state: %{a: 1, b: 2}}
+                  }
                 }, @server}
     end
 
@@ -1028,7 +1200,10 @@ defmodule Hologram.Template.RendererTest do
                 %{
                   "my_component" => %{
                     module: Module4,
-                    struct: %Component{state: %{a: "state_a", b: "state_b"}}
+                    struct: %Component{
+                      props: %{b: "prop_b", c: "prop_c", cid: "my_component"},
+                      state: %{a: "state_a", b: "state_b"}
+                    }
                   }
                 }, @server}
     end
@@ -1045,7 +1220,15 @@ defmodule Hologram.Template.RendererTest do
       assert render_dom(node, @env, @server) ==
                {
                  "<div>prop_a = aaa, prop_b = bbb</div>",
-                 %{"my_component" => %{module: Module5, struct: %Component{state: %{}}}},
+                 %{
+                   "my_component" => %{
+                     module: Module5,
+                     struct: %Component{
+                       props: %{a: "aaa", b: "bbb", cid: "my_component"},
+                       state: %{}
+                     }
+                   }
+                 },
                  %Server{
                    cookies: %{
                      "initial_cookie_key" => :initial_cookie_value,
@@ -1068,7 +1251,10 @@ defmodule Hologram.Template.RendererTest do
                {
                  "<div>state_a = 1, state_b = 2</div>",
                  %{
-                   "my_component" => %{module: Module6, struct: %Component{state: %{a: 1, b: 2}}}
+                   "my_component" => %{
+                     module: Module6,
+                     struct: %Component{props: %{cid: "my_component"}, state: %{a: 1, b: 2}}
+                   }
                  },
                  %Server{
                    cookies: %{
@@ -1112,6 +1298,22 @@ defmodule Hologram.Template.RendererTest do
       assert render_dom(node, @env, @server) == {"abc123xyz", %{}, @server}
     end
 
+    # Slot content belongs to the template that wrote it, not to the one holding the <slot />, so a
+    # prop error in it must name the writer. The page/layout pair is the same case: a page's whole
+    # template is its layout's slot content.
+    test "a prop error in slot content names the template that wrote it" do
+      node = {:component, Module8, [], [{:component, Module89, [], []}]}
+      env = %Renderer.Env{parent_module: Module64}
+
+      expected_msg =
+        ~s/component "Hologram.Test.Fixtures.Template.Renderer.Module89" is missing required prop "aaa", / <>
+          ~s/rendered from "Hologram.Test.Fixtures.Template.Renderer.Module64"/
+
+      assert_raise Hologram.PropError, expected_msg, fn ->
+        render_dom(node, env, @server)
+      end
+    end
+
     test "with multiple nodes" do
       node = {:component, Module8, [], [text: "123", expression: {456}]}
       assert render_dom(node, @env, @server) == {"abc123456xyz", %{}, @server}
@@ -1128,9 +1330,18 @@ defmodule Hologram.Template.RendererTest do
       assert render_dom(node, @env, @server) ==
                {"10,11,10,12,10",
                 %{
-                  "component_10" => %{module: Module10, struct: %Component{state: %{a: 10}}},
-                  "component_11" => %{module: Module11, struct: %Component{state: %{a: 11}}},
-                  "component_12" => %{module: Module12, struct: %Component{state: %{a: 12}}}
+                  "component_10" => %{
+                    module: Module10,
+                    struct: %Component{props: %{cid: "component_10"}, state: %{a: 10}}
+                  },
+                  "component_11" => %{
+                    module: Module11,
+                    struct: %Component{props: %{cid: "component_11"}, state: %{a: 11}}
+                  },
+                  "component_12" => %{
+                    module: Module12,
+                    struct: %Component{props: %{cid: "component_12"}, state: %{a: 12}}
+                  }
                 },
                 %Server{
                   cookies: %{
@@ -1168,6 +1379,7 @@ defmodule Hologram.Template.RendererTest do
                   "component_34" => %{
                     module: Module34,
                     struct: %Component{
+                      props: %{a: "34a_prop", cid: "component_34"},
                       state: %{
                         cid: "component_34",
                         a: "34a_prop",
@@ -1182,12 +1394,14 @@ defmodule Hologram.Template.RendererTest do
                   "component_35" => %{
                     module: Module35,
                     struct: %Component{
+                      props: %{a: "35a_prop", cid: "component_35"},
                       state: %{cid: "component_35", a: "35a_prop", z: "35z_state"}
                     }
                   },
                   "component_36" => %{
                     module: Module36,
                     struct: %Component{
+                      props: %{a: "36a_prop", cid: "component_36"},
                       state: %{cid: "component_36", a: "36a_prop", z: "36z_state"}
                     }
                   }
@@ -1297,8 +1511,40 @@ defmodule Hologram.Template.RendererTest do
       assert html == "<div><div>state_a = 1, state_b = 2</div></div>"
 
       assert component_registry == %{
-               "component_3" => %{module: Module3, struct: %Component{state: %{a: 1, b: 2}}}
+               "component_3" => %{
+                 module: Module3,
+                 struct: %Component{props: %{cid: "component_3"}, state: %{a: 1, b: 2}}
+               }
              }
+    end
+
+    test "tag name with uppercase chars" do
+      # <{"DIV"}></{"DIV"}>
+      node = {:dynamic_tag, {"DIV"}, [], []}
+
+      assert render_dom(node, @env, @server) == {"<div></div>", %{}, @server}
+    end
+
+    test "SVG tag name that lost its case" do
+      # <{"lineargradient"}></{"lineargradient"}>
+      node = {:dynamic_tag, {"lineargradient"}, [], []}
+
+      assert render_dom(node, @env, @server) ==
+               {"<linearGradient></linearGradient>", %{}, @server}
+    end
+
+    test "SVG tag name that is already spelled the way the parser spells it" do
+      # <{"linearGradient"}></{"linearGradient"}>
+      node = {:dynamic_tag, {"linearGradient"}, [], []}
+
+      assert render_dom(node, @env, @server) ==
+               {"<linearGradient></linearGradient>", %{}, @server}
+    end
+
+    test "void element named with uppercase chars" do
+      node = {:dynamic_tag, {"IMG"}, [{"attr_1", [text: "aaa"]}], []}
+
+      assert render_dom(node, @env, @server) == {~s(<img attr_1="aaa" />), %{}, @server}
     end
   end
 
@@ -1328,7 +1574,12 @@ defmodule Hologram.Template.RendererTest do
 
       assert render_dom(node, @env, @server) ==
                {"<div>state_a = 1, state_b = 2</div>",
-                %{"my_component" => %{module: Module3, struct: %Component{state: %{a: 1, b: 2}}}},
+                %{
+                  "my_component" => %{
+                    module: Module3,
+                    struct: %Component{props: %{cid: "my_component"}, state: %{a: 1, b: 2}}
+                  }
+                },
                 %Server{
                   cookies: %{
                     "initial_cookie_key" => :initial_cookie_value,
@@ -1485,7 +1736,8 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: LayoutFixture,
                     struct: %Component{
-                      emitted_context: %{}
+                      emitted_context: %{},
+                      props: %{cid: "layout"}
                     }
                   },
                   "page" => %{
@@ -1513,7 +1765,8 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: Module47,
                     struct: %Component{
-                      emitted_context: %{}
+                      emitted_context: %{},
+                      props: %{cid: "layout"}
                     }
                   },
                   "page" => %{
@@ -1541,7 +1794,8 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: Module41,
                     struct: %Component{
-                      emitted_context: %{}
+                      emitted_context: %{},
+                      props: %{aaa: 123, cid: "layout"}
                     }
                   },
                   "page" => %{
@@ -1569,7 +1823,8 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: Module42,
                     struct: %Component{
-                      emitted_context: %{{:my_scope, :my_key} => 123}
+                      emitted_context: %{{:my_scope, :my_key} => 123},
+                      props: %{cid: "layout"}
                     }
                   },
                   "page" => %{
@@ -1596,7 +1851,8 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: Module44,
                     struct: %Component{
-                      emitted_context: %{{:my_scope, :my_key} => 123}
+                      emitted_context: %{{:my_scope, :my_key} => 123},
+                      props: %{cid: "layout"}
                     }
                   },
                   "page" => %{
@@ -1625,7 +1881,8 @@ defmodule Hologram.Template.RendererTest do
                     struct: %Component{
                       emitted_context: %{
                         {:my_scope, :my_key} => 123
-                      }
+                      },
+                      props: %{cid: "component_37"}
                     }
                   }
                 }, @server}
@@ -1694,13 +1951,27 @@ defmodule Hologram.Template.RendererTest do
                render_page_without_tree(Module24, @params, @server, @opts)
     end
 
+    test "merge the page params into the page component struct" do
+      ETS.put(PageDigestRegistryStub.ets_table_name(), Module21, :dummy_module_21_digest)
+
+      params = %{key_1: "param_value_1", key_2: "param_value_2"}
+
+      assert {_html, component_registry, _server_struct} =
+               render_page_without_tree(Module21, params, @server, @opts)
+
+      assert component_registry["page"].struct.props == params
+    end
+
     test "merge the page component struct into the result" do
       ETS.put(PageDigestRegistryStub.ets_table_name(), Module28, :dummy_module_28_digest)
 
       assert render_page_without_tree(Module28, @params, @server, @opts) ==
                {"",
                 %{
-                  "layout" => %{module: LayoutFixture, struct: %Component{}},
+                  "layout" => %{
+                    module: LayoutFixture,
+                    struct: %Component{props: %{cid: "layout"}}
+                  },
                   "page" => %{
                     module: Module28,
                     struct: %Component{
@@ -1726,6 +1997,7 @@ defmodule Hologram.Template.RendererTest do
                   "layout" => %{
                     module: Module30,
                     struct: %Component{
+                      props: %{cid: "layout"},
                       state: %{state_1: "value_1", state_2: "value_2"}
                     }
                   },
@@ -1842,9 +2114,24 @@ defmodule Hologram.Template.RendererTest do
                render_page_without_tree(Module48, @params, @server, @opts)
 
       expected =
-        ~s/componentRegistry: Type.map([[Type.bitstring("layout"), Type.map([[Type.atom("module"), Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module49")], [Type.atom("struct"), Type.map([[Type.atom("__struct__"), Type.atom("Elixir.Hologram.Component")], [Type.atom("emitted_context"), Type.map([])], [Type.atom("next_action"), Type.atom("nil")], [Type.atom("next_command"), Type.atom("nil")], [Type.atom("next_page"), Type.atom("nil")], [Type.atom("state"), Type.map([])]])]])], [Type.bitstring("page"), Type.map([[Type.atom("module"), Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module48")], [Type.atom("struct"), Type.map([[Type.atom("__struct__"), Type.atom("Elixir.Hologram.Component")], [Type.atom("emitted_context"), Type.map([[Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("csrf_token")]), Type.bitstring("#{@csrf_token}")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("initial_page?")]), Type.atom("false")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("instance_id")]), Type.bitstring("#{@instance_id}")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("page_digest")]), Type.bitstring("102790adb6c3b1956db310be523a7693")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("page_mounted?")]), Type.atom("true")]])], [Type.atom("next_action"), Type.atom("nil")], [Type.atom("next_command"), Type.atom("nil")], [Type.atom("next_page"), Type.atom("nil")], [Type.atom("state"), Type.map([])]])]])]])/
+        ~s/componentRegistry: Type.map([[Type.bitstring("layout"), Type.map([[Type.atom("module"), Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module49")], [Type.atom("struct"), Type.map([[Type.atom("__struct__"), Type.atom("Elixir.Hologram.Component")], [Type.atom("emitted_context"), Type.map([])], [Type.atom("next_action"), Type.atom("nil")], [Type.atom("next_command"), Type.atom("nil")], [Type.atom("next_page"), Type.atom("nil")], [Type.atom("props"), Type.map([])], [Type.atom("state"), Type.map([])]])]])], [Type.bitstring("page"), Type.map([[Type.atom("module"), Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module48")], [Type.atom("struct"), Type.map([[Type.atom("__struct__"), Type.atom("Elixir.Hologram.Component")], [Type.atom("emitted_context"), Type.map([[Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("csrf_token")]), Type.bitstring("#{@csrf_token}")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("initial_page?")]), Type.atom("false")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("instance_id")]), Type.bitstring("#{@instance_id}")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("page_digest")]), Type.bitstring("102790adb6c3b1956db310be523a7693")], [Type.tuple([Type.atom("Elixir.Hologram.Runtime"), Type.atom("page_mounted?")]), Type.atom("true")]])], [Type.atom("next_action"), Type.atom("nil")], [Type.atom("next_command"), Type.atom("nil")], [Type.atom("next_page"), Type.atom("nil")], [Type.atom("props"), Type.map([])], [Type.atom("state"), Type.map([])]])]])]])/
 
       assert String.contains?(html, expected)
+    end
+
+    test "keep the props out of the interpolated component structs JS" do
+      ETS.put(PageDigestRegistryStub.ets_table_name(), Module21, :dummy_module_21_digest)
+
+      params = %{key_1: "param_value_1", key_2: "param_value_2"}
+
+      %{component_registry: component_registry, mount_data: mount_data} =
+        render_page(Module21, params, @server, @opts)
+
+      # The renderer keeps them; only what the client is sent is hollowed, and the key stays.
+      assert component_registry["page"].struct.props == params
+
+      refute mount_data.component_registry =~ "param_value_1"
+      assert mount_data.component_registry =~ ~s/[Type.atom("props"), Type.map([])]/
     end
 
     test "interpolate page module JS" do
@@ -2068,42 +2355,75 @@ defmodule Hologram.Template.RendererTest do
       assert registry["layout"].struct.state.observed_cid == "layout"
     end
 
-    test "returns the tree the HTML is printed from" do
+    test "returns the tree the HTML is printed from, once the mount data is put back" do
       ETS.put(
         PageDigestRegistryStub.ets_table_name(),
         Module48,
         "102790adb6c3b1956db310be523a7693"
       )
 
-      {html, tree, _component_registry, _server_struct} =
+      %{html: html, mount_data: mount_data, tree: tree} =
         render_page(Module48, @params, @server, @opts)
 
-      assert print_dom(tree) == html
+      # The two projections are the same render. They differ only in that the HTML has the mount
+      # data inlined, so putting it back into the printed tree must reproduce the HTML exactly.
+      printed =
+        tree
+        |> print_dom()
+        |> String.replace("$ASSET_MANIFEST_JS_PLACEHOLDER", mount_data.asset_manifest)
+        |> String.replace("$COMPONENT_REGISTRY_JS_PLACEHOLDER", mount_data.component_registry)
+        |> String.replace("$PAGE_MODULE_JS_PLACEHOLDER", mount_data.page_module)
+        |> String.replace("$PAGE_PARAMS_JS_PLACEHOLDER", mount_data.page_params)
+
+      assert printed == html
     end
 
-    test "interpolates the runtime JS into the tree's scripts, leaving the Realtime placeholders" do
+    test "leaves every placeholder in the tree's scripts, mount data included" do
       ETS.put(
         PageDigestRegistryStub.ets_table_name(),
         Module48,
         "102790adb6c3b1956db310be523a7693"
       )
 
-      {_html, tree, _component_registry, _server_struct} =
-        render_page(Module48, @params, @server, @opts)
+      %{tree: tree} = render_page(Module48, @params, @server, @opts)
 
       script_text =
         tree
         |> collect_script_texts()
         |> Enum.join()
 
-      assert String.contains?(
-               script_text,
-               ~s/pageModule: Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module48")/
-             )
-
-      refute String.contains?(script_text, "$COMPONENT_REGISTRY_JS_PLACEHOLDER")
-      refute String.contains?(script_text, "$PAGE_PARAMS_JS_PLACEHOLDER")
+      assert String.contains?(script_text, "$ASSET_MANIFEST_JS_PLACEHOLDER")
+      assert String.contains?(script_text, "$COMPONENT_REGISTRY_JS_PLACEHOLDER")
+      assert String.contains?(script_text, "$PAGE_MODULE_JS_PLACEHOLDER")
+      assert String.contains?(script_text, "$PAGE_PARAMS_JS_PLACEHOLDER")
       assert String.contains?(script_text, "selfEchoes: $SELF_ECHOES_JS_PLACEHOLDER")
+
+      refute String.contains?(
+               script_text,
+               ~s/Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module48")/
+             )
+    end
+
+    test "returns the mount data the HTML projection interpolates" do
+      ETS.put(
+        PageDigestRegistryStub.ets_table_name(),
+        Module48,
+        "102790adb6c3b1956db310be523a7693"
+      )
+
+      %{html: html, mount_data: mount_data} = render_page(Module48, @params, @server, @opts)
+
+      assert mount_data.page_module ==
+               ~s/Type.atom("Elixir.Hologram.Test.Fixtures.Template.Renderer.Module48")/
+
+      assert mount_data.page_params == "Type.map([])"
+      assert String.starts_with?(mount_data.component_registry, "Type.map([")
+
+      # Each value is what the HTML carries, which is what makes it safe to send beside the tree
+      # instead of inside it.
+      for value <- Map.values(mount_data) do
+        assert String.contains?(html, value)
+      end
     end
   end
 
@@ -2113,7 +2433,7 @@ defmodule Hologram.Template.RendererTest do
   # Note: the behaviour is different on client-side vs server-side
   # because client-side escaping is delegated to Snabbdom
   describe "escaping" do
-    test "text inside non-script elements" do
+    test "text inside non-raw-text elements" do
       # <div>abc < xyz</div>
       node = {:element, "div", [], [text: "abc < xyz"]}
 
@@ -2125,6 +2445,13 @@ defmodule Hologram.Template.RendererTest do
       node = {:element, "script", [], [text: "abc < xyz"]}
 
       assert render_dom(node, @env, @server) == {"<script>abc < xyz</script>", %{}, @server}
+    end
+
+    test "text inside style elements" do
+      # <style>a > b & c</style>
+      node = {:element, "style", [], [text: "a > b & c"]}
+
+      assert render_dom(node, @env, @server) == {"<style>a > b & c</style>", %{}, @server}
     end
 
     test "text inside public comments" do
@@ -2142,7 +2469,7 @@ defmodule Hologram.Template.RendererTest do
                {~s'<div class="abc &lt; xyz"></div>', %{}, @server}
     end
 
-    test "expression inside non-script elements" do
+    test "expression inside non-raw-text elements" do
       # <div>{"abc < xyz"}</div>
       node = {:element, "div", [], [expression: {"abc < xyz"}]}
 
@@ -2153,7 +2480,16 @@ defmodule Hologram.Template.RendererTest do
       # <script>{"abc < xyz"}</script>
       node = {:element, "script", [], [expression: {"abc < xyz"}]}
 
-      assert render_dom(node, @env, @server) == {"<script>abc &lt; xyz</script>", %{}, @server}
+      assert render_dom(node, @env, @server) ==
+               {"<script>abc \\u{3C} xyz</script>", %{}, @server}
+    end
+
+    test "expression inside style elements" do
+      # <style>{"abc < xyz"}</style>
+      node = {:element, "style", [], [expression: {"abc < xyz"}]}
+
+      assert render_dom(node, @env, @server) ==
+               {"<style>abc \\00003C  xyz</style>", %{}, @server}
     end
 
     test "expression inside public comments" do
@@ -2190,46 +2526,72 @@ defmodule Hologram.Template.RendererTest do
       assert render_dom(node, @env, @server) ==
                {~s'<div class="a &lt; b &lt; c &lt; d &lt; e"></div>', %{}, @server}
     end
+
+    test "text inside component prop" do
+      # <Module64 my_prop="abc < xyz" />
+      node = {:component, Module64, [{"my_prop", [text: "abc < xyz"]}], []}
+
+      assert render_dom(node, @env, @server) ==
+               {~s'my_prop = &quot;abc &lt; xyz&quot;', %{}, @server}
+    end
+
+    test "expression inside component prop" do
+      # <Module64 my_prop={"abc < xyz"} />
+      node = {:component, Module64, [{"my_prop", [expression: {"abc < xyz"}]}], []}
+
+      assert render_dom(node, @env, @server) ==
+               {~s'my_prop = &quot;abc &lt; xyz&quot;', %{}, @server}
+    end
+
+    test "multi-part component prop" do
+      # <Module64 my_prop="a < b {"< c <"} d < e" />
+      node =
+        {:component, Module64,
+         [{"my_prop", [text: "a < b ", expression: {"< c <"}, text: " d < e"]}], []}
+
+      assert render_dom(node, @env, @server) ==
+               {~s'my_prop = &quot;a &lt; b &lt; c &lt; d &lt; e&quot;', %{}, @server}
+    end
   end
 
-  describe "stringify_for_interpolation/1" do
+  describe "stringify_for_script_interpolation/1" do
     test "atom, non-boolean and non-nil" do
-      assert stringify_for_interpolation(:abc) == "abc"
+      assert stringify_for_script_interpolation(:abc) == "abc"
     end
 
     test "atom, true" do
-      assert stringify_for_interpolation(true) == "true"
+      assert stringify_for_script_interpolation(true) == "true"
     end
 
     test "atom, false" do
-      assert stringify_for_interpolation(false) == "false"
+      assert stringify_for_script_interpolation(false) == "false"
     end
 
     test "atom, nil" do
-      assert stringify_for_interpolation(nil) == ""
+      assert stringify_for_script_interpolation(nil) == ""
     end
 
     test "bitstring, binary" do
-      assert stringify_for_interpolation(<<97, 98, 99>>) == "abc"
+      assert stringify_for_script_interpolation(<<97, 98, 99>>) == "abc"
     end
 
     test "bitstring, non-binary" do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(<<97::6, 98::4>>)
+                     stringify_for_script_interpolation(<<97::6, 98::4>>)
                    end
     end
 
     test "float" do
-      assert stringify_for_interpolation(1.23) == "1.23"
+      assert stringify_for_script_interpolation(1.23) == "1.23"
     end
 
     test "function, anonymous" do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(fn x, y -> x + y end)
+                     stringify_for_script_interpolation(fn x, y -> x + y end)
                    end
     end
 
@@ -2237,25 +2599,25 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(&Map.put/3)
+                     stringify_for_script_interpolation(&Map.put/3)
                    end
     end
 
     test "integer" do
-      assert stringify_for_interpolation(123) == "123"
+      assert stringify_for_script_interpolation(123) == "123"
     end
 
     test "list, strings" do
-      assert stringify_for_interpolation(["ab", "cd"]) == "abcd"
+      assert stringify_for_script_interpolation(["ab", "cd"]) == "abcd"
     end
 
     test "list, Unicode code points" do
-      assert stringify_for_interpolation([97, 98, 99]) == "abc"
+      assert stringify_for_script_interpolation([97, 98, 99]) == "abc"
     end
 
     test "list, not stringifiable" do
       assert_error ArgumentError, ~r/cannot convert the given list to a string/, fn ->
-        stringify_for_interpolation([1, nil, 2])
+        stringify_for_script_interpolation([1, nil, 2])
       end
     end
 
@@ -2263,7 +2625,7 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(%{a: 1, b: 2})
+                     stringify_for_script_interpolation(%{a: 1, b: 2})
                    end
     end
 
@@ -2271,7 +2633,7 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(%{:a => 1, "b" => nil, 2 => 3})
+                     stringify_for_script_interpolation(%{:a => 1, "b" => nil, 2 => 3})
                    end
     end
 
@@ -2279,7 +2641,7 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(pid("0.11.222"))
+                     stringify_for_script_interpolation(pid("0.11.222"))
                    end
     end
 
@@ -2287,7 +2649,7 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(port("0.11"))
+                     stringify_for_script_interpolation(port("0.11"))
                    end
     end
 
@@ -2295,21 +2657,21 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(ref("0.1.2.3"))
+                     stringify_for_script_interpolation(ref("0.1.2.3"))
                    end
     end
 
     test "struct, having String.Chars protocol implementation" do
       value = %Version{major: 1, minor: 2, patch: 3}
 
-      assert stringify_for_interpolation(value) == "1.2.3"
+      assert stringify_for_script_interpolation(value) == "1.2.3"
     end
 
     test "struct, not having String.Chars protocol implementation" do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation(MapSet.new([1, 2, 3]))
+                     stringify_for_script_interpolation(MapSet.new([1, 2, 3]))
                    end
     end
 
@@ -2317,89 +2679,382 @@ defmodule Hologram.Template.RendererTest do
       assert_error Protocol.UndefinedError,
                    ~r/protocol String.Chars not implemented for/,
                    fn ->
-                     stringify_for_interpolation({97, 98, 99})
+                     stringify_for_script_interpolation({97, 98, 99})
                    end
+    end
+
+    test "backslash char" do
+      assert stringify_for_script_interpolation("\\") == "\\\\"
+    end
+
+    test "double quote char" do
+      assert stringify_for_script_interpolation("\"") == "\\\""
+    end
+
+    test "single quote char" do
+      assert stringify_for_script_interpolation("'") == "\\'"
+    end
+
+    test "backtick char" do
+      assert stringify_for_script_interpolation("`") == "\\`"
+    end
+
+    test "dollar char" do
+      assert stringify_for_script_interpolation("$") == "\\$"
+    end
+
+    test "line feed char" do
+      assert stringify_for_script_interpolation("\n") == "\\n"
+    end
+
+    test "carriage return char" do
+      assert stringify_for_script_interpolation("\r") == "\\r"
+    end
+
+    test "null char" do
+      assert stringify_for_script_interpolation(<<0>>) == "\\u{0}"
+    end
+
+    test "less-than char" do
+      assert stringify_for_script_interpolation("<") == "\\u{3C}"
+    end
+
+    test "closing script tag" do
+      # An unescaped "<" would end the script element the value is written into.
+      assert stringify_for_script_interpolation("</script>") == "\\u{3C}/script>"
+    end
+
+    test "template literal expression opener" do
+      # Inside a template literal an unescaped "${" would run what follows it as code.
+      assert stringify_for_script_interpolation("${x}") == "\\${x}"
+    end
+
+    test "greater-than and ampersand chars travel as themselves" do
+      assert stringify_for_script_interpolation("a > b & c") == "a > b & c"
+    end
+
+    test "non-ASCII text travels as itself" do
+      assert stringify_for_script_interpolation("全息图") == "全息图"
+    end
+
+    test "text around escaped chars is kept" do
+      assert stringify_for_script_interpolation(~s(say "hi" <b>)) == ~S(say \"hi\" \u{3C}b>)
     end
   end
 
-  describe "interpolate_js_in_tree/3" do
-    test "substitutes the placeholder inside a script element's text" do
-      tree =
-        {:element, "script", [],
-         [{:text, "window.registry = $COMPONENT_REGISTRY_JS_PLACEHOLDER;"}]}
-
-      result =
-        Renderer.interpolate_js_in_tree(
-          tree,
-          "$COMPONENT_REGISTRY_JS_PLACEHOLDER",
-          "Type.map([])"
-        )
-
-      assert result == {:element, "script", [], [{:text, "window.registry = Type.map([]);"}]}
+  describe "stringify_for_style_interpolation/1" do
+    test "atom, non-boolean and non-nil" do
+      assert stringify_for_style_interpolation(:abc) == "abc"
     end
 
-    test "substitutes every occurrence of the placeholder" do
-      tree =
-        {:element, "script", [],
-         [{:text, "$PAGE_PARAMS_JS_PLACEHOLDER, $PAGE_PARAMS_JS_PLACEHOLDER"}]}
-
-      result =
-        Renderer.interpolate_js_in_tree(tree, "$PAGE_PARAMS_JS_PLACEHOLDER", "Type.map([])")
-
-      assert result == {:element, "script", [], [{:text, "Type.map([]), Type.map([])"}]}
+    test "atom, true" do
+      assert stringify_for_style_interpolation(true) == "true"
     end
 
-    test "reaches a script element nested inside other elements" do
-      tree =
-        {:element, "html", [],
-         [
-           {:element, "head", [],
-            [{:element, "script", [], [{:text, "$PAGE_MODULE_JS_PLACEHOLDER"}]}]}
-         ]}
-
-      result =
-        Renderer.interpolate_js_in_tree(tree, "$PAGE_MODULE_JS_PLACEHOLDER", ~s/Type.atom("abc")/)
-
-      assert result ==
-               {:element, "html", [],
-                [
-                  {:element, "head", [],
-                   [{:element, "script", [], [{:text, ~s/Type.atom("abc")/}]}]}
-                ]}
+    test "atom, false" do
+      assert stringify_for_style_interpolation(false) == "false"
     end
 
-    test "reaches every script element in a node list" do
+    test "atom, nil" do
+      assert stringify_for_style_interpolation(nil) == ""
+    end
+
+    test "bitstring, binary" do
+      assert stringify_for_style_interpolation(<<97, 98, 99>>) == "abc"
+    end
+
+    test "bitstring, non-binary" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(<<97::6, 98::4>>)
+                   end
+    end
+
+    test "float" do
+      assert stringify_for_style_interpolation(1.23) == "1.23"
+    end
+
+    test "function, anonymous" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(fn x, y -> x + y end)
+                   end
+    end
+
+    test "function, captured" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(&Map.put/3)
+                   end
+    end
+
+    test "integer" do
+      assert stringify_for_style_interpolation(123) == "123"
+    end
+
+    test "list, strings" do
+      assert stringify_for_style_interpolation(["ab", "cd"]) == "abcd"
+    end
+
+    test "list, Unicode code points" do
+      assert stringify_for_style_interpolation([97, 98, 99]) == "abc"
+    end
+
+    test "list, not stringifiable" do
+      assert_error ArgumentError, ~r/cannot convert the given list to a string/, fn ->
+        stringify_for_style_interpolation([1, nil, 2])
+      end
+    end
+
+    test "map, atom keys" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(%{a: 1, b: 2})
+                   end
+    end
+
+    test "map, mixed keys" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(%{:a => 1, "b" => nil, 2 => 3})
+                   end
+    end
+
+    test "PID" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(pid("0.11.222"))
+                   end
+    end
+
+    test "port" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(port("0.11"))
+                   end
+    end
+
+    test "reference" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(ref("0.1.2.3"))
+                   end
+    end
+
+    test "struct, having String.Chars protocol implementation" do
+      value = %Version{major: 1, minor: 2, patch: 3}
+
+      assert stringify_for_style_interpolation(value) == "1.2.3"
+    end
+
+    test "struct, not having String.Chars protocol implementation" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation(MapSet.new([1, 2, 3]))
+                   end
+    end
+
+    test "tuple" do
+      assert_error Protocol.UndefinedError,
+                   ~r/protocol String.Chars not implemented for/,
+                   fn ->
+                     stringify_for_style_interpolation({97, 98, 99})
+                   end
+    end
+
+    test "backslash char" do
+      assert stringify_for_style_interpolation("\\") == "\\\\"
+    end
+
+    test "double quote char" do
+      assert stringify_for_style_interpolation("\"") == "\\\""
+    end
+
+    test "single quote char" do
+      assert stringify_for_style_interpolation("'") == "\\'"
+    end
+
+    test "line feed char" do
+      assert stringify_for_style_interpolation("\n") == "\\00000A "
+    end
+
+    test "carriage return char" do
+      assert stringify_for_style_interpolation("\r") == "\\00000D "
+    end
+
+    test "form feed char" do
+      # CSS preprocessing folds a form feed into a newline, which a string literal can't hold.
+      assert stringify_for_style_interpolation("\f") == "\\00000C "
+    end
+
+    test "null char" do
+      assert stringify_for_style_interpolation(<<0>>) == "\\00FFFD "
+    end
+
+    test "less-than char" do
+      assert stringify_for_style_interpolation("<") == "\\00003C "
+    end
+
+    test "closing style tag" do
+      # An unescaped "<" would end the style element the value is written into.
+      assert stringify_for_style_interpolation("</style>") == "\\00003C /style>"
+    end
+
+    test "backtick and dollar chars travel as themselves" do
+      assert stringify_for_style_interpolation("`${x}") == "`${x}"
+    end
+
+    test "greater-than and ampersand chars travel as themselves" do
+      # A child combinator in an interpolated selector is the point of the issue this covers.
+      assert stringify_for_style_interpolation("a > b & c") == "a > b & c"
+    end
+
+    test "space after an escaped char is kept" do
+      # The escape carries a space of its own, which the CSS tokenizer eats instead of this one.
+      assert stringify_for_style_interpolation("a< b") == "a\\00003C  b"
+    end
+
+    test "hex digit after an escaped char is not absorbed" do
+      assert stringify_for_style_interpolation("<a") == "\\00003C a"
+    end
+
+    test "non-ASCII text travels as itself" do
+      assert stringify_for_style_interpolation("全息图") == "全息图"
+    end
+
+    test "text around escaped chars is kept" do
+      assert stringify_for_style_interpolation(~s(say "hi" <b>)) == ~S(say \"hi\" \00003C b>)
+    end
+  end
+
+  describe "encode_tree/1" do
+    test "text node" do
+      tree = {:text, "abc < xyz"}
+
+      assert encode_tree(tree) == ["abc < xyz"]
+    end
+
+    test "doctype node" do
+      tree = {:doctype, "html"}
+
+      assert encode_tree(tree) == [["d", "html"]]
+    end
+
+    test "element node, without attributes or children" do
+      tree = {:element, "div", [], []}
+
+      assert encode_tree(tree) == [["div", [], []]]
+    end
+
+    test "element node, with attribute" do
+      # <div class="big"></div>
+      tree = {:element, "div", [{"class", [text: "big"]}], []}
+
+      assert encode_tree(tree) == [["div", ["class", "big"], []]]
+    end
+
+    test "element node, with boolean attribute" do
+      # <input disabled />
+      tree = {:element, "input", [{"disabled", []}], []}
+
+      assert encode_tree(tree) == [["input", ["disabled", nil], []]]
+    end
+
+    test "element node, with multiple attributes" do
+      # <div class="big" hidden id="abc"></div>
+      tree =
+        {:element, "div", [{"class", [text: "big"]}, {"hidden", []}, {"id", [text: "abc"]}], []}
+
+      assert encode_tree(tree) == [["div", ["class", "big", "hidden", nil, "id", "abc"], []]]
+    end
+
+    test "element node, with element key" do
+      # The $key attribute travels, unlike in the HTML projection: it is what carries element
+      # identity across a navigation.
+      tree = {:element, "div", [{"$key", [text: "k1:0"]}], []}
+
+      assert encode_tree(tree) == [["div", ["$key", "k1:0"], []]]
+    end
+
+    test "element node, with children" do
+      # <div>abc<span></span></div>
+      tree = {:element, "div", [], [{:text, "abc"}, {:element, "span", [], []}]}
+
+      assert encode_tree(tree) == [["div", [], ["abc", ["span", [], []]]]]
+    end
+
+    test "element node, nested" do
+      # <div><span><b>abc</b></span></div>
+      tree =
+        {:element, "div", [], [{:element, "span", [], [{:element, "b", [], [{:text, "abc"}]}]}]}
+
+      assert encode_tree(tree) == [["div", [], [["span", [], [["b", [], ["abc"]]]]]]]
+    end
+
+    test "element node, void with children" do
+      # A void element keeps the children the tree gave it, unlike in the HTML projection.
+      tree = {:element, "br", [], [{:text, "abc"}]}
+
+      assert encode_tree(tree) == [["br", [], ["abc"]]]
+    end
+
+    test "public comment node" do
+      # <!--abc-->
+      tree = {:public_comment, [{:text, "abc"}]}
+
+      assert encode_tree(tree) == [["c", ["abc"]]]
+    end
+
+    test "public comment node, with multiple children" do
+      # <!--abc<div></div>-->
+      tree = {:public_comment, [{:text, "abc"}, {:element, "div", [], []}]}
+
+      assert encode_tree(tree) == [["c", ["abc", ["div", [], []]]]]
+    end
+
+    test "node list" do
+      tree = [{:text, "abc"}, {:element, "div", [], []}, {:doctype, "html"}]
+
+      assert encode_tree(tree) == ["abc", ["div", [], []], ["d", "html"]]
+    end
+
+    test "empty node list" do
+      assert encode_tree([]) == []
+    end
+
+    test "single node is wrapped in a list" do
+      # The result is always a list, so the client never has to tell a node apart from a list.
+      assert encode_tree({:text, "abc"}) == ["abc"]
+    end
+
+    test "nil tree" do
+      # A <window> or <document> tag renders to no node at all.
+      assert encode_tree(nil) == []
+    end
+
+    test "result survives JSON encoding" do
       tree = [
-        {:element, "script", [], [{:text, "$SELF_ECHOES_JS_PLACEHOLDER"}]},
-        {:element, "script", [], [{:text, "$SELF_ECHOES_JS_PLACEHOLDER"}]}
+        {:doctype, "html"},
+        {:element, "div", [{"class", [text: "big"]}, {"hidden", []}],
+         [{:text, "abc"}, {:public_comment, [{:text, " x "}]}]}
       ]
 
-      result =
-        Renderer.interpolate_js_in_tree(tree, "$SELF_ECHOES_JS_PLACEHOLDER", "Type.list([])")
+      encoded =
+        tree
+        |> encode_tree()
+        |> JSON.encode!()
 
-      assert result == [
-               {:element, "script", [], [{:text, "Type.list([])"}]},
-               {:element, "script", [], [{:text, "Type.list([])"}]}
-             ]
-    end
-
-    test "leaves text outside a script element untouched" do
-      tree = {:element, "div", [], [{:text, "$SELF_ECHOES_JS_PLACEHOLDER"}]}
-
-      result =
-        Renderer.interpolate_js_in_tree(tree, "$SELF_ECHOES_JS_PLACEHOLDER", "Type.list([])")
-
-      assert result == {:element, "div", [], [{:text, "$SELF_ECHOES_JS_PLACEHOLDER"}]}
-    end
-
-    test "leaves attribute values untouched" do
-      tree = {:element, "script", [{"data-info", [text: "$SELF_ECHOES_JS_PLACEHOLDER"]}], []}
-
-      result =
-        Renderer.interpolate_js_in_tree(tree, "$SELF_ECHOES_JS_PLACEHOLDER", "Type.list([])")
-
-      assert result ==
-               {:element, "script", [{"data-info", [text: "$SELF_ECHOES_JS_PLACEHOLDER"]}], []}
+      assert encoded ==
+               ~s([["d","html"],["div",["class","big","hidden",null],["abc",["c",[" x "]]]]])
     end
   end
 
@@ -2484,6 +3139,13 @@ defmodule Hologram.Template.RendererTest do
       dom = {:element, "script", [], [{:text, "abc < xyz"}]}
 
       assert print_dom(dom) == "<script>abc < xyz</script>"
+    end
+
+    test "text node, inside style element" do
+      # <style>a > b & c</style>
+      dom = {:element, "style", [], [{:text, "a > b & c"}]}
+
+      assert print_dom(dom) == "<style>a > b & c</style>"
     end
 
     test "doctype node" do
@@ -2604,12 +3266,12 @@ defmodule Hologram.Template.RendererTest do
       assert render_tree(node, @env, @server) == {{:text, "abc < xyz"}, %{}, @server}
     end
 
-    test "expression node inside a script element evaluates to entity-encoded text" do
+    test "expression node inside a script element evaluates to string literal text" do
       # <script>{"abc < xyz"}</script>
       node = {:element, "script", [], [expression: {"abc < xyz"}]}
 
       assert render_tree(node, @env, @server) ==
-               {{:element, "script", [], [{:text, "abc &lt; xyz"}]}, %{}, @server}
+               {{:element, "script", [], [{:text, "abc \\u{3C} xyz"}]}, %{}, @server}
     end
 
     test "doctype node" do
@@ -2633,6 +3295,16 @@ defmodule Hologram.Template.RendererTest do
 
       assert render_tree(node, @env, @server) ==
                {{:element, "div", [{"attr", [text: "ccc987 < eee"]}], []}, %{}, @server}
+    end
+
+    test "component node, prop value parts collapse to a single unescaped string" do
+      # <Module64 my_prop="ccc{987} < eee" />
+      node =
+        {:component, Module64, [{"my_prop", [text: "ccc", expression: {987}, text: " < eee"]}],
+         []}
+
+      assert render_tree(node, @env, @server) ==
+               {[{:text, ~s'my_prop = "ccc987 < eee"'}], %{}, @server}
     end
 
     test "element node, attribute with an empty value list stays a boolean attribute" do
@@ -2758,6 +3430,7 @@ defmodule Hologram.Template.RendererTest do
                   "component_3" => %{
                     module: Module3,
                     struct: %Component{
+                      props: %{cid: "component_3"},
                       state: %{a: 1, b: 2}
                     }
                   }
@@ -2794,7 +3467,7 @@ defmodule Hologram.Template.RendererTest do
   # The tree projection is covered by its own tests - these tests assert the projections the
   # pre-tree render returned, unchanged.
   defp render_page_without_tree(page_module, params, server_struct, opts) do
-    {html, _tree, component_registry, mutated_server_struct} =
+    %{component_registry: component_registry, html: html, server_struct: mutated_server_struct} =
       render_page(page_module, params, server_struct, opts)
 
     {html, component_registry, mutated_server_struct}

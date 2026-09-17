@@ -17,7 +17,8 @@ Hologram is a full-stack isomorphic Elixir web framework that runs on top of Pho
 - Pure Elixir development: write your entire web application in Elixir without needing to write JavaScript code
 - Client-side state: state management happens in the browser for snappy user interfaces
 - Automatic code distribution: Hologram automatically handles the separation and conversion of client/server code
-- Seamless communication: client-server interaction happens automatically through HTTP/2 persistent connections - no manual setup needed, with the speed of WebSockets and better scalability
+- Seamless communication: client-server interaction happens automatically over HTTP/2 request/response and a Server-Sent Events stream - no manual setup needed, with the speed of WebSockets and better scalability
+- Server-side rendering (SSR): every page is fully rendered to HTML on the server on first load - SEO-friendly and fast to first paint - then becomes interactive on the client
 
 #### Framework Philosophy
 
@@ -56,7 +57,7 @@ See asdf installation guide (https://asdf-vm.com/guide/getting-started.html) if 
 Add the Hologram package to your dependencies list in `mix.exs`:
 
 ```elixir
-{:hologram, "~> 0.8"},
+{:hologram, "~> 0.11"},
 ```
 
 #### 2. Fetch Dependencies
@@ -135,6 +136,20 @@ defp elixirc_paths(_env), do: ["app", "lib"]
 ```
 
 This allows you to organize your code like `app/pages/`, `app/components/`, etc., which many developers find cleaner than keeping everything in `lib/`.
+
+#### Running the App
+
+Start your app with the `mix holo` task. It runs your Phoenix server with the Hologram compiler and client-side runtime enabled:
+
+```
+$ mix holo
+```
+
+In the `dev` and `test` environments, Hologram does not start with a plain `mix phx.server` - set the `HOLOGRAM_START=1` environment variable to enable it (which is exactly what `mix holo` does). This keeps the Hologram compiler out of your workflow until you need it, so unrelated tasks and tests stay fast. Production builds always compile Hologram, so this applies only to dev and test.
+
+#### Editor Support
+
+The official Hologram extension adds syntax highlighting for `.holo` templates and `~HOLO` sigils. Install it from the Visual Studio Marketplace (https://marketplace.visualstudio.com/items?itemName=bartblast.hologram) for VS Code, or the Open VSX Registry (https://open-vsx.org/extension/bartblast/hologram) for Cursor, VSCodium and other compatible editors.
 
 #### Umbrella Projects
 
@@ -381,17 +396,17 @@ Code execution is organized into two types of operations:
 
 Both can be triggered by user interactions, and they can trigger each other.
 
-#### HTTP/2 Communication
+#### Client-Server Communication
 
-Client-server communication happens automatically through HTTP/2 persistent connections:
+Communication is wired up automatically - no manual HTTP configuration and no boilerplate code - over two complementary transports:
 
-- No manual HTTP configuration needed
-- No boilerplate code required
-- Handles all action-command interactions
-- Practically as fast as WebSockets for real-time updates
-- Lower server resource consumption - no continuous connection overhead per user
-- Easier debugging with standard HTTP tools and browser DevTools
-- Works seamlessly through corporate proxies and firewalls
+- HTTP/2 request/response handles all action-command round-trips, practically as fast as WebSockets for real-time updates
+- A Server-Sent Events (SSE) stream carries server-pushed updates - this is how broadcast actions reach every subscribed client without the client polling for changes
+
+Both legs are plain HTTP, which keeps the whole system:
+
+- Easy to debug with standard HTTP tools and browser DevTools
+- Seamless through corporate proxies and firewalls
 
 #### Runtime Behavior
 
@@ -529,13 +544,46 @@ In this example, when `@loading?` is `false`, the `disabled` attribute won't app
 
 ##### Security: Automatic HTML Escaping
 
-For security purposes, all interpolated expressions are automatically HTML-escaped to prevent XSS (Cross-Site Scripting) attacks. This means that potentially dangerous characters like `<`, `>`, `&`, and quotes are converted to their HTML entity equivalents (`&lt;`, `&gt;`, `&amp;`, etc.).
+For security purposes, interpolated expressions in text content and HTML attributes are automatically HTML-escaped to prevent XSS (Cross-Site Scripting) attacks. This means that potentially dangerous characters like `<`, `>`, `&`, and quotes are converted to their HTML entity equivalents (`&lt;`, `&gt;`, `&amp;`, etc.).
 
 ```holo
 <p>User input: {@user_input}</p>
 ```
 
 If `@user_input` contains `"<script>alert('XSS')</script>"`, it will be safely rendered as escaped text rather than executed as JavaScript. This escaping happens automatically for all values interpolated in text content and HTML attributes.
+
+###### Inside Script Elements
+
+A `<script>` element is different, because the browser hands its text straight to the JavaScript engine without turning HTML entities back into characters. An interpolated expression there is escaped as the text of a JavaScript string literal instead. Write it between quotes - double, single or backtick, whichever the surrounding code uses - and the script receives the value exactly as it is:
+
+```holo
+<script>
+  gtag("config", "{@tracking_id}");
+</script>
+```
+
+Whatever the value holds, it cannot end the string literal it sits in, and it cannot end the script element - so the `"</script>"` case above is covered here too.
+
+An interpolation written without quotes, such as `var x = {@value};`, puts the value in code position rather than text position. It is escaped like any other interpolation in a script, but the escaping only means something inside a string literal. Outside one, a value of `alert(1)` has nothing to escape and simply runs, while a value holding a quote or a `<` becomes `\"` or `\u{3C}`, which are a syntax error in code position and stop the whole script.
+
+Being valid JavaScript is not the same as being safe. Write a bare interpolation only for code your own application generates, such as a number or a boolean, and never for anything coming from a user, a request or a database. To pass structured data, interpolate into a string and parse it: `JSON.parse("{@json}")`.
+
+###### Inside Style Elements
+
+A `<style>` element works the same way, with CSS in place of JavaScript. The browser hands its text to the CSS parser without decoding entities, so the stylesheet reaches the page exactly as the template spells it, child combinators and ampersands included. An interpolated expression there is escaped as the text of a CSS string literal, so between quotes, double or single, the stylesheet receives the value exactly as it is:
+
+```holo
+<style>
+  nav > a \{ color: red \}
+  .banner::after \{ content: "{@label}" \}
+</style>
+```
+
+The braces of a CSS rule are template syntax, so escape them as `\{` and `\}`, or wrap the stylesheet in a `{%raw}...{/raw}` block. No value can end the literal it sits in or the element around it, and `>` and `&` inside a value are left alone, so selectors and `content` strings arrive as written.
+
+Without quotes, as in `color: {@value};`, the value lands in code position instead. Most CSS survives that: braces, colons, semicolons, parentheses and whole rules pass through unchanged, so a fragment the application generated can be interpolated in one piece. A newline, a quote and a `<` do not. Each becomes a CSS escape sequence, which is a parse error outside a string literal and drops the declaration around it.
+
+A bare interpolation is only as safe as the value. Write one for values the application produced itself, and never for anything coming from a user, a request or a database.
 
 #### Attribute and Prop Spread
 
@@ -735,6 +783,8 @@ Props can be typed using the following types:
 
 ##### Options
 
+Props can be configured using the `default`, `from_context`, `required` and `values` options. Any other option is a compile error, so a typo such as `defualt:` fails the build instead of being silently ignored.
+
 ###### Default Value
 
 Set a default value for optional props using the `default` option:
@@ -752,6 +802,32 @@ prop :user, :map, from_context: :current_user
 ```
 
 For more information about Context, see the Context page.
+
+###### Required
+
+Mark a prop as mandatory using the `required` option:
+
+```elixir
+prop :size, :atom, required: true
+```
+
+It can't be combined with `default`, since a prop with a default is never missing. It can be combined with `from_context`, which then means the Context must supply the value.
+
+###### Allowed Values
+
+Restrict a prop to a set of acceptable values using the `values` option:
+
+```elixir
+prop :size, :atom, values: [:small, :large]
+```
+
+A `default` value that isn't in the prop's own `values` list is a compile error.
+
+###### When Violations Are Reported
+
+A missing required prop is reported at compile time wherever a template writes the component out, and so is any value the compiler can work out without running anything: plain text with nothing interpolated into it, or a literal - `:small`, `"small"`, `1`, `true`, and composites built from them such as `{[:small, :large]}` or `{%{size: :small}}`. The build fails, naming the component and the template it was used in.
+
+Everything else is checked while rendering, and raises `Hologram.PropError` naming the template the component was rendered from. That covers a prop arriving through a spread, a component chosen by a dynamic tag, a prop sourced from the Context, an interpolated value such as `size="a{@b}"`, and any expression - including one nested inside an otherwise literal value, such as `{[:small, @other]}`.
 
 #### Stateful vs. Stateless Components
 
@@ -849,6 +925,24 @@ end
 
 Both `init/3` and `init/2` functions are optional. If you don't need to initialize state or perform any preparation, you can omit them entirely - Hologram provides default implementations that simply return the `Component` and `Server` structs unchanged.
 
+###### Props and State Name Collisions
+
+Give props and state entries different names. Templates merge the two with state taking precedence, so a state entry sharing a prop's name shadows it entirely. Copying a prop into a same-named state entry during `init` is the usual way to hit this: initialization runs only once, so the copy never refreshes, and the template keeps reading the copy rather than the prop. New values from the parent arrive on every render, none of them reach the screen, and nothing warns you. When a prop supplies a starting value that the component goes on to own, separate names - an `:initial_count` prop feeding a `:count` state entry - keep the prop reachable and make the snapshot obvious.
+
+##### Reading Props in Actions
+
+A stateful component's props are carried on its `%Component{}` struct, so an action reads one with `component.props.name`. Defaults and Context-sourced props are in there too, and so is the `cid`.
+
+```elixir
+prop :label, :string
+
+def action(:announce, _params, component) do
+  put_state(component, :announced, component.props.label)
+end
+```
+
+Props follow whatever the parent passes, so an action always reads the current value and never needs a copy kept in state.
+
 #### Slots
 
 Slots allow components to accept and render child content. They are defined using the `<slot />` tag in the component's template:
@@ -942,6 +1036,12 @@ While pages are built on top of components, they have some unique characteristic
 - They are always stateful
 - They are always initialized on the server-side using `init/3`, unlike regular components which can be initialized on either client or server
 - Their `init/3` function receives URL parameters (`params`) instead of component props (`props`)
+
+#### Server-Side Rendering (SSR)
+
+Every page is fully rendered to HTML on the server on first load, then becomes interactive on the client. Because the browser (and any crawler) receives complete, server-rendered markup, Hologram pages are SEO-friendly and fast to first paint out of the box, with no extra configuration.
+
+This is why a page's `init/3` always runs on the server: it produces the state used to render the initial HTML. Once the page is mounted in the browser, client-side state takes over and subsequent interactions happen without full page reloads (see Navigation for how transitions between pages work).
 
 #### Basic Example
 
@@ -1558,6 +1658,14 @@ Actions receive three arguments:
   - Custom parameters from template event attributes, other actions via `put_action/3`, or commands via `put_action/3`
   - Event data under the `:event` key (see Events for details about event data)
 - `component` - the current `%Component{}` struct
+
+The `component` argument carries the component's state as `component.state` and its props as `component.props`. Props follow whatever the parent passes, so an action always sees the current value and never needs a copy kept in state. A page's params are its props, so a page action reads a URL param the same way.
+
+```elixir
+def action(:refresh, _params, component) do
+  put_command(component, :load_order, id: component.props.id)
+end
+```
 
 #### Action Results
 
@@ -2455,7 +2563,7 @@ These helpers are imported into pages, components, and `use Hologram.Middleware`
 - `put_redirect(server, page, params)` - a 302 redirect to a page module with route params.
 - `put_response_body(server, body)` - sets the response body (iodata). Not terminal on its own - pair it with `put_status`.
 - `put_response_header(server, name, value)` - sets a response header (name lower-cased), replacing any existing value. Raises on `cookie` / `set-cookie` - use the cookie helpers for those.
-- `put_status(server, status)` - sets the response status and stops the chain. `status` is an integer like `403` or an atom alias like `:forbidden` or `:not_found`. An unknown alias or out-of-range integer raises.
+- `put_status(server, status)` - sets the response status and stops the chain. `status` is an integer like `403` or an atom alias like `:forbidden` or `:not_found`. An unknown alias or out-of-range integer raises. The full alias set is in Status Aliases below.
 
 ##### Identity
 
@@ -2474,6 +2582,73 @@ Available here too, documented in full in their own sections:
 - `delete_stash(server, key)` - removes a stashed value.
 - `get_stash(server, key)` - reads a stashed value.
 - `put_stash(server, key, value)` - stashes a value for downstream middleware and handlers.
+
+#### Status Aliases
+
+Each status code and the atom alias `put_status` accepts for it. An unknown alias raises.
+
+- 100 - :continue
+- 101 - :switching_protocols
+- 102 - :processing
+- 103 - :early_hints
+- 200 - :ok
+- 201 - :created
+- 202 - :accepted
+- 203 - :non_authoritative_information
+- 204 - :no_content
+- 205 - :reset_content
+- 206 - :partial_content
+- 207 - :multi_status
+- 208 - :already_reported
+- 226 - :im_used
+- 300 - :multiple_choices
+- 301 - :moved_permanently
+- 302 - :found
+- 303 - :see_other
+- 304 - :not_modified
+- 305 - :use_proxy
+- 307 - :temporary_redirect
+- 308 - :permanent_redirect
+- 400 - :bad_request
+- 401 - :unauthorized
+- 402 - :payment_required
+- 403 - :forbidden
+- 404 - :not_found
+- 405 - :method_not_allowed
+- 406 - :not_acceptable
+- 407 - :proxy_authentication_required
+- 408 - :request_timeout
+- 409 - :conflict
+- 410 - :gone
+- 411 - :length_required
+- 412 - :precondition_failed
+- 413 - :payload_too_large
+- 414 - :uri_too_long
+- 415 - :unsupported_media_type
+- 416 - :range_not_satisfiable
+- 417 - :expectation_failed
+- 418 - :im_a_teapot
+- 421 - :misdirected_request
+- 422 - :unprocessable_entity
+- 423 - :locked
+- 424 - :failed_dependency
+- 425 - :too_early
+- 426 - :upgrade_required
+- 428 - :precondition_required
+- 429 - :too_many_requests
+- 431 - :request_header_fields_too_large
+- 451 - :unavailable_for_legal_reasons
+- 500 - :internal_server_error
+- 501 - :not_implemented
+- 502 - :bad_gateway
+- 503 - :service_unavailable
+- 504 - :gateway_timeout
+- 505 - :http_version_not_supported
+- 506 - :variant_also_negotiates
+- 507 - :insufficient_storage
+- 508 - :loop_detected
+- 510 - :not_extended
+- 511 - :network_authentication_required
 
 ### Session
 
@@ -4011,317 +4186,34 @@ Our development roadmap is organized by timeline, with colors representing proxi
 
 ### Contributing
 
-Thank you for your interest in contributing to Hologram! This guide will help you get started with contributing to the project.
+Thanks for your interest in contributing to Hologram!
 
-#### Current Focus: Porting Erlang Functions
+#### Contributions happen through issues, not pull requests
 
-The most impactful way to contribute right now is by helping port Erlang functions to JavaScript. This work expands Elixir standard library coverage in the browser, enabling more of the Elixir you know and love to run client-side.
+Hologram has benefited from community pull requests in the past, and I'm grateful to everyone who sent one. For now, though, I write all the code myself. It's my full-time job, funded by sponsors, and this setup has turned out to be the most productive one by far. Once most of the design work is done, I'd like Hologram to have a core team maintaining it - but that's a later phase of the project.
 
-Hologram automatically compiles Elixir code to JavaScript, but many Elixir standard library functions depend on underlying Erlang functions that must be manually ported. Currently we're focusing on functions that matter for web development: those supporting state management, data transformation, working with strings and collections, handling dates and times, and other common application needs. Modules like `Process`, `System`, `File`, `Port`, `Code`, and `Node` are deferred to later development phases.
+Until then, the door isn't closed - it just moved. Here's the short version of why.
 
-**Good news:** You don't need deep knowledge of Hologram internals or Erlang to contribute! You just need to understand what the Erlang function does and follow the patterns established in existing ports. This makes it an excellent opportunity whether you're new to open source or an experienced contributor.
+Writing code is the cheap part now. AI made it easy to produce, but no easier to verify, and with an external PR all of that verification lands on me, whether a human or an AI wrote the code. Given a good spec, it's faster for me to implement a feature than to properly review someone else's. That includes AI doing much of the typing - the difference is a tight feedback loop, where I iterate and benchmark along the way instead of auditing finished code after the fact.
 
-#### Prerequisites
+The architecture is also moving fast. Everything that exists today is documented on the website, and the Roadmap shows what's coming - but not how it'll be designed. Speccing that out publicly would be wasted effort, because it could change a month later. Which is why even good external code tends to make choices that won't fit where the framework is heading. I don't bolt things on top of Hologram: every feature has to fit the whole design, and that's much easier to get right when the design discussion happens before the code exists.
 
-##### What You Need to Know
+Issues are where that discussion happens. You describe the problem, we talk through the options, and it turns into a spec. That costs you an hour, not a weekend. When the feature fits the roadmap, you get it implemented by the person who knows where the architecture is heading, shaped around your actual use case. And your name goes in the release announcement. When it doesn't fit yet, the issue still shapes priorities, and there's often a workaround in the meantime.
 
-- **Basic Elixir** - Ability to write Elixir code, especially for writing unit tests
-- **Basic JavaScript** - Ability to read and write ES6+ JavaScript
-- **Basic Git** - Familiarity with forking, cloning, branching, and creating pull requests
-- **How to read documentation** - You'll reference Erlang docs and use IEx help
+#### What helps most
 
-##### What You Need to Have
+Bugs, feature requests, and docs feedback go through GitHub issues. Security vulnerabilities are the exception - report those privately instead of opening a public issue, as described in Reporting Vulnerabilities. For help with your own project, the Discord and the Elixir Forum are the places to get unstuck.
 
-- **GitHub account** - To create issues and submit pull requests
-- **Elixir development environment** - Elixir and Erlang installed on your system
-- **Node.js and npm** - Required for running JavaScript tests and the build process
+If a bug or missing feature is blocking you, say so in the issue and describe what it blocks - a project, a migration, a decision whether to adopt Hologram. Blockers weigh heavily when I decide what to work on next.
 
-##### What You DON'T Need
+- Bug reports with a minimal reproduction - your Hologram, Elixir, and Erlang/OTP versions, plus the smallest page or component that triggers the problem, ideally as a repo built from the Hologram skeleton app.
+- Feature requests that describe what you're building and where Hologram fights you, rather than a proposed implementation.
+- Docs feedback - typos, unclear sections, missing examples. Even one-character fixes.
+- Questions - ask on Discord or the Elixir Forum, whichever you prefer. I'm on both, but Discord is busier, so answers usually come faster there. When an answer uncovers a bug or a docs gap, it graduates to an issue.
+- Ecosystem packages - building your own package on top of Hologram is very welcome, and that code is entirely yours. Hologram aims to ship a lot of core tooling out of the box, but don't let that stop you: packages that fill a gap until official support lands are valuable even when that support is planned, and alternative approaches to what Hologram ships - extensions, integrations, different trade-offs - are always fair game. Ask on Discord or the Elixir Forum what's coming and when, so you know what you're building alongside. Just mind the package naming conventions - the `hologram_` prefix and `Hologram.*` namespace are reserved for official packages.
+- Spreading the word - blog posts, talks, and example apps help more than you might think.
+- Sponsoring the project - if Hologram is useful to you, sponsors are what make the full-time work possible.
 
-- Deep Erlang knowledge
-- Understanding of Hologram's compiler internals
-- Experience with transpilers
-
-#### Finding a Function to Port
-
-##### Step 1: Browse Available Functions
-
-Visit the Erlang Functions page (part of the Client Runtime reference) to see Erlang functions porting status. Look for functions marked as todo - these are ready to be ported.
-
-##### Step 2: Check GitHub Issues
-
-Before starting, search the Hologram GitHub issues (https://github.com/bartblast/hologram/issues) to make sure nobody is already working on your chosen function.
-
-##### Step 3: Create Your Issue
-
-Create a new GitHub issue with a clear title in this format: `Port :lists.filter/2 to JS`. This reserves the function and lets others know you're working on it.
-
-#### Setting Up Your Development Environment
-
-##### Fork and Clone
-
-First, fork the Hologram repository on GitHub, then clone your fork locally:
-
-```
-$ git clone https://github.com/YOUR-USERNAME/hologram.git
-$ cd hologram
-```
-
-##### Install Dependencies
-
-After cloning, install all required dependencies using the setup task. This single command will fetch Elixir dependencies for both the main project and the feature tests app, and install JavaScript dependencies:
-
-```
-$ mix setup
-```
-
-##### Create Your Branch
-
-**Important:** Branch from `dev`, not `master`. Ports are treated as enhancements, and all enhancements target the `dev` branch.
-
-```
-$ git checkout dev
-$ git checkout -b port-lists-filter-2
-```
-
-##### Scope Your Work
-
-**One function per pull request** (or functions that are directly related - same module/name, different arity). This allows for faster review and keeps the codebase moving forward efficiently.
-
-#### Understanding the Basics
-
-##### Boxed Types
-
-Hologram uses value boxing to maintain Elixir type information in JavaScript. Each compiled term is wrapped in an object with a `type` field that specifies its original type. For example, the integer `42` becomes `{type: "integer", value: 42n}`.
-
-You can explore the type system in assets/js/type.mjs in the Hologram repository. The `Type` class provides utilities like `Type.boolean()`, `Type.isTuple()`, and `Type.encodeMapKey()` that you'll use when porting functions.
-
-##### Function Structure
-
-Let's examine `:lists.keymember/3` as an example (from lists.mjs). All ported functions follow this pattern:
-
-```javascript
-// Start keymember/3
-"keymember/3": (value, index, tuples) => {
-  return Type.boolean(
-    Type.isTuple(Erlang_Lists["keyfind/3"](value, index, tuples))
-  );
-},
-// End keymember/3
-// Deps: [:lists.keyfind/3]
-```
-
-**Key components:**
-
-- **Start/End comments** - These allow the Hologram compiler to extract the source code during compilation. Always include them exactly as shown.
-- **Function signature** - Use the format `"function_name/arity"` as the key, with an arrow function as the value.
-- **Deps comment** - Lists dependencies on other Erlang functions. If your function has dependencies, see the Register Dependencies step below for how to register them.
-
-#### Step-by-Step Porting Process
-
-##### 1. Understand the Function Behavior
-
-Before writing any code, thoroughly understand what the Erlang function does. The Erlang Functions page lists all Erlang functions - click on a function to view its details page, which includes a link to the official Erlang documentation for that specific function. You can also use IEx:
-
-```
-iex> h :lists.filter/2
-```
-
-Or browse the official Erlang documentation directly: https://www.erlang.org/doc (navigate to the appropriate module).
-
-##### 2. Locate the Target File
-
-Manually ported Erlang functions are located in `assets/js/erlang/` directory, organized by module. For example, `:lists` functions go in `assets/js/erlang/lists.mjs`.
-
-##### 3. Look at Similar Functions
-
-Browse already-ported functions in the same module or similar modules. Use these as templates and follow the same conventions, even if they seem non-DRY or unusual. These patterns will be refactored later once common patterns are identified across all ports.
-
-##### 4. Implement Your Function
-
-Write your implementation following these principles:
-
-- **Never mutate parameters** - Always return new values or return parameters unchanged
-- **Use Type class utilities** - `Type.boolean()`, `Type.isTuple()`, etc.
-- **Use Interpreter class** - For function calls (`Interpreter.callFunction()`), error handling (`Interpreter.matchError()`), comparisons (`Interpreter.compare()`), and more
-- **Use Bitstring class** - For binary and bitstring operations when needed
-- **Handle boxed values** - Remember that values are wrapped in objects with type information
-
-##### 5. Validate Inputs
-
-Most ported functions need input validation. Follow existing validation patterns from other ported functions.
-
-**Type validation** (most common case) - Check that parameters have the expected types:
-
-```javascript
-if (!Type.isList(list)) {
-  Interpreter.raiseArgumentError(
-    Interpreter.buildArgumentErrorMsg(3, "not a list")
-  );
-}
-```
-
-**Value validation** - Check that parameter values are within acceptable ranges or match expected values:
-
-```javascript
-if (index.value < 1) {
-  Interpreter.raiseArgumentError(
-    Interpreter.buildArgumentErrorMsg(2, "out of range")
-  );
-}
-```
-
-**Deferred functionality** - If a particular option or code path doesn't make sense for Phase 1 (e.g., UTF16 encoding), add a clear error message or TODO comment explaining why it's deferred:
-
-```javascript
-// TODO: implement other encodings for inputEncoding param
-if (!Interpreter.isStrictlyEqual(inputEncoding, Type.atom("utf8"))) {
-  throw new HologramInterpreterError(
-    "encodings other than utf8 are not yet implemented in Hologram"
-  );
-}
-```
-
-##### 6. Register Dependencies
-
-If your function has dependencies on other Erlang functions, you need to register them in two places:
-
-- Add a `Deps` comment under your function in the JavaScript file (e.g., `// Deps: [:lists.keyfind/3]`)
-- Add the same dependencies to the `@erlang_mfa_edges` attribute in `lib/hologram/compiler/call_graph.ex`
-
-This duplication is temporary - both are required for now, but eventually there will be a single source of truth.
-
-#### Writing Tests
-
-Every ported function requires two types of tests to ensure correctness and consistency with OTP behavior.
-
-##### JavaScript Unit Tests
-
-Add comprehensive test cases in a dedicated test file for each ported module. For example, tests for `:lists` functions are in `test/javascript/erlang/lists_test.mjs`, while the implementation is in `assets/js/erlang/lists.mjs`.
-
-Your tests should:
-
-- Cover typical use cases
-- Test edge cases (empty collections, nil values, etc.)
-- Verify error conditions and error messages
-- Test input validation (type checks, value range checks, etc.)
-- Be thorough but not redundant - avoid overlapping test cases
-- Work with boxed types (remember to box your test values)
-
-##### Server-Side Consistency Tests
-
-Create matching tests in Elixir that verify your JavaScript implementation behaves identically to OTP. These go in `test/elixir/hologram/ex_js_consistency/erlang/`.
-
-For example, if you ported `:lists.filter/2`, create tests in `test/elixir/hologram/ex_js_consistency/erlang/lists_test.exs` that mirror your JavaScript tests.
-
-#### Performance Considerations
-
-While the general rule is to never mutate parameters (see Implement Your Function above), you can use internal mutation for performance when building collections. This is an optimization that doesn't violate immutability from the caller's perspective:
-
-- You can mutate variables you create inside your function
-- Build the final boxed value in place rather than creating new objects each loop iteration
-- Use `Type.encodeMapKey()` and understand internal boxed value structures (see Type class)
-
-**Note:** These manual performance optimizations are temporary measures. Hologram will implement **Structural Sharing** in the future to automatically address performance issues related to immutability.
-
-#### Quality Checks Before Submitting
-
-Before submitting your pull request, make sure to run quality checks locally.
-
-##### Format Your Code
-
-Format all code (both Elixir and JavaScript):
-
-```
-$ mix f
-```
-
-##### Run All Quality Checks
-
-Run the same checks that CI runs:
-
-```
-$ mix check
-```
-
-This command runs compiler checks, formatters, linters (Credo, ESLint), tests, and other quality tools.
-
-##### Optional: Install Git Hooks
-
-You can optionally install git hooks that automatically run formatting checks before commits:
-
-```
-$ lefthook install
-```
-
-#### Code Review & Communication
-
-##### Pull Request Guidelines
-
-- **Focus on the function** - Keep your PR focused on porting the specific function(s)
-- **Don't refactor existing code** - Even if you see patterns that could be DRYed up, follow existing conventions
-- **Follow the exact commit message format** - Use: "Port :lists.filter/2 to JS"
-- **Ensure all CI checks pass** - Before requesting review, verify that all continuous integration checks have passed
-
-##### Communication Channels
-
-- **General questions about porting** - Ask on the Hologram Forum thread (https://elixirforum.com/t/elixir-javascript-porting-initiative/73335) dedicated to the porting initiative
-- **Function-specific questions** - Keep discussion in the GitHub issue you created for that function
-- **Convention or process suggestions** - Discuss in the Hologram Forum thread, not in PRs
-
-##### Review Process
-
-Once you submit your PR, we'll review it as quickly as possible. We may suggest:
-
-- Additional test cases for edge cases
-- Validation for options or parameters
-- Alternative implementations for better performance
-- Corrections to match OTP behavior exactly
-
-#### Tips & Best Practices
-
-##### Using AI Tools
-
-AI tools can be very helpful for porting! They're good at:
-
-- Translating Erlang logic to JavaScript
-- Understanding Erlang documentation
-- Generating test cases
-- Spotting edge cases you might have missed
-
-Just remember to verify the AI's output against actual OTP behavior and existing Hologram conventions!
-
-##### Common Pitfalls to Avoid
-
-- **Forgetting to box return values** - All values must be properly boxed
-- **Mutating parameters** - Never modify input parameters directly
-- **Skipping edge case tests** - Empty lists, nil values, and error conditions are important
-- **Inconsistent error messages** - Match OTP error formats exactly
-- **Missing Start/End comments** - The compiler needs these markers
-- **Forgetting to update CallGraph** - Dependencies must be declared in both places
-
-##### Alphabetical Ordering
-
-Order imports (including classes like `Type`, `Interpreter`, etc.) and functions alphabetically within each module file. Similarly, order test sections for each function alphabetically by function name within test files.
-
-#### Resources
-
-- **Client Runtime Reference** - https://hologram.page/reference/client-runtime
-- **Hologram Repository** - https://github.com/bartblast/hologram
-- **Ported Functions** - https://github.com/bartblast/hologram/tree/dev/assets/js/erlang
-- **JavaScript Tests** - https://github.com/bartblast/hologram/tree/dev/test/javascript/erlang
-- **Elixir Consistency Tests** - https://github.com/bartblast/hologram/tree/dev/test/elixir/hologram/ex_js_consistency/erlang
-- **Erlang Documentation** - https://www.erlang.org/doc
-
-#### Questions?
-
-If you have questions about porting, contribution process, or anything else:
-
-- **General porting questions** - Post in the Hologram Forum thread (https://elixirforum.com/t/elixir-javascript-porting-initiative/73335)
-- **Specific function questions** - Comment on the GitHub issue for that function
-- **Bugs or problems** - Create a new GitHub issue
-
-Thank you for contributing to Hologram! Every function you port brings us closer to full Elixir standard library coverage in the browser and helps the entire Elixir community build better full-stack applications.
 
 ### Package Naming
 
@@ -4343,9 +4235,9 @@ I'm Bart Blast, the creator of Hologram. For over 5 years, I've been working on 
 
 Sponsorship keeps Hologram moving forward. Hologram is a full-time effort. Sponsorships allow me to focus on development, support the community, and push the roadmap forward. Every new sponsor helps expand what's possible.
 
-#### Endorsed by Jose Valim and Elixir Community
+#### Endorsed by José Valim and Elixir Community
 
-Hologram has earned recognition and support from the highest levels of the Elixir ecosystem, including promotion by Jose Valim (Creator of Elixir), being featured on elixir-lang.org, ElixirConf EU 2025 speaker slot, active sponsorship from Zach Daniel (Ash Framework Creator), public endorsement from Adam Kirk (Jump.ai CTO), and production deployments.
+Hologram has earned recognition and support from the highest levels of the Elixir ecosystem, including promotion by José Valim (Creator of Elixir), being featured on elixir-lang.org, ElixirConf EU 2025 speaker slot, active sponsorship from Zach Daniel (Ash Framework Creator), public endorsement from Adam Kirk (Jump.ai CTO), and production deployments.
 
 #### Hologram's Growing Impact
 
@@ -4390,6 +4282,54 @@ Custom amounts and creative sponsorship arrangements are also welcome.
 - **Consider consulting** - I'm available for consulting to help explore Hologram's potential for your specific needs
 - **Spread the word** - Talk about Hologram at meetups, conferences, or in your local Elixir community
 
+### Reporting Vulnerabilities
+
+Report it privately through GitHub by opening a draft advisory (https://github.com/bartblast/hologram/security/advisories/new). That's the fastest route, and it keeps the details out of sight until there's a version to upgrade to.
+
+If GitHub doesn't work for you, email bart@bartblast.com instead.
+
+Please don't use a public GitHub issue, Discord, the Elixir Forum, or Slack for this. They're all public, and a report there hands the details to attackers before anyone can patch.
+
+Send whatever you have:
+
+- your Hologram, Elixir, and Erlang/OTP versions
+- what an attacker can do with it
+- the smallest page or component that reproduces it, ideally built from the Hologram skeleton app (https://github.com/bartblast/hologram_skeleton)
+
+A rough report beats no report. If you're unsure whether something counts, send it anyway.
+
+#### What Happens Next
+
+Reports get acknowledged within 3 business days, and within a week you'll know whether it reproduces and how serious it looks. Hologram is maintained full-time, so reports don't sit in a queue.
+
+After that:
+
+1. The fix lands on a private branch, with a test that pins the behavior.
+2. It ships in a release.
+3. A security advisory goes out naming the affected versions and the fixed one, along with a CVE request.
+
+You get credit in the advisory under whatever name or handle you like, or none at all if you'd rather stay anonymous. Just say which.
+
+Anything exploitable gets a patch release rather than waiting for the next minor. The advisory goes public when that release does. The fix commit becomes public with that release, so holding the advisory back any longer only keeps it from the people who need to upgrade.
+
+If something turns out to need a redesign and can't move that fast, you'll hear where it stands rather than nothing at all.
+
+#### Which Versions Get Fixes
+
+The latest release, and nothing older. Hologram is pre-1.0 and the architecture still moves fast, so there are no backports to earlier minor versions. Acting on a security fix means upgrading to the newest version.
+
+#### Scope
+
+The framework itself is in scope: the compiler, the client runtime, the server, and the code Hologram generates for your pages. If an app built the way the docs describe ends up exposed, that's worth reporting.
+
+Out of scope:
+
+- Bugs in your own application code, unless Hologram's docs told you to write it that way.
+- Vulnerabilities in a dependency. Report those to the dependency's maintainers. Do report it here if Hologram uses a dependency in a way that turns an otherwise harmless bug into an exploitable one.
+- Anything that needs the attacker to already have access to your server, your database, or your source code.
+- Scanner output with no working reproduction.
+- Packages built on top of Hologram by other people. Those belong with their own maintainers.
+
 ## Resources
 
 ### Community
@@ -4414,6 +4354,14 @@ Beyond Hologram itself, you'll learn how to integrate with popular Elixir librar
 The courses will be offered at an affordable price, with all proceeds going directly toward sustaining the Hologram project and supporting its ongoing development.
 
 Join the waiting list at https://hologram.page/courses.
+
+### Hologram UI
+
+Get early access to the official Hologram UI component library.
+
+A polished, ready-to-use set of components designed specifically for Hologram, so you can focus on your product instead of rebuilding the same building blocks for every project. Because the library is designed around Hologram's conventions, the components are idiomatic rather than generic ones bolted on.
+
+The library will be offered at an affordable price, with all proceeds going toward sustaining the Hologram project. It is currently available through a waiting list at https://hologram.page/ui.
 
 ### Newsletter
 
