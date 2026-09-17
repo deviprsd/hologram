@@ -111,13 +111,16 @@ defmodule Mix.Tasks.Compile.Hologram do
 
       Compiler.maybe_install_js_deps(assets_dir, build_dir)
 
-      {old_module_digest_plt, module_digest_plt_dump_path} =
-        Compiler.maybe_load_module_digest_plt(build_dir, supervisor: sup)
+      {old_module_info_plt, module_info_plt_dump_path, module_info_dumped_at} =
+        Compiler.maybe_load_module_info_plt(build_dir, supervisor: sup)
 
-      new_module_digest_plt = Compiler.build_module_digest_plt!(supervisor: sup)
+      new_module_info_plt =
+        Compiler.build_module_info_plt!(old_module_info_plt, module_info_dumped_at,
+          supervisor: sup
+        )
 
       module_digests_diff =
-        Compiler.diff_module_digest_plts(old_module_digest_plt, new_module_digest_plt)
+        Compiler.diff_module_info_plts(old_module_info_plt, new_module_info_plt)
 
       # Building IR PLT from scratch is faster that dumping it to a file,
       # and then loading and patching it (benchmarked on an app with 1628 modules):
@@ -125,10 +128,18 @@ defmodule Mix.Tasks.Compile.Hologram do
       # dump: ~350 ms
       # load: ~465 ms
       # patch: not benchmarked
-      ir_plt = Compiler.build_ir_plt(supervisor: sup)
+      modules =
+        new_module_info_plt
+        |> PLT.get_all()
+        |> Map.keys()
+
+      ir_plt = Compiler.build_ir_plt(modules: modules, supervisor: sup)
 
       {call_graph, call_graph_dump_path} =
-        Compiler.maybe_load_call_graph(build_dir, supervisor: sup)
+        Compiler.maybe_load_call_graph(build_dir,
+          module_info_plt: new_module_info_plt,
+          supervisor: sup
+        )
 
       call_graph
       |> CallGraph.patch(ir_plt, module_digests_diff)
@@ -145,9 +156,15 @@ defmodule Mix.Tasks.Compile.Hologram do
         # or implement opts param for Digraph.remove_vertices/2 to allow rebuilding the graph.
         |> CallGraph.remove_manually_ported_mfas()
 
-      page_modules = Reflection.list_pages()
+      page_modules = Compiler.list_pages(new_module_info_plt)
+      component_modules = Compiler.list_components(new_module_info_plt)
 
-      Compiler.validate_page_modules(page_modules)
+      Compiler.validate_page_modules(page_modules, new_module_info_plt)
+
+      # Runs here rather than in each module's own compilation: every module is compiled by now, so
+      # a used component's __props__/0 is simply callable, with no compile-time dependency on it and
+      # no deadlock when a component renders itself.
+      Compiler.validate_prop_usages(page_modules ++ component_modules, ir_plt)
 
       runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime, page_modules)
 
@@ -155,20 +172,55 @@ defmodule Mix.Tasks.Compile.Hologram do
       # applications reached from pages are named as well.
       app_versions = Compiler.build_app_versions(call_graph_for_runtime)
 
+      # Filled by the entry file renderers as they go: each reachable function's JavaScript
+      # is produced once per compile in the common case and read back by every entry file that
+      # needs it.
+      encode_plt = PLT.start(supervisor: sup)
+
+      # The stack trace metadata of every module, which the bundles look up instead of asking the
+      # VM about each module once per bundle. Built only when client stack traces are on, since the
+      # bundles register no metadata otherwise.
+      module_metadata =
+        if Hologram.client_stacktraces?() do
+          Compiler.build_module_metadata(new_module_info_plt)
+        end
+
+      entry_file_opts =
+        Keyword.merge(opts,
+          module_info_plt: new_module_info_plt,
+          module_metadata: module_metadata
+        )
+
       runtime_entry_file_path =
         Compiler.create_runtime_entry_file(
           runtime_mfas,
           ir_plt,
+          encode_plt,
           async_mfas,
           app_versions,
-          opts
+          entry_file_opts
         )
 
       call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph_for_runtime, runtime_mfas)
 
+      # Every page loads the runtime script, so the JS bindings it registers are available
+      # app-wide. A page bundle registering them again would only bundle a second copy of the
+      # imported JavaScript module, which the two would then take turns overwriting.
+      runtime_js_binding_modules =
+        runtime_mfas
+        |> Compiler.list_js_import_modules(ir_plt, new_module_info_plt)
+        |> MapSet.new()
+
       page_entry_files_info =
         page_modules
-        |> Compiler.create_page_entry_files(call_graph_for_pages, ir_plt, async_mfas, opts)
+        |> Compiler.create_page_entry_files(
+          call_graph_for_pages,
+          ir_plt,
+          encode_plt,
+          async_mfas,
+          runtime_js_binding_modules,
+          Keyword.put(entry_file_opts, :components, component_modules)
+        )
         |> Enum.map(fn {entry_name, entry_file_path} ->
           {entry_name, entry_file_path, "page"}
         end)
@@ -203,7 +255,7 @@ defmodule Mix.Tasks.Compile.Hologram do
 
       PLT.dump(page_digest_plt, page_digest_plt_dump_path)
       CallGraph.dump(call_graph, call_graph_dump_path)
-      PLT.dump(new_module_digest_plt, module_digest_plt_dump_path)
+      PLT.dump(new_module_info_plt, module_info_plt_dump_path)
       dump_static_artifacts_manifest(new_build_static_artifacts, build_dir)
 
       # File.rm/1 (not File.rm!/1): a concurrent build in the same env may already have

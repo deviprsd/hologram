@@ -10,6 +10,8 @@ For additional details beyond these rules, see deps/hologram/llms-full.txt or ht
 - Commands use `server` struct, not `socket`. Return `%Server{}`, not `{:noreply, socket}`.
 - Cookie keys are strings (`"my_cookie"`), session keys are atoms or strings (`:user_id`). Mixing these up causes errors.
 - `init/3` for pages receives URL params, not props. Don't confuse with component `init/3` which receives props.
+- Never give a state key the same name as a prop. Templates merge props and state with state winning, so the state key shadows the prop entirely. Copying a prop into a same-named state key in `init` is the usual cause - `init` runs once, so the copy never refreshes and fresh props never reach the template. Use distinct names (an `:initial_count` prop feeding a `:count` state key).
+- Never copy a prop into state so an action can read it. Read it from the struct: `component.props.name`. Props follow whatever the parent passes, so an action always reads the current value.
 - Stateless components cannot handle events. You need a `cid` to make a component stateful.
 - The page cid is `"page"`, the layout cid is `"layout"`. Don't forget these when targeting actions.
 - Not all Elixir standard library functions are available client-side yet. Check the Client Runtime reference for coverage.
@@ -23,7 +25,7 @@ For additional details beyond these rules, see deps/hologram/llms-full.txt or ht
 - **Actions** run on the client (browser). Use them for state updates, navigation, and triggering commands.
 - **Commands** run on the server. Use them for database access, API calls, session/cookie management, and other server-side operations.
 - State lives in the browser, not on the server. This enables instant UI updates without network round-trips.
-- Client-server communication happens automatically over HTTP/2 persistent connections. You never configure HTTP endpoints or write boilerplate for action-command interactions.
+- Client-server communication happens automatically over two transports: HTTP/2 request/response for action-command round-trips, and a Server-Sent Events (SSE) stream for server-pushed updates such as broadcast actions. You never configure HTTP endpoints or write boilerplate for either.
 - Hologram automatically determines which code runs on the client vs server and compiles the client portions to JavaScript. You don't manually split code.
 
 ## Template Syntax
@@ -48,14 +50,22 @@ For additional details beyond these rules, see deps/hologram/llms-full.txt or ht
 - On elements, spread keys dasherize (`user_id` renders `user-id`) and nested maps or keyword lists compose dash-joined names (`data: [user_id: 1]` renders `data-user-id="1"`). On components, keys match declared prop names verbatim and values stay raw terms.
 - Event bindings (`$`-prefixed keys) can't be spread and raise `ArgumentError` - write them as literal attributes.
 - To forward arbitrary attributes through a wrapper component, declare a map prop (`prop :html_attrs, :map`) and spread it onto the inner element: `<button class="fancy" ...{@html_attrs}>`.
-- All interpolated expressions are automatically HTML-escaped to prevent XSS.
+- Interpolated expressions in text content and HTML attributes are automatically HTML-escaped to prevent XSS. `<script>` and `<style>` are the exceptions, below.
+- Inside a `<script>` element an interpolated expression is escaped as the text of a JavaScript string literal instead, so write it between quotes - `"{@value}"`, `'{@value}'` or `` `{@value}` `` - and the script receives the value exactly as it is; it can never end the script element or the literal. Bare interpolation (`var x = {@value};`) puts the value in code position, where escaping cannot protect it. A value of `alert(1)` runs. A value holding a quote or a `<` becomes a syntax error that stops the script. Write one only for code your own application generates, such as a number or a boolean, and never for anything coming from a user, a request or a database.
+- Inside a `<style>` element the same applies with CSS. The stylesheet you write reaches the page as spelled, so a child combinator stays a `>`, and an interpolated expression is escaped as the text of a CSS string literal. Between quotes - `"{@value}"` or `'{@value}'` - the stylesheet gets the value exactly as it is, and no value can end the literal or the element. Escape the braces of a CSS rule as `\{` and `\}`, or wrap the stylesheet in a `{%raw}...{/raw}` block. Bare interpolation (`color: {@value};`) puts the value in code position, where most CSS passes through unchanged, so a generated fragment can be interpolated whole; a newline, a quote or a `<` in it becomes a CSS escape sequence that drops the declaration. As with a script, write one only for values your own application produced.
 
 ## Components
 
 - Components use `use Hologram.Component`. **Not** `use Phoenix.Component` or `use Phoenix.LiveComponent`.
 - Define props with `prop :name, :type` or `prop :name, :type, default: value`.
 - Available prop types: `:any`, `:atom`, `:boolean`, `:bitstring`, `:float`, `:function`, `:integer`, `:list`, `:map`, `:pid`, `:port`, `:reference`, `:string`, `:tuple`.
+- Prop options are `default:`, `from_context:`, `required:` and `values:`. Any other option is a compile error, so a typo like `defualt:` fails the build instead of being ignored.
 - Source props from context: `prop :user, :map, from_context: :current_user`.
+- Require a prop with `prop :size, :atom, required: true`. It can't be combined with `default:` (a prop with a default is never missing), but it can be combined with `from_context:` (the context must then supply it).
+- Restrict a prop to a set of values with `prop :size, :atom, values: [:small, :large]`. A `default:` outside its own `values:` list is a compile error.
+- A missing required prop is caught at compile time wherever a template writes the component out, and so is any value the compiler can evaluate without running anything: plain text with no interpolation, or a literal - including composites like `{[:small, :large]}` and `{%{size: :small}}`.
+- Everything else is checked while rendering and raises `Hologram.PropError`: a `...{@props}` spread, a `<{@module} />` dynamic tag, a `from_context:` prop, an interpolated value (`size="a{@b}"`), and any expression, including one nested inside an otherwise literal value (`{[:small, @other]}`).
+- Read a prop in an action with `component.props.name`. Defaults and context-sourced props are in there too, and so is `cid`.
 - Stateful components require a `cid` attribute: `<MyComponent cid="my_id" />`. Without `cid`, the component is stateless.
 - Each stateful instance is initialized exactly once: `init/3` (props, component, server) runs when its lifecycle starts during server-side page rendering, `init/2` (props, component) when it is dynamically added to an already-loaded page.
 - `init/3` can return a `Component` struct, a `Server` struct, or a `{component, server}` tuple.
@@ -72,6 +82,8 @@ For additional details beyond these rules, see deps/hologram/llms-full.txt or ht
 - Pages are always stateful and always initialized server-side with `init/3` (params, component, server).
 - `init/3` receives URL params, not props. Use `param :name, :type` to declare typed route parameters.
 - Supported param types: `:atom`, `:float`, `:integer`, `:string`.
+- `param` takes no options yet - passing one is a compile error.
+- A page's params are its props, so an action reads a URL param with `component.props.name`, the same way a component reads a prop.
 - The page's component ID (cid) is always `"page"`. Use `target: "page"` to target actions at it.
 - Hologram uses a search tree router, not ordered routing. Static segments always match before parameterized ones. You cannot have two ambiguous parameterized routes at the same level (e.g. `/:username` and `/:post_slug`) - use distinct prefixes instead.
 

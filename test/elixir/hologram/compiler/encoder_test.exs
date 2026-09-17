@@ -2,6 +2,7 @@ defmodule Hologram.Compiler.EncoderTest do
   use Hologram.Test.BasicCase, async: true
   import Hologram.Compiler.Encoder, except: [encode_ir: 2]
 
+  alias Hologram.Commons.PLT
   alias Hologram.Commons.SystemUtils
   alias Hologram.Compiler.Context
   alias Hologram.Compiler.IR
@@ -182,6 +183,42 @@ defmodule Hologram.Compiler.EncoderTest do
         """)
 
       assert encode_ir(ir) == expected
+    end
+
+    test "with Elixir module/function capture info answered from the IR PLT" do
+      # &Aaa.Bbb.fun/0, a module that only the IR PLT knows
+      ir_plt = PLT.start()
+      PLT.put(ir_plt, Aaa.Bbb, :ir)
+
+      ir = %IR.AnonymousFunctionType{
+        arity: 0,
+        captured_module: Aaa.Bbb,
+        captured_function: :fun,
+        clauses: [
+          %IR.FunctionClause{
+            params: [],
+            guards: [],
+            body: %IR.Block{
+              expressions: [
+                %IR.RemoteFunctionCall{
+                  module: %IR.AtomType{value: Aaa.Bbb},
+                  function: :fun,
+                  args: []
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      expected =
+        normalize_newlines("""
+        Type.functionCapture("Aaa.Bbb", "fun", 0, [{params: (context) => [], guards: [], body: (context) => {
+        return Elixir_Aaa_Bbb["fun/0"]();
+        }}], context)\
+        """)
+
+      assert encode_ir(ir, %Context{ir_plt: ir_plt}) == expected
     end
 
     test "with Erlang module/function capture info" do
@@ -742,6 +779,17 @@ defmodule Hologram.Compiler.EncoderTest do
 
       assert encode_ir(ir) ==
                ~s/Type.bitstringSegment(Type.string(\"abc\"), {type: "utf8"})/
+    end
+
+    test "from string type that is not valid UTF-8" do
+      # <<255>> - the segment Macro.escape makes of the byte-aligned part of a bitstring.
+      ir = %IR.BitstringSegment{
+        value: %IR.StringType{value: <<255>>},
+        modifiers: [type: :binary]
+      }
+
+      assert encode_ir(ir) ==
+               ~s/Type.bitstringSegment(Type.bitstring("ff", "hex"), {type: "binary"})/
     end
 
     test "from non-string type" do
@@ -1847,7 +1895,7 @@ defmodule Hologram.Compiler.EncoderTest do
     end
   end
 
-  describe "encode_module_metadata_registration/1" do
+  describe "encode_module_metadata_registration/2" do
     setup do
       on_exit(fn -> Application.delete_env(:hologram, :client_stacktraces) end)
       :ok
@@ -1856,20 +1904,53 @@ defmodule Hologram.Compiler.EncoderTest do
     test "registers the metadata of each module the bundle defines" do
       Application.put_env(:hologram, :client_stacktraces, true)
 
-      assert encode_module_metadata_registration([Hologram.Reflection]) ==
+      assert encode_module_metadata_registration([Hologram.Reflection], nil) ==
                ~s/ERTS.registerModuleMetadata({"Hologram.Reflection": {app: "hologram", file: "lib\/hologram\/reflection.ex"}});/
     end
 
     test "registers nothing when client stacktraces are disabled" do
       Application.put_env(:hologram, :client_stacktraces, false)
 
-      assert encode_module_metadata_registration([Hologram.Reflection]) == ""
+      assert encode_module_metadata_registration([Hologram.Reflection], nil) == ""
     end
 
     test "registers nothing for a module that can't be loaded" do
       Application.put_env(:hologram, :client_stacktraces, true)
 
-      assert encode_module_metadata_registration([Aaa.Bbb]) == ""
+      assert encode_module_metadata_registration([Aaa.Bbb], nil) == ""
+    end
+
+    test "renders a module from the map without reading the module" do
+      Application.put_env(:hologram, :client_stacktraces, true)
+
+      module_metadata = %{Aaa.Bbb => %{app: :my_app, file: "lib/aaa/bbb.ex"}}
+
+      assert encode_module_metadata_registration([Aaa.Bbb], module_metadata) ==
+               ~s/ERTS.registerModuleMetadata({"Aaa.Bbb": {app: "my_app", file: "lib\/aaa\/bbb.ex"}});/
+    end
+
+    test "reads a module absent from the map from the loaded module" do
+      Application.put_env(:hologram, :client_stacktraces, true)
+
+      assert encode_module_metadata_registration([Hologram.Reflection], %{}) ==
+               encode_module_metadata_registration([Hologram.Reflection], nil)
+    end
+
+    test "omits an application the map does not know" do
+      Application.put_env(:hologram, :client_stacktraces, true)
+
+      module_metadata = %{Aaa.Bbb => %{app: nil, file: "x.ex"}}
+
+      assert encode_module_metadata_registration([Aaa.Bbb], module_metadata) ==
+               ~s/ERTS.registerModuleMetadata({"Aaa.Bbb": {file: "x.ex"}});/
+    end
+
+    test "registers nothing when client stacktraces are disabled, whatever the map holds" do
+      Application.put_env(:hologram, :client_stacktraces, false)
+
+      module_metadata = %{Aaa.Bbb => %{app: :my_app, file: "lib/aaa/bbb.ex"}}
+
+      assert encode_module_metadata_registration([Aaa.Bbb], module_metadata) == ""
     end
   end
 
@@ -3105,107 +3186,250 @@ defmodule Hologram.Compiler.EncoderTest do
       assert encode_ir(ir) == ~s/Type.bitstring("\\\"")/
     end
 
-    test "beep (special) char" do
-      # "\a"
-      ir = %IR.StringType{value: "\a"}
-
-      assert encode_ir(ir) == ~s/Type.bitstring("\\x07")/
-    end
-
-    test "backspace (non-printable) char" do
-      # "\b"
-      ir = %IR.StringType{value: "\b"}
-
-      assert encode_ir(ir) == ~s/Type.bitstring("\\b")/
-    end
-
-    test "form feed (non-printable) char" do
-      # "\f"
-      ir = %IR.StringType{value: "\f"}
-
-      assert encode_ir(ir) == ~s/Type.bitstring("\\f")/
-    end
-
-    test "line feed (non-printable) char" do
+    test "line feed char" do
       # "\n"
       ir = %IR.StringType{value: "\n"}
 
       assert encode_ir(ir) == ~s/Type.bitstring("\\n")/
     end
 
-    test "carriage return (non-printable) char" do
+    test "carriage return char" do
       # "\r"
       ir = %IR.StringType{value: "\r"}
 
       assert encode_ir(ir) == ~s/Type.bitstring("\\r")/
     end
 
-    test "horizontal tab (non-printable) char" do
+    test "null char" do
+      # <<0>>
+      ir = %IR.StringType{value: <<0>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\\u{0}")/
+    end
+
+    test "less-than char" do
+      # "<"
+      ir = %IR.StringType{value: "<"}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\\u{3C}")/
+    end
+
+    test "closing script tag" do
+      # An unescaped "<" would end the script element the encoded term is printed into,
+      # cutting the page's inline script short and spilling the rest onto the page.
+      ir = %IR.StringType{value: "</script>"}
+
+      assert encode_ir(ir) == ~s|Type.bitstring("\\u{3C}/script>")|
+    end
+
+    test "greater-than char travels as itself" do
+      # ">"
+      ir = %IR.StringType{value: ">"}
+
+      assert encode_ir(ir) == ~s/Type.bitstring(">")/
+    end
+
+    test "beep char travels as itself" do
+      # "\a"
+      ir = %IR.StringType{value: "\a"}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\a")/
+    end
+
+    test "backspace char travels as itself" do
+      # "\b"
+      ir = %IR.StringType{value: "\b"}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\b")/
+    end
+
+    test "form feed char travels as itself" do
+      # "\f"
+      ir = %IR.StringType{value: "\f"}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\f")/
+    end
+
+    test "horizontal tab char travels as itself" do
       # "\t"
       ir = %IR.StringType{value: "\t"}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\t")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\t")/
     end
 
-    test "vertical tab (non-printable) char" do
+    test "vertical tab char travels as itself" do
       # "\v"
       ir = %IR.StringType{value: "\v"}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\v")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\v")/
     end
 
-    test "line seperator char" do
-      # <<8_232::utf8>>
-      ir = %IR.StringType{value: <<8_232::utf8>>}
+    test "escape char travels as itself" do
+      # "\e"
+      ir = %IR.StringType{value: "\e"}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\u{2028}")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\e")/
     end
 
-    test "paragraph seperator char" do
-      # <<8_233::utf8>>
-      ir = %IR.StringType{value: <<8_233::utf8>>}
+    test "delete char travels as itself" do
+      # <<127>>
+      ir = %IR.StringType{value: <<127>>}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\u{2029}")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\d")/
     end
 
-    test "non-printable Unicode char" do
-      # <<133::utf8>> (equivalent to <<194, 133>>)
-      ir = %IR.StringType{value: <<133::utf8>>}
+    test "line separator char travels as itself" do
+      # <<0x2028::utf8>>
+      ir = %IR.StringType{value: <<0x2028::utf8>>}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\u{85}")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\u2028")/
     end
 
-    test "multiple non-printable Unicode chars" do
-      # <<133::utf8, 134::utf8, 135::utf8>>
-      # equivalent to: <<194, 133, 194, 134, 194, 135>>
-      ir = %IR.StringType{value: <<133::utf8, 134::utf8, 135::utf8>>}
+    test "paragraph separator char travels as itself" do
+      # <<0x2029::utf8>>
+      ir = %IR.StringType{value: <<0x2029::utf8>>}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\u{85}\\u{86}\\u{87}")/
+      assert encode_ir(ir) == ~s/Type.bitstring("\u2029")/
     end
 
-    test "single-byte char outside of the standard ASCII range" do
+    test "C1 control char travels as itself" do
+      # <<0x85::utf8>> (equivalent to <<194, 133>>)
+      ir = %IR.StringType{value: <<0x85::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\u0085")/
+    end
+
+    test "multiple C1 control chars travel as themselves" do
+      # <<0x85::utf8, 0x86::utf8, 0x87::utf8>>
+      ir = %IR.StringType{value: <<0x85::utf8, 0x86::utf8, 0x87::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\u0085\u0086\u0087")/
+    end
+
+    test "last char before the printable Unicode range travels as itself" do
+      # <<0x9F::utf8>> (equivalent to <<194, 159>>)
+      ir = %IR.StringType{value: <<0x9F::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\u009F")/
+    end
+
+    test "first printable char after the C1 range" do
+      # <<0xA0::utf8>> (equivalent to <<194, 160>>)
+      ir = %IR.StringType{value: <<0xA0::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\u00A0")/
+    end
+
+    test "last printable char before the noncharacters" do
+      # <<0xFFFD::utf8>>
+      ir = %IR.StringType{value: <<0xFFFD::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\uFFFD")/
+    end
+
+    test "noncharacter U+FFFE travels as itself" do
+      # <<0xFFFE::utf8>>
+      ir = %IR.StringType{value: <<0xFFFE::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\uFFFE")/
+    end
+
+    test "noncharacter U+FFFF travels as itself" do
+      # <<0xFFFF::utf8>>
+      ir = %IR.StringType{value: <<0xFFFF::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\uFFFF")/
+    end
+
+    test "printable char above the BMP" do
+      # "\u{1F600}"
+      ir = %IR.StringType{value: <<0x1F600::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("\u{1F600}")/
+    end
+
+    test "a byte that is not valid UTF-8 travels as hex" do
       ir = %IR.StringType{value: <<240>>}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\xF0")/
+      assert encode_ir(ir) == ~s/Type.bitstring("f0", "hex")/
     end
 
-    test "multiple single-byte chars outside of the standard ASCII range" do
+    test "bytes that are not valid UTF-8 travel as hex" do
       ir = %IR.StringType{value: <<240, 145, 163>>}
 
-      assert encode_ir(ir) == ~s/Type.bitstring("\\xF0\\x91\\xA3")/
+      assert encode_ir(ir) == ~s/Type.bitstring("f091a3", "hex")/
     end
 
-    test "multiple printable and non-printable chars" do
-      # "abc\n全息图\t" <> <<133::utf8, 134::utf8, 135::utf8>>
-      # equivalent to: <<97, 98, 99, 10, 229, 133, 168, 230, 129, 175, 229, 155, 190, 9, 194, 133, 194, 134, 194, 135>>
+    test "escapable chars next to a byte that is not valid UTF-8 travel as hex with it" do
+      # Nothing is escaped in hex, since hex holds none of the chars that have to be escaped.
+      ir = %IR.StringType{value: "a" <> <<240>> <> "\"<\n"}
 
-      ir = %IR.StringType{
-        value:
-          <<97, 98, 99, 10, 229, 133, 168, 230, 129, 175, 229, 155, 190, 9, 194, 133, 194, 134,
-            194, 135>>
-      }
+      assert encode_ir(ir) == ~s/Type.bitstring("61f0223c0a", "hex")/
+    end
 
-      assert encode_ir(ir) == ~s/Type.bitstring("abc\\n全息图\\t\\u{85}\\u{86}\\u{87}")/
+    test "text next to a byte that is not valid UTF-8 travels as hex with it" do
+      # A binary is text or it is not - a string literal cannot say which of its chars are bytes.
+      ir = %IR.StringType{value: "全" <> <<240>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("e585a8f0", "hex")/
+    end
+
+    test "the UTF-8 spelling of a surrogate is not text" do
+      # A JavaScript string can hold a lone surrogate and TextEncoder turns one into U+FFFD, so
+      # these bytes must never travel as text. String.valid?/1 rejects them.
+      ir = %IR.StringType{value: <<237, 160, 128>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("eda080", "hex")/
+    end
+
+    test "multiple chars that travel as themselves and chars that do not" do
+      # "abc\n全息图\t" <> <<0x85::utf8>>
+      ir = %IR.StringType{value: "abc\n全息图\t" <> <<0x85::utf8>>}
+
+      assert encode_ir(ir) == ~s/Type.bitstring("abc\\n全息图\t\u0085")/
+    end
+
+    test "long string" do
+      # 25 KB, mixing plain chars with escapes so the result is assembled from many parts
+      ir = %IR.StringType{value: String.duplicate("ab\"c\n", 5_000)}
+
+      expected = ~s/Type.bitstring("/ <> String.duplicate(~S|ab\"c\n|, 5_000) <> ~s/")/
+
+      assert encode_ir(ir) == expected
+    end
+  end
+
+  describe "string type (property)" do
+    # Text escaping is a native scan over the chars that have to be escaped, and a binary that is
+    # not text is not escaped at all but spelled as hex. Nothing else in the suite would notice
+    # either drifting from the rule it implements, so both are checked here against the rule
+    # written out directly.
+
+    test "text escapes the same as walking it char by char" do
+      # Seeded so a failure reproduces.
+      :rand.seed(:exsss, {1, 2, 3})
+
+      for _index <- 1..2_000 do
+        value = random_text(40)
+
+        assert encode_ir(%IR.StringType{value: value}) ==
+                 ~s/Type.bitstring("/ <> reference_escape(value) <> ~s/")/,
+               "failed for #{inspect(value, binaries: :as_binaries)}"
+      end
+    end
+
+    test "a binary that is not text travels as the hex of its bytes" do
+      # Seeded so a failure reproduces.
+      :rand.seed(:exsss, {4, 5, 6})
+
+      for _index <- 1..2_000 do
+        # 0xFF is valid UTF-8 nowhere, so whatever surrounds it the binary is not text.
+        value = random_bytes(30) <> <<0xFF>> <> random_bytes(30)
+
+        assert encode_ir(%IR.StringType{value: value}) ==
+                 ~s/Type.bitstring("/ <> reference_hex(value) <> ~s/", "hex")/,
+               "failed for #{inspect(value, binaries: :as_binaries)}"
+      end
     end
   end
 
@@ -4342,6 +4566,19 @@ defmodule Hologram.Compiler.EncoderTest do
     end
   end
 
+  describe "encode_as_string/1" do
+    test "wraps the text in double quotes" do
+      assert encode_as_string("abc") == ~s/"abc"/
+    end
+
+    # The per-char rules are pinned under "string type" - this pins that the public function
+    # applies them and quotes the result.
+    test "escapes what a script element cannot carry raw" do
+      assert encode_as_string(~S|a"b\c</script>| <> "\n\r" <> <<0>>) ==
+               ~S|"a\"b\\c\u{3C}/script>\n\r\u{0}"|
+    end
+  end
+
   describe "encode_term/1" do
     test "can be encoded into JavaScript" do
       assert encode_term(123) == {:ok, "Type.integer(123n)"}
@@ -4390,6 +4627,16 @@ defmodule Hologram.Compiler.EncoderTest do
       assert encode_term!("abc") == ~s/Type.bitstring("abc")/
     end
 
+    test "bitstring that is not valid UTF-8" do
+      assert encode_term!(<<240, 145, 163>>) == ~s/Type.bitstring("f091a3", "hex")/
+    end
+
+    test "bitstring that is not byte-aligned and not valid UTF-8" do
+      # Macro.escape makes this a one-bit integer segment followed by the rest as a binary.
+      assert encode_term!(<<255, 1::1>>) ==
+               ~s/Type.bitstring([Type.bitstringSegment(Type.integer(1n), {type: "integer", size: Type.integer(1n)}), Type.bitstringSegment(Type.bitstring("ff", "hex"), {type: "binary"})])/
+    end
+
     test "float, non-zero" do
       assert encode_term!(1.23) == "Type.float(1.23)"
     end
@@ -4429,6 +4676,63 @@ defmodule Hologram.Compiler.EncoderTest do
 
     test "tuple" do
       assert encode_term!({:abc, 123}) == ~s/Type.tuple([Type.atom("abc"), Type.integer(123n)])/
+    end
+  end
+
+  defp random_bytes(max_length) do
+    for _index <- 1..:rand.uniform(max_length), into: <<>>, do: <<:rand.uniform(256) - 1>>
+  end
+
+  defp random_text(max_length) do
+    for _index <- 1..:rand.uniform(max_length), into: <<>> do
+      code =
+        case :rand.uniform(6) do
+          # the chars that have to be escaped
+          1 -> Enum.random([0, ?\n, ?\r, ?", ?<, ?\\])
+          # printable ASCII
+          2 -> 0x20 + :rand.uniform(0x5F) - 1
+          # the rest of the control chars
+          3 -> :rand.uniform(0x20) - 1
+          # the C1 range, two bytes behind the same lead byte
+          4 -> 0x80 + :rand.uniform(0x20) - 1
+          # chars an earlier escaping treated specially, and one above the BMP
+          5 -> Enum.random([0x2028, 0x2029, 0xFFFD, 0xFFFE, 0xFFFF, 0x1F600])
+          # anything else in the BMP
+          6 -> :rand.uniform(0xD7FF)
+        end
+
+      <<code::utf8>>
+    end
+  end
+
+  # The escaping rules, written out as a plain walk. Deliberately not the implementation's
+  # shape - this is what the implementation is checked against.
+  defp reference_escape(str) do
+    str
+    |> reference_escape_parts()
+    |> IO.iodata_to_binary()
+  end
+
+  defp reference_escape_parts(<<0, rest::binary>>), do: ["\\u{0}" | reference_escape_parts(rest)]
+  defp reference_escape_parts("\n" <> rest), do: ["\\n" | reference_escape_parts(rest)]
+  defp reference_escape_parts("\r" <> rest), do: ["\\r" | reference_escape_parts(rest)]
+  defp reference_escape_parts("\"" <> rest), do: ["\\\"" | reference_escape_parts(rest)]
+  defp reference_escape_parts("<" <> rest), do: ["\\u{3C}" | reference_escape_parts(rest)]
+  defp reference_escape_parts("\\" <> rest), do: ["\\\\" | reference_escape_parts(rest)]
+
+  defp reference_escape_parts(<<char::utf8, rest::binary>>) do
+    [<<char::utf8>> | reference_escape_parts(rest)]
+  end
+
+  defp reference_escape_parts(""), do: []
+
+  # The hex spelling, written out as a plain walk: two lowercase digits per byte, in order.
+  defp reference_hex(binary) do
+    for <<byte <- binary>>, into: "" do
+      byte
+      |> Integer.to_string(16)
+      |> String.downcase()
+      |> String.pad_leading(2, "0")
     end
   end
 end

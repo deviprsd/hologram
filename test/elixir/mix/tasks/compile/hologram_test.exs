@@ -95,6 +95,15 @@ defmodule Mix.Tasks.Compile.HologramTest do
     Agent.update(tracker, fn state -> %{state | current: state.current - 1} end)
   end
 
+  defp load_module_info_items(opts) do
+    dump_path = Path.join(opts[:build_dir], Reflection.module_info_plt_dump_file_name())
+    assert File.exists?(dump_path)
+
+    plt = PLT.start()
+    PLT.load(plt, dump_path)
+    PLT.get_all(plt)
+  end
+
   defp setup_empty_assets_and_build_dirs(opts) do
     assets_dir = setup_empty_assets_dir()
     build_dir = setup_empty_build_dir()
@@ -125,7 +134,7 @@ defmodule Mix.Tasks.Compile.HologramTest do
     test_call_graph(opts)
     test_dirs(opts)
     test_js_deps(opts)
-    test_module_digest_plt(opts)
+    test_module_info_plt(opts)
     test_page_bundles(opts)
     test_page_digest_plt(opts)
     test_runtime_bundle(opts)
@@ -159,19 +168,13 @@ defmodule Mix.Tasks.Compile.HologramTest do
            |> File.exists?()
   end
 
-  defp test_module_digest_plt(opts) do
-    module_digest_plt_dump_path =
-      Path.join(opts[:build_dir], Reflection.module_digest_plt_dump_file_name())
+  defp test_module_info_plt(opts) do
+    module_info_items = load_module_info_items(opts)
 
-    assert File.exists?(module_digest_plt_dump_path)
+    assert map_size(module_info_items) > 1_000
 
-    module_digest_plt = PLT.start()
-    PLT.load(module_digest_plt, module_digest_plt_dump_path)
-    module_digest_items = PLT.get_all(module_digest_plt)
-
-    assert map_size(module_digest_items) > 1_000
-
-    assert is_integer(module_digest_items[Module1])
+    assert %{digest: digest, page?: true, component?: false} = module_info_items[Module1]
+    assert is_integer(digest)
   end
 
   defp test_untracked_static_artifacts_left_untouched(paths) do
@@ -326,6 +329,8 @@ defmodule Mix.Tasks.Compile.HologramTest do
     run(opts)
     test_build_artifacts(opts)
 
+    first_run_module_info = load_module_info_items(opts)[Module1]
+
     # Test case 2: re-running against the same build dir, with static-dir files present
     # that this env's compiler never produced (e.g. left behind by another env's
     # compiler sharing the same static dir - see "static artifacts manifest" below).
@@ -339,6 +344,9 @@ defmodule Mix.Tasks.Compile.HologramTest do
     run(opts)
     test_build_artifacts(opts)
     test_untracked_static_artifacts_left_untouched(untracked_paths)
+
+    # Reused or re-read, an untouched module keeps its entry across runs
+    assert load_module_info_items(opts)[Module1] == first_run_module_info
   end
 
   describe "static artifacts manifest" do
@@ -380,6 +388,58 @@ defmodule Mix.Tasks.Compile.HologramTest do
       run(opts)
 
       assert File.exists?(untracked_path)
+    end
+  end
+
+  describe "module metadata" do
+    setup do
+      on_exit(fn -> Application.delete_env(:hologram, :client_stacktraces) end)
+      :ok
+    end
+
+    test "a page bundle registers the source file of its page", %{opts: initial_opts} do
+      Application.put_env(:hologram, :client_stacktraces, true)
+      opts = setup_empty_assets_and_build_dirs(initial_opts)
+
+      run(opts)
+
+      page_digest_plt = PLT.start()
+
+      PLT.load(
+        page_digest_plt,
+        Path.join(opts[:build_dir], Reflection.page_digest_plt_dump_file_name())
+      )
+
+      bundle_path = Path.join(opts[:static_dir], "page-#{PLT.get!(page_digest_plt, Module1)}.js")
+      bundle = File.read!(bundle_path)
+
+      assert String.contains?(bundle, "registerModuleMetadata")
+
+      assert String.contains?(
+               bundle,
+               "test/elixir/support/fixtures/mix/tasks/compile/hologram/module_1.ex"
+             )
+    end
+
+    test "is built only when client stack traces are on", %{opts: initial_opts} do
+      opts = setup_empty_assets_and_build_dirs(initial_opts)
+      mfa = {Compiler, :build_module_metadata, 1}
+
+      count_builds = fn stacktraces? ->
+        Application.put_env(:hologram, :client_stacktraces, stacktraces?)
+        :erlang.trace_pattern(mfa, true, [:call_count])
+
+        try do
+          run(opts)
+          {:call_count, count} = :erlang.trace_info(mfa, :call_count)
+          count
+        after
+          :erlang.trace_pattern(mfa, false, [:call_count])
+        end
+      end
+
+      assert count_builds.(false) == 0
+      assert count_builds.(true) == 1
     end
   end
 

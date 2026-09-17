@@ -110,6 +110,34 @@ describe("Type", () => {
       assert.deepStrictEqual(result, expected);
     });
 
+    it("builds bitstring from hex digits when the encoding says so", () => {
+      const result = Type.bitstring("f091a3", "hex");
+
+      const expected = {
+        type: "bitstring",
+        text: null,
+        bytes: new Uint8Array([240, 145, 163]),
+        leftoverBitCount: 0,
+        hex: null,
+      };
+
+      assert.deepStrictEqual(result, expected);
+    });
+
+    it("reads a string as text unless an encoding says otherwise", () => {
+      const result = Type.bitstring("f091a3");
+
+      const expected = {
+        type: "bitstring",
+        text: "f091a3",
+        bytes: null,
+        leftoverBitCount: 0,
+        hex: null,
+      };
+
+      assert.deepStrictEqual(result, expected);
+    });
+
     it("builds bitstring from segments array", () => {
       const segment1 = Type.bitstringSegment(Type.integer(97), {
         type: "integer",
@@ -484,6 +512,7 @@ describe("Type", () => {
           [Type.atom("next_action"), Type.nil()],
           [Type.atom("next_command"), Type.nil()],
           [Type.atom("next_page"), Type.nil()],
+          [Type.atom("props"), Type.map()],
           [Type.atom("state"), Type.map()],
         ]),
       );
@@ -507,9 +536,14 @@ describe("Type", () => {
         ]),
       ]);
 
-      const state = Type.map([
+      const props = Type.map([
         [Type.atom("c"), Type.integer(3)],
         [Type.atom("d"), Type.integer(4)],
+      ]);
+
+      const state = Type.map([
+        [Type.atom("e"), Type.integer(5)],
+        [Type.atom("f"), Type.integer(6)],
       ]);
 
       const result = Type.componentStruct({
@@ -517,6 +551,7 @@ describe("Type", () => {
         nextAction,
         nextCommand,
         nextPage,
+        props,
         state,
       });
 
@@ -528,6 +563,7 @@ describe("Type", () => {
           [Type.atom("next_action"), nextAction],
           [Type.atom("next_command"), nextCommand],
           [Type.atom("next_page"), nextPage],
+          [Type.atom("props"), props],
           [Type.atom("state"), state],
         ]),
       );
@@ -1916,6 +1952,7 @@ describe("Type", () => {
           [Type.atom("next_action"), Type.nil()],
           [Type.atom("next_command"), Type.nil()],
           [Type.atom("next_page"), Type.nil()],
+          [Type.atom("props"), Type.map()],
           [Type.atom("state"), Type.map()],
         ]),
       );

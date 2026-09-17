@@ -22,6 +22,123 @@ import Vdom from "./vdom.mjs";
 import {h as vnode} from "./vendor/snabbdom/build/index.js";
 import vnodeToHtml from "snabbdom-to-html";
 
+// The characters a value cannot carry into a script element as the text of a JavaScript string
+// literal, each with the escape sequence it is written as instead. Every sequence is valid inside
+// all three kinds of literal - double-quoted, single-quoted and template - and reads back as the
+// character it stands for, so the value arrives unchanged whichever quotes the template wrote
+// around it.
+//
+//   \    would eat the character after it
+//   "    '    `    would close the literal
+//   $    would open an expression inside a template literal
+//   \n   and \r are not allowed inside a literal at all
+//   NUL  is rewritten to U+FFFD by the HTML parser inside script data
+//   <    so that "</script" can never form in a page's inline script
+//
+// WARNING: must match @script_text_escapes in Hologram.Template.Renderer. The text the two sides
+// put inside a script element has to be identical, or the boot patch rebuilds the element
+// instead of adopting it, and the script runs twice.
+const SCRIPT_TEXT_ESCAPES = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "'": "\\'",
+  "`": "\\`",
+  $: "\\$",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\0": "\\u{0}",
+  "<": "\\u{3C}",
+};
+
+// One character class over the keys above, so the replace is a single pass.
+const SCRIPT_TEXT_ESCAPABLE_CHARS = /[\\"'`$\n\r\0<]/g;
+
+// The characters a value cannot carry into a style element as the text of a CSS string literal,
+// each with the escape sequence it is written as instead. Every sequence is valid inside both
+// kinds of literal - double-quoted and single-quoted - and reads back as the character it stands
+// for, so the value arrives unchanged whichever quotes the template wrote around it.
+//
+//   \    would eat the character after it
+//   "    '    would close the literal
+//   \n   \r and \f are not allowed inside a literal at all - CSS preprocessing folds CR
+//        and FF into LF before tokenizing, so a form feed breaks a string as a newline does
+//   NUL  is rewritten to U+FFFD by the CSS tokenizer, so it cannot travel as itself
+//   <    so that "</style" can never form in a page's inline stylesheet
+//
+// ">" and "&" are absent on purpose: neither can end a raw text element, and writing ">" as an
+// escape would break a child combinator in an interpolated selector.
+//
+// A hex escape is six digits long, so a hex digit following it in the value is never absorbed
+// into it, and it ends with a space of its own: the CSS tokenizer consumes one whitespace
+// character after an escape, and that space is there to be the one it eats. DO NOT trim it - a
+// space that was in the value would be swallowed in its place.
+//
+// WARNING: must match @style_text_escapes in Hologram.Template.Renderer. The text the two sides
+// put inside a style element has to be identical, or the boot patch rewrites it.
+const STYLE_TEXT_ESCAPES = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "'": "\\'",
+  "\n": "\\00000A ",
+  "\r": "\\00000D ",
+  "\f": "\\00000C ",
+  "\0": "\\00FFFD ",
+  "<": "\\00003C ",
+};
+
+// One character class over the keys above, so the replace is a single pass.
+const STYLE_TEXT_ESCAPABLE_CHARS = /[\\"'\n\r\f\0<]/g;
+
+// The tag names whose case the HTML parser restores inside <svg>. Everywhere else a tag name has
+// no case at all: the tokenizer lowercases it before anything else sees it, and only these names
+// are given their spelling back.
+//
+// Reached only for a tag name that comes from a value, since a name written in a template is
+// spelled by the compiler instead.
+//
+// WARNING: must match @svg_adjusted_tag_names in Hologram.Template.Helpers. The two sides have to
+// spell an element the same way, or the boot patch rebuilds it instead of adopting it.
+//
+// See: https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-tag-name
+const SVG_ADJUSTED_TAG_NAMES = {
+  altglyph: "altGlyph",
+  altglyphdef: "altGlyphDef",
+  altglyphitem: "altGlyphItem",
+  animatecolor: "animateColor",
+  animatemotion: "animateMotion",
+  animatetransform: "animateTransform",
+  clippath: "clipPath",
+  feblend: "feBlend",
+  fecolormatrix: "feColorMatrix",
+  fecomponenttransfer: "feComponentTransfer",
+  fecomposite: "feComposite",
+  feconvolvematrix: "feConvolveMatrix",
+  fediffuselighting: "feDiffuseLighting",
+  fedisplacementmap: "feDisplacementMap",
+  fedistantlight: "feDistantLight",
+  feflood: "feFlood",
+  fefunca: "feFuncA",
+  fefuncb: "feFuncB",
+  fefuncg: "feFuncG",
+  fefuncr: "feFuncR",
+  fegaussianblur: "feGaussianBlur",
+  feimage: "feImage",
+  femerge: "feMerge",
+  femergenode: "feMergeNode",
+  femorphology: "feMorphology",
+  feoffset: "feOffset",
+  fepointlight: "fePointLight",
+  fespecularlighting: "feSpecularLighting",
+  fespotlight: "feSpotLight",
+  fetile: "feTile",
+  feturbulence: "feTurbulence",
+  foreignobject: "foreignObject",
+  glyphref: "glyphRef",
+  lineargradient: "linearGradient",
+  radialgradient: "radialGradient",
+  textpath: "textPath",
+};
+
 export default class Renderer {
   // Event listener bindings collected during the current render, each a {target, key, attach,
   // handler} descriptor (see EventListenerRegistry). A <window> or <document> tag pushes here (with
@@ -49,6 +166,22 @@ export default class Renderer {
   // what the hook would have done. renderPage() resets this.
   static formInputReplays = [];
 
+  // Based on Elixir Renderer.encode_tree/1, which it inverts clause for clause.
+  //
+  // The payload arrives already parsed out of the response body, so this is not a parse: it is
+  // the walk that turns plain JavaScript values into the boxed terms renderDom was built to
+  // consume. A node's shape says what it is - an element is the only node of length 3, a comment
+  // and a doctype are length 2, and text is a bare string.
+  //
+  // TODO: delete this once the vdom renderer walks plain JavaScript literals instead of boxed
+  // terms. It exists only to bridge the wire form to renderDom, and renderDom then walks what it
+  // builds a second time to produce vnodes - two passes and 13.6 MB of boxed terms on the largest
+  // page measured, all of which a reconciler reading the payload directly would skip.
+  // See: docs/navigation_payload_wire_format.md
+  static decodeTree(tree) {
+    return Type.list(tree.map(Renderer.#decodeNode));
+  }
+
   // Based on render_tree/3
   //
   // WARNING: on navigation the server ships this client the same render as an evaluated tree
@@ -56,7 +189,15 @@ export default class Renderer {
   // renderer builds for the page's own render - otherwise hydration rebuilds nodes instead of
   // adopting them. Every normalization step here must therefore match render_tree/3, clause by
   // clause.
-  static renderDom(dom, context, slots, defaultTarget, parentTagName) {
+  static renderDom(
+    dom,
+    context,
+    slots,
+    defaultTarget,
+    parentTagName,
+    parentModule,
+    slotsParentModule,
+  ) {
     if (Type.isList(dom)) {
       return Renderer.#renderNodes(
         dom,
@@ -64,6 +205,8 @@ export default class Renderer {
         slots,
         defaultTarget,
         parentTagName,
+        parentModule,
+        slotsParentModule,
       );
     }
 
@@ -81,6 +224,8 @@ export default class Renderer {
           slots,
           defaultTarget,
           parentTagName,
+          parentModule,
+          slotsParentModule,
         );
 
       case "component":
@@ -90,17 +235,28 @@ export default class Renderer {
           slots,
           defaultTarget,
           parentTagName,
+          parentModule,
         );
 
-      case "expression":
+      case "expression": {
         // HTML escaping is done by Snabbdom.
-        //
-        // WARNING: the server's render_tree/3 diverges here on purpose: it entity-encodes an
-        // expression evaluated inside a script element, because in its HTML projection an
-        // interpolated value could otherwise break out of the script with a "</script" of its
-        // own. This renderer sets text through the DOM, where no markup context exists to break
-        // out of. Do not "fix" either side alone.
-        return $.toText(dom.data[1].data[0]);
+        const text = $.toText(dom.data[1].data[0]);
+
+        // WARNING: must match render_tree/3's script and style clauses on the server: inside a
+        // raw text element both sides write the value as the text of a string literal of the
+        // language that element holds, escaped the same way - see SCRIPT_TEXT_ESCAPES and
+        // STYLE_TEXT_ESCAPES.
+        switch (parentTagName) {
+          case "script":
+            return $.#escapeScriptText(text);
+
+          case "style":
+            return $.#escapeStyleText(text);
+
+          default:
+            return text;
+        }
+      }
 
       case "page":
         return Renderer.renderDom(
@@ -109,6 +265,8 @@ export default class Renderer {
           slots,
           Type.bitstring("page"),
           parentTagName,
+          parentModule,
+          slotsParentModule,
         );
 
       case "dynamic_tag":
@@ -118,6 +276,8 @@ export default class Renderer {
           slots,
           defaultTarget,
           parentTagName,
+          parentModule,
+          slotsParentModule,
         );
 
       case "doctype":
@@ -130,6 +290,8 @@ export default class Renderer {
           slots,
           defaultTarget,
           parentTagName,
+          parentModule,
+          slotsParentModule,
         );
     }
   }
@@ -146,6 +308,11 @@ export default class Renderer {
     const pageModuleProxy = Interpreter.moduleProxy(pageModule);
 
     const cid = Type.bitstring("page");
+
+    // A page's params are its props, and it is re-rendered on every action like everything else,
+    // so they are rewritten here for the same reason a component's are.
+    ComponentRegistry.putComponentProps(cid, pageParams);
+
     const pageComponentStruct = ComponentRegistry.getComponentStruct(cid);
 
     // The document's own children, the one children list with no element to own it.
@@ -175,6 +342,14 @@ export default class Renderer {
   // or the render that follows rebuilds nodes instead of adopting the ones this put on screen.
   // Both go through renderDom and both finalize the document's children the same way, which is
   // what holds the two together.
+  //
+  // TODO: when the vdom renderer is rewritten, the decodeTree/renderDom pair collapses into one
+  // walk. Sharing renderDom is what keeps this equal to renderPage today; a second walker would
+  // have to reproduce every rule renderDom applies to a tree - the boolean attribute rule, the
+  // controlled value/checked staging and its hooks, the three resource-key rules, $key resolving
+  // to the last one, and finalizeChildren settling repeats - and drift in any of them shows up as
+  // a silently rebuilt DOM rather than a failing test.
+  // See: docs/navigation_payload_wire_format.md
   static renderTree(tree) {
     const children = Vdom.finalizeChildren(
       Renderer.renderDom(
@@ -182,6 +357,8 @@ export default class Renderer {
         Type.map(),
         Type.keywordList(),
         Type.bitstring("page"),
+        null,
+        null,
         null,
       ),
     );
@@ -732,6 +909,48 @@ export default class Renderer {
   // Event attributes are exempt, because a tag may carry multiple bindings which share a base name
   // once their modifiers are decomposed at compile time, e.g. both $key_down.enter and
   // $key_down.escape are named "$key_down".
+  // A flat run of alternating names and values, with null for an attribute that has no value.
+  static #decodeAttributes(attributes) {
+    const decoded = new Array(attributes.length / 2);
+
+    for (let i = 0, j = 0; i < attributes.length; i += 2, j += 1) {
+      const value = attributes[i + 1];
+
+      decoded[j] = Type.tuple([
+        Type.bitstring(attributes[i]),
+        value === null
+          ? Type.list([])
+          : Type.keywordList([[Type.atom("text"), Type.bitstring(value)]]),
+      ]);
+    }
+
+    return decoded;
+  }
+
+  static #decodeNode(node) {
+    if (typeof node === "string") {
+      return Type.tuple([Type.atom("text"), Type.bitstring(node)]);
+    }
+
+    if (node.length === 3) {
+      return Type.tuple([
+        Type.atom("element"),
+        Type.bitstring(node[0]),
+        Type.list(Renderer.#decodeAttributes(node[1])),
+        Type.list(node[2].map(Renderer.#decodeNode)),
+      ]);
+    }
+
+    if (node[0] === "c") {
+      return Type.tuple([
+        Type.atom("public_comment"),
+        Type.list(node[1].map(Renderer.#decodeNode)),
+      ]);
+    }
+
+    return Type.tuple([Type.atom("doctype"), Type.bitstring(node[1])]);
+  }
+
   static #dedupeAttributes(attrs) {
     const lastIndexByName = new Map();
 
@@ -763,6 +982,22 @@ export default class Renderer {
     }
 
     return null;
+  }
+
+  // Based on stringify_for_script_interpolation/1
+  static #escapeScriptText(text) {
+    return text.replace(
+      SCRIPT_TEXT_ESCAPABLE_CHARS,
+      (char) => SCRIPT_TEXT_ESCAPES[char],
+    );
+  }
+
+  // Based on stringify_for_style_interpolation/1
+  static #escapeStyleText(text) {
+    return text.replace(
+      STYLE_TEXT_ESCAPABLE_CHARS,
+      (char) => STYLE_TEXT_ESCAPES[char],
+    );
   }
 
   // A spread entry is {:spread, {value}} - its name slot holds the :spread atom rather than a
@@ -1016,6 +1251,45 @@ export default class Renderer {
     );
   }
 
+  // Which props carry a required: or values: option is a property of the module, not of the render,
+  // so it is derived once and cached on the module proxy the way __props__ already is. Most
+  // components constrain nothing, which leaves the per-render cost at a single length check.
+  // Deps: [:lists.keyfind/3]
+  static #getConstrainedProps(moduleProxy) {
+    if (!("__constrainedProps__" in moduleProxy)) {
+      moduleProxy.__constrainedProps__ = Renderer.#getPropDefinitions(
+        moduleProxy,
+      )
+        .data.map((prop) => {
+          const opts = prop.data[2];
+
+          const requiredEntry = Erlang_Lists["keyfind/3"](
+            Type.atom("required"),
+            Type.integer(1),
+            opts,
+          );
+
+          const valuesEntry = Erlang_Lists["keyfind/3"](
+            Type.atom("values"),
+            Type.integer(1),
+            opts,
+          );
+
+          const required =
+            !Type.isFalse(requiredEntry) && Type.isTrue(requiredEntry.data[1]);
+
+          const values = Type.isFalse(valuesEntry) ? null : valuesEntry.data[1];
+
+          return required || values !== null
+            ? {name: prop.data[0], required: required, values: values}
+            : null;
+        })
+        .filter((entry) => entry !== null);
+    }
+
+    return moduleProxy.__constrainedProps__;
+  }
+
   static #getPropDefinitions(moduleProxy) {
     if (!("__props__" in moduleProxy)) {
       moduleProxy.__props__ = moduleProxy["__props__/0"]();
@@ -1154,11 +1428,11 @@ export default class Renderer {
 
     if (componentState === null) {
       if ("init/2" in moduleProxy) {
-        const emptyComponentStruct = Type.componentStruct();
+        const initialComponentStruct = Type.componentStruct({props});
 
         const componentStruct = moduleProxy["init/2"](
           props,
-          emptyComponentStruct,
+          initialComponentStruct,
         );
 
         ComponentRegistry.putEntry(
@@ -1260,6 +1534,20 @@ export default class Renderer {
       Erlang["binary_to_atom/1"](propDom.data[0]),
       propDom.data[1],
     ]);
+  }
+
+  // Spells a tag name the way the HTML parser would. A name written in a template is spelled by
+  // the compiler; a name that first exists at render time is spelled here.
+  //
+  // The table is keyed by tag names taken from a value, so a lookup goes through Object.hasOwn - a
+  // tag named like an Object.prototype member would otherwise resolve to the inherited value
+  // instead of to itself.
+  static #normalizeTagName(tagName) {
+    const downcased = tagName.toLowerCase();
+
+    return Object.hasOwn(SVG_ADJUSTED_TAG_NAMES, downcased)
+      ? SVG_ADJUSTED_TAG_NAMES[downcased]
+      : downcased;
   }
 
   // Returns true when the modifiers map carries a once modifier, which fires the binding a single
@@ -1431,7 +1719,14 @@ export default class Renderer {
   }
 
   // Based on render_tree/3 (component case)
-  static #renderComponent(dom, context, slots, defaultTarget, parentTagName) {
+  static #renderComponent(
+    dom,
+    context,
+    slots,
+    defaultTarget,
+    parentTagName,
+    parentModule,
+  ) {
     const moduleProxy = Interpreter.moduleProxy(dom.data[1]);
     const propsDom = dom.data[2];
     let childrenDom = dom.data[3];
@@ -1446,6 +1741,8 @@ export default class Renderer {
 
     props = Renderer.#injectDefaultPropValues(props, moduleProxy);
 
+    Renderer.#validateProps(props, moduleProxy, dom.data[1], parentModule);
+
     if (Renderer.#hasCidProp(props)) {
       return Renderer.#renderStatefulComponent(
         moduleProxy,
@@ -1453,6 +1750,7 @@ export default class Renderer {
         expandedChildrenDom,
         context,
         parentTagName,
+        parentModule,
       );
     } else {
       return Renderer.#renderTemplate(
@@ -1462,24 +1760,39 @@ export default class Renderer {
         context,
         defaultTarget,
         parentTagName,
+        parentModule,
       );
     }
   }
 
   // Based on render_tree/3 (dynamic tag cases)
-  static #renderDynamicTag(dom, context, slots, defaultTarget, parentTagName) {
+  static #renderDynamicTag(
+    dom,
+    context,
+    slots,
+    defaultTarget,
+    parentTagName,
+    parentModule,
+    slotsParentModule,
+  ) {
     const value = dom.data[1].data[0];
     const attrsDom = dom.data[2];
     const childrenDom = dom.data[3];
 
     // Mirrors the server's is_binary/1 guard - a non-binary bitstring is not a tag name.
     if (Type.isBinary(value)) {
+      const tagName = Type.bitstring(
+        Renderer.#normalizeTagName(Bitstring.toText(value)),
+      );
+
       return Renderer.renderDom(
-        Type.tuple([Type.atom("element"), value, attrsDom, childrenDom]),
+        Type.tuple([Type.atom("element"), tagName, attrsDom, childrenDom]),
         context,
         slots,
         defaultTarget,
         parentTagName,
+        parentModule,
+        slotsParentModule,
       );
     }
 
@@ -1497,11 +1810,28 @@ export default class Renderer {
       slots,
       defaultTarget,
       parentTagName,
+      parentModule,
+      slotsParentModule,
     );
   }
 
+  // Based on rendered_from/1
+  static #renderedFrom(parentModule) {
+    return parentModule === null || typeof parentModule === "undefined"
+      ? ""
+      : `, rendered from "${Interpreter.moduleExName(parentModule)}"`;
+  }
+
   // Based on render_tree/3 (element & slot case)
-  static #renderElement(dom, context, slots, defaultTarget, parentTagName) {
+  static #renderElement(
+    dom,
+    context,
+    slots,
+    defaultTarget,
+    parentTagName,
+    parentModule,
+    slotsParentModule,
+  ) {
     const currentTagName = Bitstring.toText(dom.data[1]);
 
     if (currentTagName === "slot") {
@@ -1510,6 +1840,7 @@ export default class Renderer {
         context,
         defaultTarget,
         parentTagName,
+        slotsParentModule,
       );
     }
 
@@ -1545,6 +1876,8 @@ export default class Renderer {
         slots,
         defaultTarget,
         currentTagName,
+        parentModule,
+        slotsParentModule,
       ),
     );
 
@@ -1694,7 +2027,15 @@ export default class Renderer {
   // Blocks are left alone here: a block's body and a loop's iterations are lists of their own, and
   // the nodes they render are only ever part of the enclosing element's children. Numbering the
   // keys belongs to whoever owns that list - see Vdom.finalizeChildren.
-  static #renderNodes(nodes, context, slots, defaultTarget, parentTagName) {
+  static #renderNodes(
+    nodes,
+    context,
+    slots,
+    defaultTarget,
+    parentTagName,
+    parentModule,
+    slotsParentModule,
+  ) {
     return Renderer.#mergeNeighbouringTextNodes(
       nodes.data
         // There may be nil DOM nodes resulting from "if" blocks, e.g. {%if false}abc{/if} or DOCTYPE
@@ -1706,6 +2047,8 @@ export default class Renderer {
             slots,
             defaultTarget,
             parentTagName,
+            parentModule,
+            slotsParentModule,
           ),
         )
         .flat(),
@@ -1754,6 +2097,8 @@ export default class Renderer {
       Type.keywordList(),
       Type.bitstring("layout"),
       null,
+      pageModuleProxy.__exModule__,
+      null,
     );
   }
 
@@ -1764,6 +2109,8 @@ export default class Renderer {
     slots,
     defaultTarget,
     parentTagName,
+    parentModule,
+    slotsParentModule,
   ) {
     const childrenDom = dom.data[1];
 
@@ -1773,6 +2120,8 @@ export default class Renderer {
       slots,
       defaultTarget,
       parentTagName,
+      parentModule,
+      slotsParentModule,
     );
 
     const commentContent = childrenVdom
@@ -1783,7 +2132,13 @@ export default class Renderer {
   }
 
   // Based on render_tree/3 (slot case)
-  static #renderSlotElement(slots, context, defaultTarget, parentTagName) {
+  static #renderSlotElement(
+    slots,
+    context,
+    defaultTarget,
+    parentTagName,
+    slotsParentModule,
+  ) {
     const slotDom = Interpreter.accessKeywordListElement(
       slots,
       Type.atom("default"),
@@ -1795,6 +2150,8 @@ export default class Renderer {
       Type.keywordList(),
       defaultTarget,
       parentTagName,
+      slotsParentModule,
+      slotsParentModule,
     );
   }
 
@@ -1813,6 +2170,7 @@ export default class Renderer {
     childrenDom,
     context,
     parentTagName,
+    parentModule,
   ) {
     const cid = Erlang_Maps["get/2"](Type.atom("cid"), props);
     const cidKey = Type.encodeMapKey(cid);
@@ -1854,6 +2212,11 @@ export default class Renderer {
     const [componentState, componentEmittedContext] =
       Renderer.#maybeInitComponent(cid, moduleProxy, props);
 
+    // Rewritten on every render rather than only at init, so a handler reading a prop gets the
+    // value the latest render used rather than one taken when the component mounted. Runs after
+    // #maybeInitComponent, which is what creates the registry entry on a first render.
+    ComponentRegistry.putComponentProps(cid, props);
+
     const vars = Erlang_Maps["merge/2"](props, componentState);
     const mergedContext = Erlang_Maps["merge/2"](
       context,
@@ -1867,6 +2230,7 @@ export default class Renderer {
       mergedContext,
       cid,
       parentTagName,
+      parentModule,
     );
 
     if (!isLayout) {
@@ -1899,6 +2263,7 @@ export default class Renderer {
     context,
     defaultTarget,
     parentTagName,
+    parentModule,
   ) {
     const dom = Renderer.#evaluateTemplate(moduleProxy, vars);
     const slots = Type.keywordList([[Type.atom("default"), childrenDom]]);
@@ -1909,6 +2274,8 @@ export default class Renderer {
       slots,
       defaultTarget,
       parentTagName,
+      moduleProxy.__exModule__,
+      parentModule,
     );
   }
 
@@ -2019,6 +2386,47 @@ export default class Renderer {
     );
   }
 
+  // Based on validate_props/3
+  // Runs last in the props pipeline, so the map it sees is exactly what the component's template
+  // will see. The compiler judges what a template spells out and what a declaration defaults to, so
+  // what reaches here is what only exists once the page runs: a value from context, or one arriving
+  // through a spread.
+  // Deps: [:lists.member/2, :maps.get/2, :maps.is_key/2]
+  static #validateProps(props, moduleProxy, module, parentModule) {
+    const constrainedProps = Renderer.#getConstrainedProps(moduleProxy);
+
+    if (constrainedProps.length === 0) {
+      return;
+    }
+
+    const moduleName = Interpreter.moduleExName(module);
+
+    for (const {name, required, values} of constrainedProps) {
+      const isPresent = Type.isTrue(Erlang_Maps["is_key/2"](name, props));
+
+      if (required && !isPresent) {
+        Interpreter.raiseError(
+          "Hologram.PropError",
+          `component "${moduleName}" is missing required prop "${name.value}"` +
+            Renderer.#renderedFrom(parentModule),
+        );
+      }
+
+      if (values !== null && isPresent) {
+        const value = Erlang_Maps["get/2"](name, props);
+
+        if (Type.isFalse(Erlang_Lists["member/2"](value, values))) {
+          Interpreter.raiseError(
+            "Hologram.PropError",
+            `prop "${name.value}" of component "${moduleName}" must be one of ` +
+              `${Interpreter.inspect(values)}, got: ${Interpreter.inspect(value)}` +
+              Renderer.#renderedFrom(parentModule),
+          );
+        }
+      }
+    }
+  }
+
   // Based on validate_spread_key/1
   // Event bindings require compile-time modifier parsing and listener collection, so they can be
   // written only as literal attributes. Silently not binding an intended event would be worse than
@@ -2033,7 +2441,7 @@ export default class Renderer {
     return key;
   }
 
-  // WARNING: must match evaluate_attribute_value/1 on the server: parts evaluate raw and
+  // WARNING: must match value_dom_to_text/1 on the server: parts evaluate raw and
   // concatenate, with no escaping.
   static #valueDomToText(valueDom) {
     return Bitstring.toText(Renderer.valueDomToBitstring(valueDom));

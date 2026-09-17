@@ -263,6 +263,69 @@ describe("ComponentRegistry", () => {
     );
   });
 
+  describe("putComponentProps()", () => {
+    const oldProps = Type.map([[Type.atom("prop_a"), Type.integer(1)]]);
+    const newProps = Type.map([[Type.atom("prop_b"), Type.integer(2)]]);
+
+    // Built fresh in each test rather than reused from the module-level fixtures, so each test's
+    // assertion compares against its own untouched baseline.
+    function buildEntry(module, emittedContext, state) {
+      return Type.map([
+        [Type.atom("module"), module],
+        [
+          Type.atom("struct"),
+          Type.componentStruct({
+            emittedContext: emittedContext,
+            props: oldProps,
+            state: state,
+          }),
+        ],
+      ]);
+    }
+
+    it("overwrites the props, leaving the struct's other fields alone", () => {
+      ComponentRegistry.entries = Type.map([
+        [cid3, buildEntry(module3, emittedContext3, state3)],
+      ]);
+
+      ComponentRegistry.putComponentProps(cid3, newProps);
+
+      assert.deepStrictEqual(
+        ComponentRegistry.entries,
+        Type.map([
+          [
+            cid3,
+            Type.map([
+              [Type.atom("module"), module3],
+              [
+                Type.atom("struct"),
+                Type.componentStruct({
+                  emittedContext: emittedContext3,
+                  props: newProps,
+                  state: state3,
+                }),
+              ],
+            ]),
+          ],
+        ]),
+      );
+    });
+
+    it("leaves the other components alone", () => {
+      ComponentRegistry.entries = Type.map([
+        [cid3, buildEntry(module3, emittedContext3, state3)],
+        [cid4, buildEntry(module1, emittedContext1, state1)],
+      ]);
+
+      ComponentRegistry.putComponentProps(cid3, newProps);
+
+      assert.deepStrictEqual(
+        ComponentRegistry.getEntry(cid4),
+        buildEntry(module1, emittedContext1, state1),
+      );
+    });
+  });
+
   it("putComponentStruct()", () => {
     initComponentRegistryEntry(cid4);
 
@@ -349,7 +412,7 @@ describe("ComponentRegistry", () => {
         reject = rej;
       });
 
-      return {promise, resolve, reject};
+      return { promise, resolve, reject };
     }
 
     it("runs the callback synchronously and returns null when the cid has no action in flight", () => {
@@ -535,7 +598,10 @@ describe("ComponentRegistry", () => {
 
         assert.isTrue(thirdRan);
         sinon.assert.calledOnce(queueMicrotaskStub);
-        assert.throws(() => queueMicrotaskStub.firstCall.args[0](), "queued boom");
+        assert.throws(
+          () => queueMicrotaskStub.firstCall.args[0](),
+          "queued boom",
+        );
       } finally {
         queueMicrotaskStub.restore();
       }

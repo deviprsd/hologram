@@ -1,4 +1,5 @@
 alias Hologram.Commons.FileUtils
+alias Hologram.Commons.PLT
 alias Hologram.Compiler
 alias Hologram.Compiler.CallGraph
 alias Hologram.Reflection
@@ -27,7 +28,18 @@ Benchee.run(
 
     ir_plt = Compiler.build_ir_plt()
 
+    # The entry files are built here, outside the measured region, so one PLT for both calls.
+    encode_plt = PLT.start()
+
     call_graph = Compiler.build_call_graph(ir_plt)
+    module_info_plt = CallGraph.module_info_plt(call_graph)
+
+    # The entry files are built with the options the compile task gives them.
+    entry_file_opts =
+      Keyword.merge(opts,
+        module_info_plt: module_info_plt,
+        module_metadata: Compiler.build_module_metadata(module_info_plt)
+      )
 
     # Must be computed before remove_manually_ported_mfas/1 strips the Task.await/1 vertex.
     async_mfas = CallGraph.list_async_mfas(call_graph)
@@ -43,11 +55,30 @@ Benchee.run(
     call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph, runtime_mfas)
 
     runtime_entry_file_path =
-      Compiler.create_runtime_entry_file(runtime_mfas, ir_plt, async_mfas, app_versions, opts)
+      Compiler.create_runtime_entry_file(
+        runtime_mfas,
+        ir_plt,
+        encode_plt,
+        async_mfas,
+        app_versions,
+        entry_file_opts
+      )
+
+    runtime_js_binding_modules =
+      runtime_mfas
+      |> Compiler.list_js_import_modules(ir_plt, module_info_plt)
+      |> MapSet.new()
 
     page_entry_files_info =
       Reflection.list_pages()
-      |> Compiler.create_page_entry_files(call_graph_for_pages, ir_plt, async_mfas, opts)
+      |> Compiler.create_page_entry_files(
+        call_graph_for_pages,
+        ir_plt,
+        encode_plt,
+        async_mfas,
+        runtime_js_binding_modules,
+        entry_file_opts
+      )
       |> Enum.map(fn {entry_name, entry_file_path} ->
         {entry_name, entry_file_path, "page"}
       end)
