@@ -616,7 +616,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       Map.new(page_modules, fn page_module ->
         {page_module,
          CallGraph.list_page_mfas(
-           call_graph_for_pages,
+           page_graph,
            page_module,
            server_callback_analysis_by_templatable,
            nil
