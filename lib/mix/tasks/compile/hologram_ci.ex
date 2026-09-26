@@ -32,10 +32,13 @@ defmodule Mix.Tasks.Compile.HologramCi do
     * No compiler lock - intended to run as a single one-shot process
       (`mix do loadpaths + compile.hologram_ci`) in a build pipeline, not concurrently
       with other compiler invocations.
-    * Doesn't dump the module-digest PLT or call graph to disk - both exist solely to
-      speed up a *later incremental* compile, which this task doesn't support. The page
-      digest PLT, which the runtime does read (page/asset version lookups), is still
-      built and dumped.
+    * Doesn't dump the IR PLT or call graph to disk - both exist solely to speed up a
+      *later incremental* compile, which this task doesn't support. The page digest PLT
+      (page/asset version lookups) and the module info PLT (page routes -
+      `Hologram.Router.PageModuleResolver` reads this at boot, not just for incremental
+      compiles) are both runtime dependencies regardless of which compiler task built
+      the app, so both are still dumped - the module info PLT scoped to just page
+      modules, since that's all the resolver's own reduce ever looks at.
 
   `Mix.Tasks.Compile.Hologram` itself is completely unmodified by this task's
   existence - every app depends on it unchanged; this only runs where a build
@@ -103,10 +106,23 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
       umbrella? = Reflection.umbrella?()
       page_modules = Reflection.list_pages()
+      page_module_info_plt = page_module_info_plt(page_modules, umbrella?, sup)
 
-      Compiler.validate_page_modules(
-        page_modules,
-        page_module_info_plt(page_modules, umbrella?, sup)
+      Compiler.validate_page_modules(page_modules, page_module_info_plt)
+
+      # Hologram.Router.PageModuleResolver.build_search_tree/0 unconditionally
+      # PLT.load/2's this file at boot, on every app start, regardless of which
+      # compiler task produced the build - it's a runtime dependency, not a
+      # compile-time-only speedup like the IR PLT or call graph this task
+      # deliberately doesn't dump (see the moduledoc). page_module_info_plt already
+      # has exactly what the resolver's own reduce needs per page module (a page?:
+      # true entry via Reflection.beam_info/1, the same shape build_module_info_plt!/3
+      # produces) - dumping it here, scoped to pages only, is enough; the resolver
+      # skips any entry that isn't page?: true, so it never needed the eager task's
+      # whole-app superset in the first place.
+      PLT.dump(
+        page_module_info_plt,
+        Path.join(opts[:build_dir], Reflection.module_info_plt_dump_file_name())
       )
 
       templatables = page_modules ++ Reflection.list_components()
