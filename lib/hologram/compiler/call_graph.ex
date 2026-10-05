@@ -517,8 +517,17 @@ defmodule Hologram.Compiler.CallGraph do
   # The module flags under which build/3 gives a module's own vertex edges (to its template, its
   # struct functions and the like); a module's body holds nothing else that adds edges from its
   # vertex. A module named only as a value, whose vertex the walk of build_reach/3 reaches, is built
-  # when it has one of them: otherwise building it would add no edge to that vertex.
-  @module_vertex_edge_flags [:component?, :ecto_schema?, :exception?, :page?, :struct?]
+  # when it has one of them: otherwise building it would add no edge to that vertex. The functions a
+  # module whitelists for the client (see Hologram.ClientMFA) are such edges: the module is typically
+  # named only as a value, with the call made through a variable.
+  @module_vertex_edge_flags [
+    :client_mfa?,
+    :component?,
+    :ecto_schema?,
+    :exception?,
+    :page?,
+    :struct?
+  ]
 
   @doc """
   Adds an edge between two vertices in the call graph.

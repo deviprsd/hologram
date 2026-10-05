@@ -168,6 +168,7 @@ defmodule Hologram.ReflectionTest do
                struct?: false,
                exception?: false,
                ecto_schema?: false,
+               client_mfa?: false,
                js_imports?: false,
                broadcast_caller?: false,
                source_path: source_path,
@@ -301,6 +302,11 @@ defmodule Hologram.ReflectionTest do
     test "Ecto schema module" do
       assert %{ecto_schema?: true, struct?: true} = beam_info(:code.which(Module8))
       assert ecto_schema?(Module8)
+    end
+
+    test "module whitelisting functions for the client" do
+      assert %{client_mfa?: true} = beam_info(:code.which(ClientMFAModule1))
+      assert %{client_mfa?: false} = beam_info(:code.which(Module1))
     end
 
     # TODO: Remove when Hologram.Reflection.beam_source/1 goes (see the removal
