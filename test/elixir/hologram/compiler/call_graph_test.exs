@@ -323,10 +323,12 @@ defmodule Hologram.Compiler.CallGraphTest do
            implementation_for: ReachTest.TypeB,
            implemented_protocol: ReachTest.Proto
          }, [{:__impl__, 1, []}, {:fun, 1, [{ReachTest.Unreached, :fun, 0}]}]},
-      ReachTest.Server => {%{}, [{:load, 0, [ReachTest.Named, ReachTest.Plain]}]},
+      ReachTest.Server =>
+        {%{}, [{:load, 0, [ReachTest.Named, ReachTest.Plain, ReachTest.Whitelisted]}]},
       ReachTest.TypeA => {%{struct?: true}, [{:__struct__, 0, []}]},
       ReachTest.TypeB => {%{struct?: true}, [{:__struct__, 0, []}]},
-      ReachTest.Unreached => {%{}, [{:fun, 0, []}]}
+      ReachTest.Unreached => {%{}, [{:fun, 0, []}]},
+      ReachTest.Whitelisted => {%{client_mfa?: true}, [{:run, 0, []}]}
     }
   end
 
@@ -1712,7 +1714,8 @@ defmodule Hologram.Compiler.CallGraphTest do
                  ReachTest.Proto,
                  ReachTest.Proto.TypeA,
                  ReachTest.Server,
-                 ReachTest.TypeA
+                 ReachTest.TypeA,
+                 ReachTest.Whitelisted
                ])
 
       assert modules(call_graph) ==
@@ -1732,6 +1735,17 @@ defmodule Hologram.Compiler.CallGraphTest do
 
       refute ReachTest.Plain in modules(call_graph)
       refute ReachTest.Unreached in modules(call_graph)
+    end
+
+    # What a module whitelists for the client (see Hologram.ClientMFA) is an edge from its own
+    # vertex, added when it is built, and such a module is typically named only as a value, with the
+    # call made through a variable. Unbuilt, its whitelisted functions never reach a bundle.
+    test "builds a module named only as a value when it whitelists functions for the client" do
+      {call_graph, built_modules} =
+        reach_cold(reach_modules(), [ReachTest.Page, ReachTest.Caller])
+
+      assert ReachTest.Whitelisted in built_modules
+      assert ReachTest.Whitelisted in modules(call_graph)
     end
 
     test "builds nothing on a walk with an empty diff" do
