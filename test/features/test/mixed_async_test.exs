@@ -7,7 +7,8 @@ defmodule HologramFeatureTests.MixedAsyncTest do
   # Regression test for https://github.com/deviprsd/hologram/issues/9 /
   # bartblast/hologram#1002: a Task.await-resolving sibling clause used to
   # corrupt an unrelated, purely synchronous clause in the same multi-clause
-  # action/3 under rapid dispatch. Fixed by ComponentRegistry.runExclusive().
+  # action/3 under rapid dispatch. Fixed by the client ActionQueue, which runs a
+  # component's actions one after another (bartblast/hologram#1296).
   feature "sync clause of a mixed sync/async action/3 still runs synchronously", %{
     session: session
   } do

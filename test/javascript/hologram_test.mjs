@@ -178,6 +178,73 @@ describe("Hologram", () => {
         Hologram.executeAction(buildAction("throw", cid1));
       }, "boom");
     });
+
+    // Bug #1002 (deviprsd/hologram, bartblast/hologram#1002). The action runs through the real
+    // queue and the real executeAction(), not a stub: what is under test is that the second
+    // action reads the struct the first one committed. Were both to read the pre-burst struct,
+    // each would write 1 and the count would be 1.
+    describe("through enqueueAction(), for actions of one component", () => {
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      // The queue hands the next action of a component over once an asynchronous one has
+      // committed, which takes an event loop turn each, so wait for the count to arrive, bounded.
+      const settleUntilCount = async (cid, expected) => {
+        for (let turn = 0; turn < 200 && countOf(cid) !== expected; turn++) {
+          await settle();
+        }
+      };
+
+      beforeEach(() => {
+        ActionQueue.entries = [];
+        Hologram.domEpoch = 0;
+        Hologram.registryEpoch = 0;
+      });
+
+      afterEach(() => {
+        ActionQueue.entries = [];
+      });
+
+      it("makes a second action read the state the first, asynchronous one committed", async () => {
+        registerCid(cid1, 0);
+
+        Hologram.enqueueAction(buildAction("bump_async", cid1), 0);
+        Hologram.enqueueAction(buildAction("bump_async", cid1), 0);
+
+        await settleUntilCount(cid1, 2);
+
+        assert.equal(countOf(cid1), 2);
+      });
+
+      it("lands every action of a synchronous burst, with an asynchronous one among them", async () => {
+        registerCid(cid1, 0);
+
+        for (let i = 0; i < 30; i++) {
+          Hologram.enqueueAction(
+            buildAction(i % 5 === 0 ? "bump_async" : "bump", cid1),
+            0,
+          );
+        }
+
+        await settleUntilCount(cid1, 30);
+
+        assert.equal(countOf(cid1), 30);
+      });
+
+      it("does not hold another component's action behind an asynchronous one", async () => {
+        registerCid(cid1, 0);
+        registerCid(cid2, 0);
+
+        Hologram.enqueueAction(buildAction("bump_async", cid1), 0);
+        Hologram.enqueueAction(buildAction("bump", cid2), 0);
+
+        // The other component's action ran on the enqueuer's stack, before the promise settled.
+        assert.equal(countOf(cid2), 1);
+
+        await settleUntilCount(cid1, 1);
+
+        assert.equal(countOf(cid1), 1);
+      });
+    });
   });
 
   describe("dispatchAction()", () => {
