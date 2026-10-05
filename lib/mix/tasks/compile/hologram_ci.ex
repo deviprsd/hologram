@@ -271,7 +271,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
     call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph_for_runtime, runtime_mfas)
 
     # Every page loads the runtime script, so the JS bindings it registers are available
-    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # app-wide - listed here so create_page_entry_files/6 doesn't bundle a second copy of
     # them into every page.
     runtime_js_binding_modules =
       runtime_mfas
@@ -280,8 +280,8 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
     page_entry_files_info =
       page_modules
+      |> Compiler.list_mfas_by_page(call_graph_for_pages)
       |> Compiler.create_page_entry_files(
-        call_graph_for_pages,
         ir_plt,
         encode_plt,
         async_mfas,
@@ -395,7 +395,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       )
 
     # Every page loads the runtime script, so the JS bindings it registers are available
-    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # app-wide - listed here so create_page_entry_files/6 doesn't bundle a second copy of
     # them into every page.
     runtime_js_binding_modules =
       runtime_mfas
@@ -417,8 +417,8 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
         result =
           batch_pages
+          |> Compiler.list_mfas_by_page(batch_call_graph_for_pages)
           |> Compiler.create_page_entry_files(
-            batch_call_graph_for_pages,
             ir_plt,
             encode_plt,
             async_mfas,
