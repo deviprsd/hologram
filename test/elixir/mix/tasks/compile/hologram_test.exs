@@ -2059,6 +2059,13 @@ defmodule Mix.Tasks.Compile.HologramTest do
       File.write!(bundle_path, "bundle")
       File.write!(source_map_path, "map")
 
+      # An earlier compile of this env wrote them, so its manifest names them: only what the
+      # manifest names is removed, never what another env left in the shared static dir.
+      write_static_artifacts_manifest(
+        [bundle_path, source_map_path | read_static_artifacts_manifest(opts)],
+        opts
+      )
+
       Cache.put_page(
         :gone_page,
         %{

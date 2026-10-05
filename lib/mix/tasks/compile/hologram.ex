@@ -482,12 +482,10 @@ defmodule Mix.Tasks.Compile.Hologram do
 
       Cache.put_module_infos(module_info_dumped_at, editable_modules)
 
-      # ir_plt isn't read again after create_page_entry_files/4 above (not dumped to
-      # disk, no other consumer downstream) - freeing it here means Compiler.bundle/2's
-      # concurrent esbuild subprocesses, the phase with the highest total memory
-      # pressure, don't have to compete with an ETS table that's already dead weight.
-      # See github.com/deviprsd/hologram/issues/44.
-      PLT.stop(ir_plt)
+      # The IR PLT is deliberately not stopped here (deviprsd/hologram#44 did, to free it before
+      # the esbuild phase): the page batches below still read it to build their entry files, and
+      # it is kept between compiles in one VM (see Hologram.Compiler.Cache), which prunes what no
+      # page reaches instead.
 
       # `opts[:static_dir]` resolves through `:code.priv_dir/1`, which in a standard Mix
       # project is a symlink shared by every build environment (`_build/dev/lib/<app>/priv`
