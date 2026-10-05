@@ -271,7 +271,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
     call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph_for_runtime, runtime_mfas)
 
     # Every page loads the runtime script, so the JS bindings it registers are available
-    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # app-wide - listed here so create_page_entry_files/6 doesn't bundle a second copy of
     # them into every page.
     runtime_js_binding_modules =
       runtime_mfas
@@ -280,8 +280,8 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
     page_entry_files_info =
       page_modules
+      |> Compiler.list_mfas_by_page(call_graph_for_pages)
       |> Compiler.create_page_entry_files(
-        call_graph_for_pages,
         ir_plt,
         encode_plt,
         async_mfas,
@@ -292,7 +292,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
         {entry_name, entry_file_path, "page"}
       end)
 
-    entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
+    entry_files_info = [{nil, runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
     {ir_plt, entry_files_info}
   end
@@ -395,7 +395,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       )
 
     # Every page loads the runtime script, so the JS bindings it registers are available
-    # app-wide - listed here so create_page_entry_files/7 doesn't bundle a second copy of
+    # app-wide - listed here so create_page_entry_files/6 doesn't bundle a second copy of
     # them into every page.
     runtime_js_binding_modules =
       runtime_mfas
@@ -417,8 +417,8 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
         result =
           batch_pages
+          |> Compiler.list_mfas_by_page(batch_call_graph_for_pages)
           |> Compiler.create_page_entry_files(
-            batch_call_graph_for_pages,
             ir_plt,
             encode_plt,
             async_mfas,
@@ -439,7 +439,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
         result
       end)
 
-    entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
+    entry_files_info = [{nil, runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
     {ir_plt, entry_files_info}
   end
@@ -628,15 +628,18 @@ defmodule Mix.Tasks.Compile.HologramCi do
     server_callback_analysis_by_templatable =
       CallGraph.server_callback_analysis_by_templatable(page_graph, templatables, nil)
 
+    # list_page_mfas/5 reads the analyses from a PLT (and computes into it what is missing), where
+    # it used to take the map this returns. Seeded with every templatable's analysis, so it never
+    # has to compute one itself.
+    analyses =
+      PLT.start(
+        items: Map.to_list(server_callback_analysis_by_templatable),
+        supervisor: sup
+      )
+
     page_mfas_by_page =
       Map.new(page_modules, fn page_module ->
-        {page_module,
-         CallGraph.list_page_mfas(
-           page_graph,
-           page_module,
-           server_callback_analysis_by_templatable,
-           nil
-         )}
+        {page_module, CallGraph.list_page_mfas(page_graph, page_module, analyses, nil)}
       end)
 
     page_mfas =

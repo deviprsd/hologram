@@ -12,6 +12,7 @@ import ComponentRegistry from "../../assets/js/component_registry.mjs";
 import GlobalRegistry from "../../assets/js/global_registry.mjs";
 import Hologram from "../../assets/js/hologram.mjs";
 import Interpreter from "../../assets/js/interpreter.mjs";
+import LiveReload from "../../assets/js/live_reload.mjs";
 import Logger from "../../assets/js/logger.mjs";
 import Sse from "../../assets/js/sse.mjs";
 import SubscriptionReceiptRegistry from "../../assets/js/subscription_receipt_registry.mjs";
@@ -41,6 +42,7 @@ describe("Sse", () => {
 
   function stubHandshakeResponse({
     handshakeId = "test-handshake-id",
+    heartbeatIntervalMs = 15_000,
     refreshedReceipts = Type.list(),
     ok = true,
     status = 200,
@@ -50,6 +52,7 @@ describe("Sse", () => {
       status,
       json: async () => ({
         handshakeId,
+        heartbeatIntervalMs,
         refreshedReceipts: "encoded-refreshed-receipts",
       }),
     });
@@ -69,6 +72,8 @@ describe("Sse", () => {
     ComponentRegistry.clear();
 
     Sse.eventSource = null;
+    Sse.heartbeatIntervalMs = null;
+    Sse.heartbeatTimer = null;
     Sse.reconnectAttempts = 0;
     Sse.isSuspended = false;
     Sse.connectionEpoch = 0;
@@ -229,6 +234,14 @@ describe("Sse", () => {
       assert.strictEqual(SubscriptionReceiptRegistry.entries.size, 1);
     });
 
+    it("stores the heartbeat interval the handshake announced", async () => {
+      stubHandshakeResponse({heartbeatIntervalMs: 1_000});
+
+      await Sse.connect();
+
+      assert.strictEqual(Sse.heartbeatIntervalMs, 1_000);
+    });
+
     it("does not open an EventSource when the handshake POST returns a non-2xx", async () => {
       stubHandshakeResponse({ok: false, status: 401});
 
@@ -342,7 +355,7 @@ describe("Sse", () => {
       await Sse.connect();
       Sse.eventSource.onerror({type: "error"});
 
-      sinon.assert.calledWithExactly(loggerDebugStub, "SSE error: error");
+      sinon.assert.calledWithExactly(loggerDebugStub, "SSE stream lost: error");
     });
 
     it("closes the failed EventSource", async () => {
@@ -498,7 +511,85 @@ describe("Sse", () => {
     });
   });
 
+  // Browsers never surface a stream that died without being closed, so the client
+  // keeps its own clock on the heartbeat.
+  describe("heartbeat watchdog", () => {
+    let clock;
+    let loggerDebugStub;
+
+    beforeEach(() => {
+      clock = sinon.useFakeTimers();
+      loggerDebugStub = sinon.stub(Logger, "debug");
+      stubHandshakeResponse({heartbeatIntervalMs: 1_000});
+    });
+
+    it("ends the stream once the timeout passes with no heartbeat", async () => {
+      await Sse.connect();
+      Sse.eventSource.onopen({});
+
+      clock.tick(1_000 * Sse.HEARTBEAT_TIMEOUT_INTERVALS);
+
+      sinon.assert.calledOnce(mockEventSource.close);
+    });
+
+    it("is cancelled when the browser reports the error first", async () => {
+      await Sse.connect();
+      Sse.eventSource.onopen({});
+      Sse.eventSource.onerror({type: "error"});
+
+      clock.tick(1_000 * Sse.HEARTBEAT_TIMEOUT_INTERVALS * 2);
+
+      sinon.assert.calledOnce(mockEventSource.close);
+    });
+
+    it("leaves the stream alone until the timeout has fully elapsed", async () => {
+      await Sse.connect();
+      Sse.eventSource.onopen({});
+
+      clock.tick(1_000 * Sse.HEARTBEAT_TIMEOUT_INTERVALS - 1);
+
+      sinon.assert.notCalled(mockEventSource.close);
+    });
+
+    it("pushes the deadline on every heartbeat", async () => {
+      await Sse.connect();
+      Sse.eventSource.onopen({});
+
+      clock.tick(1_500);
+      mockEventSource.listeners.heartbeat({});
+      clock.tick(1_500);
+
+      sinon.assert.notCalled(mockEventSource.close);
+
+      clock.tick(500);
+
+      sinon.assert.calledOnce(mockEventSource.close);
+    });
+
+    it("reconnects the way a browser-reported error does", async () => {
+      const globalRegistrySetSpy = sinon.spy(GlobalRegistry, "set");
+
+      await Sse.connect();
+      Sse.eventSource.onopen({});
+
+      clock.tick(1_000 * Sse.HEARTBEAT_TIMEOUT_INTERVALS);
+
+      sinon.assert.calledWith(globalRegistrySetSpy, "sseConnected?", false);
+      assert.strictEqual(Sse.reconnectAttempts, 1);
+
+      sinon.assert.calledWithExactly(
+        loggerDebugStub,
+        "SSE stream lost: heartbeat timeout",
+      );
+    });
+  });
+
   describe("onopen", () => {
+    // Opening arms the heartbeat watchdog. A fake clock keeps it from outliving the test.
+    beforeEach(() => {
+      sinon.useFakeTimers();
+    });
+
     it("flips the sseConnected? signal to true on the global registry", async () => {
       const globalRegistrySetSpy = sinon.spy(GlobalRegistry, "set");
 
@@ -797,6 +888,23 @@ describe("Sse", () => {
     });
   });
 
+  describe("compilation_error event", () => {
+    it("shows the overlay with the parsed lines", async () => {
+      stubHandshakeResponse();
+      const showStub = sinon.stub(LiveReload, "showErrorOverlay");
+
+      await Sse.connect();
+
+      Sse.eventSource.listeners.compilation_error({
+        data: '[[{"text":"boom","tone":"banner"}]]',
+      });
+
+      sinon.assert.calledOnceWithExactly(showStub, [
+        [{text: "boom", tone: "banner"}],
+      ]);
+    });
+  });
+
   describe("add_sub_receipts event", () => {
     it("inserts new entries and leaves non-matching entries intact", async () => {
       const adds = Type.list([receiptA]);
@@ -940,6 +1048,42 @@ describe("Sse", () => {
         SubscriptionReceiptRegistry.entries.get(encodedBindingA),
         staleReceiptA,
       );
+    });
+  });
+
+  describe("reload event", () => {
+    it("hands the parsed pages and the page shown to live reload", async () => {
+      stubHandshakeResponse();
+
+      const pageModule = Type.atom("Elixir.MyApp.Page1");
+      sinon.stub(Hologram, "pageModule").returns(pageModule);
+      const handleReloadStub = sinon.stub(LiveReload, "handleReload");
+
+      await Sse.connect();
+
+      Sse.eventSource.listeners.reload({data: '["Elixir.MyApp.Page1"]'});
+
+      sinon.assert.calledOnceWithExactly(
+        handleReloadStub,
+        ["Elixir.MyApp.Page1"],
+        pageModule,
+      );
+    });
+
+    it("hands over all when every tab must reload", async () => {
+      stubHandshakeResponse();
+
+      sinon
+        .stub(Hologram, "pageModule")
+        .returns(Type.atom("Elixir.MyApp.Page1"));
+      const handleReloadStub = sinon.stub(LiveReload, "handleReload");
+
+      await Sse.connect();
+
+      Sse.eventSource.listeners.reload({data: '"all"'});
+
+      sinon.assert.calledOnce(handleReloadStub);
+      assert.strictEqual(handleReloadStub.firstCall.args[0], "all");
     });
   });
 });

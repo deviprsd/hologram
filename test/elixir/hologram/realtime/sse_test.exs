@@ -9,6 +9,7 @@ defmodule Hologram.Realtime.SSETest do
   alias Hologram.Realtime.Handshake
   alias Hologram.Realtime.Receipt
   alias Hologram.Realtime.SubscriptionRegistry
+  alias Hologram.Test.Fixtures.Realtime.SSE.Module1
 
   setup do
     wait_for_process_cleanup(Hologram.PubSub)
@@ -84,6 +85,12 @@ defmodule Hologram.Realtime.SSETest do
     token
   end
 
+  defp live_reload_subscriber?(pid) do
+    Hologram.PubSub
+    |> Registry.lookup("hologram_live_reload")
+    |> Enum.any?(fn {subscriber_pid, _value} -> subscriber_pid == pid end)
+  end
+
   defp prepared_test_conn do
     conn =
       :get
@@ -108,6 +115,21 @@ defmodule Hologram.Realtime.SSETest do
     flush_plug_conn_sent()
 
     conn
+  end
+
+  # Puts the env var back as it was before the test, set or not.
+  defp put_hologram_env(env) do
+    previous = System.get_env("HOLOGRAM_ENV")
+
+    on_exit(fn ->
+      if previous do
+        System.put_env("HOLOGRAM_ENV", previous)
+      else
+        System.delete_env("HOLOGRAM_ENV")
+      end
+    end)
+
+    System.put_env("HOLOGRAM_ENV", env)
   end
 
   defp stream_with_identities(stash_identity, claimed_identity) do
@@ -178,6 +200,15 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
+  describe "encode_compilation_error_envelope/2" do
+    test "wraps the JSON-encoded lines in a compilation_error SSE event envelope" do
+      lines = [[%{text: "** (CompileError) boom", tone: :banner}]]
+
+      assert encode_compilation_error_envelope(42, lines) ==
+               ~s|event: compilation_error\nid: 42\ndata: [[{"text":"** (CompileError) boom","tone":"banner"}]]\n\n|
+    end
+  end
+
   describe "encode_drop_sub_receipts_envelope/2" do
     test "wraps the keys list in a drop_sub_receipts SSE event envelope" do
       keys = [{:notifications, "c1"}]
@@ -185,6 +216,12 @@ defmodule Hologram.Realtime.SSETest do
 
       assert encode_drop_sub_receipts_envelope(42, keys) ==
                "event: drop_sub_receipts\nid: 42\ndata: #{encoded}\n\n"
+    end
+  end
+
+  describe "encode_heartbeat_envelope/0" do
+    test "builds a heartbeat event with an empty data line" do
+      assert encode_heartbeat_envelope() == "event: heartbeat\ndata:\n\n"
     end
   end
 
@@ -198,6 +235,69 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
+  describe "encode_reload_envelope/2" do
+    test "wraps the JSON list of page module names in a reload SSE event envelope" do
+      assert encode_reload_envelope(42, [Module2, Module3]) ==
+               ~s|event: reload\nid: 42\ndata: ["Elixir.Module2","Elixir.Module3"]\n\n|
+    end
+
+    test "names every tab with all" do
+      assert encode_reload_envelope(42, :all) == ~s|event: reload\nid: 42\ndata: "all"\n\n|
+    end
+  end
+
+  describe "heartbeat_interval_ms/1" do
+    test "returns the default when the seams are not enabled" do
+      conn =
+        :get
+        |> Plug.Test.conn("/")
+        |> Plug.Test.put_req_cookie(heartbeat_interval_cookie(), "1000")
+
+      interval_ms = heartbeat_interval_ms(conn)
+
+      assert is_integer(interval_ms)
+      assert interval_ms > 1000
+    end
+
+    test "returns the cookie value when the seams are enabled" do
+      Application.put_env(:hologram, :__sse_test_seams_enabled__, true)
+      on_exit(fn -> Application.delete_env(:hologram, :__sse_test_seams_enabled__) end)
+
+      conn =
+        :get
+        |> Plug.Test.conn("/")
+        |> Plug.Test.put_req_cookie(heartbeat_interval_cookie(), "1000")
+
+      assert heartbeat_interval_ms(conn) == 1000
+    end
+
+    test "returns the default when the seams are enabled and the cookie is absent" do
+      Application.put_env(:hologram, :__sse_test_seams_enabled__, true)
+      on_exit(fn -> Application.delete_env(:hologram, :__sse_test_seams_enabled__) end)
+
+      conn = Plug.Test.conn(:get, "/")
+      interval_ms = heartbeat_interval_ms(conn)
+
+      assert is_integer(interval_ms)
+      assert interval_ms > 1000
+    end
+
+    test "returns the default when the seams are enabled and the cookie is not a positive integer" do
+      Application.put_env(:hologram, :__sse_test_seams_enabled__, true)
+      on_exit(fn -> Application.delete_env(:hologram, :__sse_test_seams_enabled__) end)
+
+      conn =
+        :get
+        |> Plug.Test.conn("/")
+        |> Plug.Test.put_req_cookie(heartbeat_interval_cookie(), "0")
+
+      interval_ms = heartbeat_interval_ms(conn)
+
+      assert is_integer(interval_ms)
+      assert interval_ms > 1000
+    end
+  end
+
   describe "prepare/1" do
     test "sets SSE response headers" do
       conn = Plug.Test.conn(:get, "/")
@@ -205,7 +305,6 @@ defmodule Hologram.Realtime.SSETest do
 
       assert result.resp_headers == [
                {"cache-control", "no-cache"},
-               {"connection", "keep-alive"},
                {"content-type", "text/event-stream"}
              ]
     end
@@ -650,6 +749,18 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
+  describe "process_message/4 on {:compilation_error, ...}" do
+    test "pushes a compilation_error SSE event" do
+      conn = prepared_test_conn()
+      send(self(), {:compilation_error, [[%{text: "boom", tone: :banner}]]})
+
+      {:cont, updated_conn} = process_message(conn, nil, nil)
+
+      assert updated_conn.resp_body =~ "event: compilation_error\nid: "
+      assert updated_conn.resp_body =~ ~s|\ndata: [[{"text":"boom","tone":"banner"}]]\n\n|
+    end
+  end
+
   describe "process_message/4 on {:drop_channel, ...}" do
     test "drops every cid bound to the channel and pushes a drop_sub_receipts SSE event" do
       instance_id = "test-instance-#{:erlang.unique_integer([:positive])}"
@@ -767,13 +878,13 @@ defmodule Hologram.Realtime.SSETest do
   end
 
   describe "process_message/4 on :heartbeat" do
-    test "writes an SSE comment line" do
+    test "writes a heartbeat event" do
       conn = prepared_test_conn()
       send(self(), :heartbeat)
 
       {:cont, updated_conn} = process_message(conn, nil, nil)
 
-      assert updated_conn.resp_body == ":\n\n"
+      assert updated_conn.resp_body == "event: heartbeat\ndata:\n\n"
     end
 
     test "schedules the next heartbeat after handling one" do
@@ -977,6 +1088,27 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
+  describe "process_message/4 on {:reload, ...}" do
+    test "pushes a reload SSE event naming the rebuilt pages" do
+      conn = prepared_test_conn()
+      send(self(), {:reload, [Module2]})
+
+      {:cont, updated_conn} = process_message(conn, nil, nil)
+
+      assert updated_conn.resp_body =~ "event: reload\nid: "
+      assert updated_conn.resp_body =~ ~s|\ndata: ["Elixir.Module2"]\n\n|
+    end
+
+    test "pushes a reload SSE event naming every tab" do
+      conn = prepared_test_conn()
+      send(self(), {:reload, :all})
+
+      {:cont, updated_conn} = process_message(conn, nil, nil)
+
+      assert updated_conn.resp_body =~ ~s|\ndata: "all"\n\n|
+    end
+  end
+
   describe "process_message/4 on {:replace_subscriptions, ...}" do
     test "replaces the bindings of the conn's instance" do
       instance_id = "test-instance-#{:erlang.unique_integer([:positive])}"
@@ -1048,6 +1180,15 @@ defmodule Hologram.Realtime.SSETest do
       Phoenix.PubSub.broadcast(Hologram.PubSub, topic, :hello)
 
       refute_receive :hello
+    end
+  end
+
+  describe "process_message/4 on a message the adapter closes on" do
+    test "halts" do
+      conn = prepared_test_conn()
+      send(self(), :goodbye)
+
+      assert {:halt, ^conn} = process_message(conn, nil, nil, adapter: Module1)
     end
   end
 
@@ -1399,8 +1540,8 @@ defmodule Hologram.Realtime.SSETest do
     end
 
     test "applies an announce message published before the connection attaches" do
-      Application.put_env(:hologram, :__sse_attach_delay_enabled__, true)
-      on_exit(fn -> Application.delete_env(:hologram, :__sse_attach_delay_enabled__) end)
+      Application.put_env(:hologram, :__sse_test_seams_enabled__, true)
+      on_exit(fn -> Application.delete_env(:hologram, :__sse_test_seams_enabled__) end)
 
       instance_id = "test-instance-#{:erlang.unique_integer([:positive])}"
       session_id = "test-session-#{:erlang.unique_integer([:positive])}"
@@ -1515,6 +1656,33 @@ defmodule Hologram.Realtime.SSETest do
       assert settings.error_logger == true
 
       Process.exit(pid, :kill)
+    end
+
+    test "listens for live reload in the dev and test envs" do
+      for env <- ["dev", "test"] do
+        put_hologram_env(env)
+
+        conn = conn_with_instance_id()
+        pid = spawn(fn -> stream(conn) end)
+        on_exit(fn -> Process.exit(pid, :kill) end)
+
+        wait_until(fn -> live_reload_subscriber?(pid) end)
+      end
+    end
+
+    test "does not listen for live reload in other envs" do
+      put_hologram_env("prod")
+
+      conn = Plug.Conn.fetch_query_params(conn_with_instance_id())
+      pid = spawn(fn -> stream(conn) end)
+      on_exit(fn -> Process.exit(pid, :kill) end)
+
+      # The announce topics are joined right after, so once the instance topic has this
+      # process, the live reload subscription would have happened already.
+      topic = Realtime.instance_announce_topic(conn.query_params["instance_id"])
+      wait_until(fn -> Registry.lookup(Hologram.PubSub, topic) != [] end)
+
+      refute live_reload_subscriber?(pid)
     end
   end
 

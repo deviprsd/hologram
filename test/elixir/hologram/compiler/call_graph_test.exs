@@ -47,6 +47,9 @@ defmodule Hologram.Compiler.CallGraphTest do
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module40
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module41
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module42
+  alias Hologram.Test.Fixtures.Compiler.CallGraph.Module43
+  alias Hologram.Test.Fixtures.Compiler.CallGraph.Module44
+  alias Hologram.Test.Fixtures.Compiler.CallGraph.Module45
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module5
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module6
   alias Hologram.Test.Fixtures.Compiler.CallGraph.Module7
@@ -75,6 +78,44 @@ defmodule Hologram.Compiler.CallGraphTest do
   # The Erlang functions each ported module calls, taken from the "Deps" comment
   # every port carries under its End marker. The comment is what a port author
   # writes down, so it is the statement the edge table has to answer to.
+  # Runs the function in a process of its own, traced with this one as the tracer (a process cannot
+  # be its own tracer), checks that CallGraph.get_graph/1 was not called there, and returns its
+  # result. A walk that copied the graph out would copy it in that process, not in the agent.
+  defp call_without_copying_graph(fun) do
+    test_pid = self()
+
+    walker =
+      spawn_link(fn ->
+        receive do
+          :run -> send(test_pid, {:result, fun.()})
+        end
+
+        # Kept alive until the tracing is turned off, which a dead process would refuse.
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    :erlang.trace_pattern({CallGraph, :get_graph, 1}, true, [:local])
+    :erlang.trace(walker, true, [:call])
+
+    try do
+      send(walker, :run)
+
+      # A walk of the whole graph takes longer than the default wait.
+      assert_receive {:result, result}, 30_000
+
+      # Trace messages arrive asynchronously, so this waits rather than reading the mailbox as it is.
+      refute_receive {:trace, ^walker, :call, {CallGraph, :get_graph, _args}}, 200
+
+      result
+    after
+      :erlang.trace(walker, false, [:call])
+      :erlang.trace_pattern({CallGraph, :get_graph, 1}, false, [:local])
+      send(walker, :stop)
+    end
+  end
+
   defp list_declared_erlang_deps do
     [@erlang_js_dir, "*.mjs"]
     |> Path.join()
@@ -94,18 +135,15 @@ defmodule Hologram.Compiler.CallGraphTest do
   end
 
   defp list_page_mfas_with_analysis(call_graph, page_module) do
-    graph = CallGraph.get_graph(call_graph)
-    templatables = [page_module | Reflection.list_components()]
+    call_graph
+    |> CallGraph.get_graph()
+    |> list_page_mfas(page_module, PLT.start(), CallGraph.module_info_plt(call_graph))
+  end
 
-    server_callback_analysis_by_templatable =
-      server_callback_analysis_by_templatable(graph, templatables, module_info_plt_fixture())
-
-    list_page_mfas(
-      graph,
-      page_module,
-      server_callback_analysis_by_templatable,
-      CallGraph.module_info_plt(call_graph)
-    )
+  defp list_page_mfas_with_gate(call_graph, page_module, gate) do
+    call_graph
+    |> CallGraph.get_graph()
+    |> list_page_mfas(page_module, PLT.start(), CallGraph.module_info_plt(call_graph), gate: gate)
   end
 
   # The module info PLT of the fixture app, started once per test run in setup_all (whose
@@ -122,6 +160,14 @@ defmodule Hologram.Compiler.CallGraphTest do
       module_info_plt ->
         module_info_plt
     end
+  end
+
+  defp narrow_diff_fixture(added_modules, edited_modules, removed_modules) do
+    %{
+      added_modules: added_modules,
+      edited_modules: edited_modules,
+      removed_modules: removed_modules
+    }
   end
 
   defp page_entry_mfas(page_module, layout_module) do
@@ -166,6 +212,125 @@ defmodule Hologram.Compiler.CallGraphTest do
 
     {String.to_atom(module), String.to_atom(fun), String.to_integer(arity)}
   end
+
+  # Builds the given modules into the call graph, from reach_ir/2.
+  defp reach_build(call_graph, modules, built_modules) do
+    Enum.each(built_modules, &build(call_graph, reach_ir(modules, &1)))
+  end
+
+  defp reach_callee_ir({module, function, arity}) do
+    %IR.RemoteFunctionCall{
+      module: %IR.AtomType{value: module},
+      function: function,
+      args: List.duplicate(%IR.IntegerType{value: 0}, arity)
+    }
+  end
+
+  defp reach_callee_ir(module), do: %IR.AtomType{value: module}
+
+  # A call graph built the way the compile task builds one into an empty build dir: the roots (the
+  # pages and the broadcast callers) first, then the walk. Returns the call graph and the modules
+  # the walk built.
+  defp reach_cold(modules, roots) do
+    call_graph = start(module_info_plt: reach_module_info_plt(modules))
+    reach_build(call_graph, modules, roots)
+
+    built_modules =
+      build_reach(
+        call_graph,
+        narrow_diff_fixture(roots, [], []),
+        &reach_build(call_graph, modules, &1)
+      )
+
+    {call_graph, built_modules}
+  end
+
+  # The graph every module of the given ones builds, which the walk's graph must answer every
+  # listing the same as.
+  defp reach_full(modules) do
+    call_graph = start(module_info_plt: reach_module_info_plt(modules))
+    reach_build(call_graph, modules, Map.keys(modules))
+    call_graph
+  end
+
+  # The IR of a module of reach_modules/0: a function definition per given function, whose body
+  # calls the given functions and names the given modules.
+  defp reach_ir(modules, module) do
+    {_info, functions} = Map.fetch!(modules, module)
+
+    function_defs =
+      Enum.map(functions, fn {name, arity, callees} ->
+        %IR.FunctionDefinition{
+          name: name,
+          arity: arity,
+          visibility: :public,
+          clause: %IR.FunctionClause{
+            params: [],
+            guards: [],
+            body: %IR.Block{expressions: Enum.map(callees, &reach_callee_ir/1)}
+          }
+        }
+      end)
+
+    %IR.ModuleDefinition{
+      module: %IR.AtomType{value: module},
+      body: %IR.Block{expressions: function_defs}
+    }
+  end
+
+  defp reach_module_info_plt(modules) do
+    Enum.reduce(modules, PLT.start(), fn {module, {info, _functions}}, plt ->
+      PLT.put(plt, module, info)
+    end)
+  end
+
+  # A small app for the walk: a page whose template calls a protocol function and creates a TypeA
+  # struct, and whose init/3 names a component and a plain module; the protocol's implementations for
+  # TypeA (reached) and TypeB (not reached); a broadcast caller with one broadcasting function and one
+  # that doesn't broadcast; and modules only the unwalked code reaches.
+  defp reach_modules do
+    %{
+      ReachTest.Caller =>
+        {%{broadcast_caller?: true},
+         [
+           {:notify, 0, [{Realtime, :broadcast_action, 2}, {ReachTest.CallerHelper, :fun, 0}]},
+           {:other, 0, [{ReachTest.Unreached, :fun, 0}]}
+         ]},
+      ReachTest.CallerHelper => {%{}, [{:fun, 0, []}]},
+      ReachTest.ImplHelper => {%{}, [{:fun, 0, []}]},
+      ReachTest.Late => {%{}, [{:fun, 0, []}]},
+      ReachTest.Layout => {%{component?: true}, [{:template, 0, []}]},
+      ReachTest.Named =>
+        {%{component?: true}, [{:template, 0, [{ReachTest.NamedHelper, :fun, 0}]}]},
+      ReachTest.NamedHelper => {%{}, [{:fun, 0, []}]},
+      ReachTest.Page =>
+        {%{page?: true, layout_module: ReachTest.Layout},
+         [
+           {:init, 3, [{ReachTest.Server, :load, 0}]},
+           {:template, 0, [{ReachTest.Proto, :fun, 1}, {ReachTest.TypeA, :__struct__, 0}]}
+         ]},
+      ReachTest.Plain => {%{}, [{:fun, 0, [{ReachTest.Unreached, :fun, 0}]}]},
+      ReachTest.Proto => {%{protocol?: true, protocol_functions: [fun: 1]}, [{:fun, 1, []}]},
+      ReachTest.Proto.TypeA =>
+        {%{
+           protocol_implementation?: true,
+           implementation_for: ReachTest.TypeA,
+           implemented_protocol: ReachTest.Proto
+         }, [{:__impl__, 1, []}, {:fun, 1, [{ReachTest.ImplHelper, :fun, 0}]}]},
+      ReachTest.Proto.TypeB =>
+        {%{
+           protocol_implementation?: true,
+           implementation_for: ReachTest.TypeB,
+           implemented_protocol: ReachTest.Proto
+         }, [{:__impl__, 1, []}, {:fun, 1, [{ReachTest.Unreached, :fun, 0}]}]},
+      ReachTest.Server => {%{}, [{:load, 0, [ReachTest.Named, ReachTest.Plain]}]},
+      ReachTest.TypeA => {%{struct?: true}, [{:__struct__, 0, []}]},
+      ReachTest.TypeB => {%{struct?: true}, [{:__struct__, 0, []}]},
+      ReachTest.Unreached => {%{}, [{:fun, 0, []}]}
+    }
+  end
+
+  defp reach_state(%{pid: pid}), do: Agent.get(pid, & &1.reach)
 
   setup_all do
     module_info_plt = module_info_plt_fixture()
@@ -643,6 +808,36 @@ defmodule Hologram.Compiler.CallGraphTest do
       assert sorted_edges(call_graph) == []
     end
 
+    test "function definition IR, with a dynamic call", %{
+      empty_call_graph: call_graph
+    } do
+      ir = %IR.FunctionDefinition{
+        name: :my_fun,
+        arity: 1,
+        visibility: :public,
+        clause: %IR.FunctionClause{
+          params: [%IR.Variable{name: :module, version: 0}],
+          guards: [],
+          body: %IR.Block{
+            expressions: [
+              %IR.RemoteFunctionCall{
+                module: %IR.Variable{name: :module, version: 0},
+                function: :__changeset__,
+                args: []
+              }
+            ]
+          }
+        }
+      }
+
+      build(call_graph, ir, Module1)
+
+      site = {:dynamic_call, {Module1, :my_fun, 1}, :__changeset__, 0, {:param, 0}}
+
+      assert sorted_vertices(call_graph) == [{Module1, :my_fun, 1}, site]
+      assert sorted_edges(call_graph) == [{{Module1, :my_fun, 1}, site}]
+    end
+
     test "list", %{empty_call_graph: call_graph} do
       list = [%IR.AtomType{value: Module1}, %IR.AtomType{value: Module5}]
       result = build(call_graph, list, :vertex_1)
@@ -787,13 +982,13 @@ defmodule Hologram.Compiler.CallGraphTest do
          %{
            empty_call_graph: call_graph
          } do
-      module_42_ir = IR.for_module(Module42)
-      result = build(call_graph, module_42_ir)
+      module_45_ir = IR.for_module(Module45)
+      result = build(call_graph, module_45_ir)
 
       assert result == call_graph
 
-      assert has_vertex?(call_graph, {Module42, :my_fun, 1})
-      assert has_edge?(call_graph, Module42, {Module42, :my_fun, 1})
+      assert has_vertex?(call_graph, {Module45, :my_fun, 1})
+      assert has_edge?(call_graph, Module45, {Module45, :my_fun, 1})
     end
 
     test "module definition IR, Ecto schema module adds Ecto schema-specific edges", %{
@@ -871,6 +1066,43 @@ defmodule Hologram.Compiler.CallGraphTest do
              )
 
       refute has_edge?(
+               call_graph,
+               {String.Chars, :to_string, 1},
+               {String.Chars.Atom, :__impl__, 1}
+             )
+    end
+
+    test "module definition IR, protocol module takes its implementations from the PLT" do
+      impl = Hologram.Test.Fixtures.Compiler.CallGraph.NoSuchImpl
+      module_info_plt = PLT.clone(module_info_plt_fixture())
+
+      PLT.put(module_info_plt, impl, %{
+        protocol_implementation?: true,
+        implementation_for: Integer,
+        implemented_protocol: String.Chars
+      })
+
+      call_graph = start(module_info_plt: module_info_plt)
+      build(call_graph, IR.for_module(String.Chars))
+
+      assert has_edge?(call_graph, {String.Chars, :to_string, 1}, {impl, :__impl__, 1})
+      assert has_edge?(call_graph, {String.Chars, :to_string, 1}, {impl, :to_string, 1})
+    end
+
+    test "module definition IR, protocol module skips an implementation the PLT does not hold" do
+      module_info_plt = PLT.clone(module_info_plt_fixture())
+      PLT.delete(module_info_plt, StringCharsModule12)
+
+      call_graph = start(module_info_plt: module_info_plt)
+      build(call_graph, IR.for_module(String.Chars))
+
+      refute has_edge?(
+               call_graph,
+               {String.Chars, :to_string, 1},
+               {StringCharsModule12, :__impl__, 1}
+             )
+
+      assert has_edge?(
                call_graph,
                {String.Chars, :to_string, 1},
                {String.Chars.Atom, :__impl__, 1}
@@ -1413,6 +1645,213 @@ defmodule Hologram.Compiler.CallGraphTest do
            ]
   end
 
+  describe "build_reach/3" do
+    test "the walk's graph lists every fixture page and the runtime as the full graph does", %{
+      full_call_graph: full_call_graph,
+      ir_plt: ir_plt,
+      module_info_plt: module_info_plt,
+      runtime_mfas: full_runtime_mfas
+    } do
+      pages = Reflection.list_pages()
+      broadcast_callers = PLT.keys(module_info_plt, %{broadcast_caller?: true})
+      roots = Enum.uniq(pages ++ broadcast_callers)
+
+      call_graph = start(module_info_plt: module_info_plt)
+      Enum.each(roots, &build_for_module(call_graph, ir_plt, &1))
+      add_non_discoverable_edges(call_graph)
+
+      build_reach(call_graph, narrow_diff_fixture(roots, [], []), fn modules ->
+        Enum.each(modules, &build_for_module(call_graph, ir_plt, &1))
+      end)
+
+      assert list_runtime_mfas(call_graph, pages) == full_runtime_mfas
+
+      graph = get_graph(call_graph)
+      full_graph = get_graph(full_call_graph)
+
+      for page <- pages do
+        assert list_page_mfas(graph, page, PLT.start(), module_info_plt) ==
+                 list_page_mfas(full_graph, page, PLT.start(), module_info_plt)
+      end
+
+      reached_modules = modules(call_graph)
+      all_modules = modules(full_call_graph)
+
+      assert MapSet.size(reached_modules) < MapSet.size(all_modules)
+    end
+
+    test "the walk's graph lists the page and the runtime as the full graph does" do
+      modules = reach_modules()
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+      full_call_graph = reach_full(modules)
+      module_info_plt = call_graph.module_info_plt
+
+      assert list_page_mfas(get_graph(call_graph), ReachTest.Page, PLT.start(), module_info_plt) ==
+               list_page_mfas(
+                 get_graph(full_call_graph),
+                 ReachTest.Page,
+                 PLT.start(),
+                 module_info_plt
+               )
+
+      assert list_runtime_mfas(call_graph, [ReachTest.Page]) ==
+               list_runtime_mfas(full_call_graph, [ReachTest.Page])
+    end
+
+    test "builds what the pages, their server callbacks and the broadcast callers reach" do
+      {call_graph, built_modules} =
+        reach_cold(reach_modules(), [ReachTest.Page, ReachTest.Caller])
+
+      assert Enum.sort(built_modules) ==
+               Enum.sort([
+                 ReachTest.CallerHelper,
+                 ReachTest.ImplHelper,
+                 ReachTest.Layout,
+                 ReachTest.Named,
+                 ReachTest.NamedHelper,
+                 ReachTest.Proto,
+                 ReachTest.Proto.TypeA,
+                 ReachTest.Server,
+                 ReachTest.TypeA
+               ])
+
+      assert modules(call_graph) ==
+               MapSet.new([ReachTest.Caller, ReachTest.Page | built_modules])
+    end
+
+    test "doesn't build an implementation whose type is not reached" do
+      {call_graph, _built_modules} =
+        reach_cold(reach_modules(), [ReachTest.Page, ReachTest.Caller])
+
+      refute ReachTest.Proto.TypeB in modules(call_graph)
+    end
+
+    test "doesn't build a plain module named only as a value" do
+      {call_graph, _built_modules} =
+        reach_cold(reach_modules(), [ReachTest.Page, ReachTest.Caller])
+
+      refute ReachTest.Plain in modules(call_graph)
+      refute ReachTest.Unreached in modules(call_graph)
+    end
+
+    test "builds nothing on a walk with an empty diff" do
+      modules = reach_modules()
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+      reach = reach_state(call_graph)
+
+      diff = narrow_diff_fixture([], [], [])
+
+      assert build_reach(call_graph, diff, &reach_build(call_graph, modules, &1)) == []
+      assert reach_state(call_graph) == reach
+    end
+
+    test "an edited module is walked again from its reached functions" do
+      modules = reach_modules()
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+
+      edited_modules =
+        Map.put(
+          modules,
+          ReachTest.Server,
+          {%{}, [{:load, 0, [ReachTest.Named, ReachTest.Plain, {ReachTest.Late, :fun, 0}]}]}
+        )
+
+      ir_plt = PLT.put(PLT.start(), ReachTest.Server, reach_ir(edited_modules, ReachTest.Server))
+      diff = narrow_diff_fixture([], [ReachTest.Server], [])
+      patch(call_graph, ir_plt, diff)
+
+      assert build_reach(call_graph, diff, &reach_build(call_graph, edited_modules, &1)) ==
+               [ReachTest.Late]
+
+      {cold_call_graph, _built_modules} =
+        reach_cold(edited_modules, [ReachTest.Page, ReachTest.Caller])
+
+      cold_modules = modules(cold_call_graph)
+      warm_modules = modules(call_graph)
+
+      assert MapSet.subset?(cold_modules, warm_modules)
+
+      assert MapSet.subset?(
+               reach_state(cold_call_graph).reached_vertices,
+               reach_state(call_graph).reached_vertices
+             )
+    end
+
+    test "an added page is walked from its entries" do
+      modules =
+        Map.put(
+          reach_modules(),
+          ReachTest.Page2,
+          {%{page?: true, layout_module: ReachTest.Layout},
+           [{:template, 0, [{ReachTest.Late, :fun, 0}]}]}
+        )
+
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+
+      PLT.put(call_graph.module_info_plt, ReachTest.Page2, elem(modules[ReachTest.Page2], 0))
+      ir_plt = PLT.put(PLT.start(), ReachTest.Page2, reach_ir(modules, ReachTest.Page2))
+      diff = narrow_diff_fixture([ReachTest.Page2], [], [])
+      patch(call_graph, ir_plt, diff)
+
+      assert build_reach(call_graph, diff, &reach_build(call_graph, modules, &1)) ==
+               [ReachTest.Late]
+    end
+
+    test "an added implementation of a reached type is walked from its protocol's reached functions" do
+      modules = reach_modules()
+      {impl_info, _functions} = modules[ReachTest.Proto.TypeA]
+      modules_before = Map.delete(modules, ReachTest.Proto.TypeA)
+
+      {call_graph, built_modules} =
+        reach_cold(modules_before, [ReachTest.Page, ReachTest.Caller])
+
+      refute ReachTest.ImplHelper in built_modules
+
+      PLT.put(call_graph.module_info_plt, ReachTest.Proto.TypeA, impl_info)
+
+      ir_plt =
+        PLT.put(PLT.start(), ReachTest.Proto.TypeA, reach_ir(modules, ReachTest.Proto.TypeA))
+
+      diff = narrow_diff_fixture([ReachTest.Proto.TypeA], [], [])
+      patch(call_graph, ir_plt, diff)
+
+      assert build_reach(call_graph, diff, &reach_build(call_graph, modules, &1)) ==
+               [ReachTest.ImplHelper]
+    end
+
+    test "a removed module's reached functions are forgotten" do
+      modules = reach_modules()
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+
+      assert {ReachTest.NamedHelper, :fun, 0} in reach_state(call_graph).reached_vertices
+
+      diff = narrow_diff_fixture([], [], [ReachTest.NamedHelper])
+      patch(call_graph, PLT.start(), diff)
+
+      assert build_reach(call_graph, diff, &reach_build(call_graph, modules, &1)) == []
+      refute {ReachTest.NamedHelper, :fun, 0} in reach_state(call_graph).reached_vertices
+    end
+
+    test "the reach survives a dump and a load" do
+      modules = reach_modules()
+      {call_graph, _built_modules} = reach_cold(modules, [ReachTest.Page, ReachTest.Caller])
+
+      dump_dir = Path.join([@tmp_dir, "tests", "compiler", "call_graph", "build_reach_3"])
+      clean_dir(dump_dir)
+      dump_path = Path.join(dump_dir, Reflection.call_graph_dump_file_name())
+      dump(call_graph, dump_path)
+
+      loaded_call_graph = start(module_info_plt: call_graph.module_info_plt)
+      assert load(loaded_call_graph, dump_path) == :ok
+      assert reach_state(loaded_call_graph) == reach_state(call_graph)
+
+      diff = narrow_diff_fixture([], [], [])
+
+      assert build_reach(loaded_call_graph, diff, &reach_build(loaded_call_graph, modules, &1)) ==
+               []
+    end
+  end
+
   test "clone/1", %{full_call_graph: call_graph} do
     call_graph = %{call_graph | module_info_plt: PLT.start()}
 
@@ -1421,37 +1860,82 @@ defmodule Hologram.Compiler.CallGraphTest do
 
     refute call_graph_clone == call_graph
     assert get_graph(call_graph_clone) == get_graph(call_graph)
+    assert modules(call_graph_clone) == modules(call_graph)
+    assert Module9 in modules(call_graph_clone)
   end
 
-  test "dump/2", %{empty_call_graph: call_graph} do
-    dump_dir =
-      Path.join([
-        @tmp_dir,
-        "tests",
-        "compiler",
-        "call_graph",
-        "dump_2",
-        "nested_a",
-        "nested_b"
-      ])
+  describe "dump/2" do
+    setup do
+      dump_dir =
+        Path.join([
+          @tmp_dir,
+          "tests",
+          "compiler",
+          "call_graph",
+          "dump_2",
+          "nested_a",
+          "nested_b"
+        ])
 
-    clean_dir(dump_dir)
+      clean_dir(dump_dir)
 
-    dump_path = Path.join(dump_dir, Reflection.call_graph_dump_file_name())
+      [dump_path: Path.join(dump_dir, Reflection.call_graph_dump_file_name())]
+    end
 
-    graph =
+    test "writes the graph, its modules and its reach, tagged with the dump version", %{
+      dump_path: dump_path,
+      empty_call_graph: call_graph
+    } do
+      graph =
+        call_graph
+        |> add_edge(:vertex_1, :vertex_2)
+        |> get_graph()
+
+      assert dump(call_graph, dump_path) == call_graph
+
+      deserialized_state =
+        dump_path
+        |> File.read!()
+        |> SerializationUtils.deserialize()
+
+      assert {1, %{graph: ^graph, modules: modules, reach: reach}} = deserialized_state
+      assert modules == MapSet.new()
+      assert reach == reach_state(call_graph)
+    end
+
+    test "writes the modules built into the graph", %{
+      dump_path: dump_path,
+      empty_call_graph: call_graph
+    } do
       call_graph
-      |> add_edge(:vertex_1, :vertex_2)
-      |> get_graph()
+      |> build(IR.for_module(Module9))
+      |> dump(dump_path)
 
-    assert dump(call_graph, dump_path) == call_graph
+      {1, %{modules: modules}} =
+        dump_path
+        |> File.read!()
+        |> SerializationUtils.deserialize()
 
-    deserialized_graph =
-      dump_path
-      |> File.read!()
-      |> SerializationUtils.deserialize()
+      assert modules == MapSet.new([Module9])
+    end
 
-    assert deserialized_graph == graph
+    test "replaces an earlier dump and leaves no temporary file", %{
+      dump_path: dump_path,
+      empty_call_graph: call_graph
+    } do
+      File.write!(dump_path, "earlier dump")
+
+      dump(call_graph, dump_path)
+
+      assert dump_path
+             |> Path.dirname()
+             |> File.ls!() == [Path.basename(dump_path)]
+
+      assert {1, _state} =
+               dump_path
+               |> File.read!()
+               |> SerializationUtils.deserialize()
+    end
   end
 
   test "edges/1", %{empty_call_graph: call_graph} do
@@ -1590,6 +2074,14 @@ defmodule Hologram.Compiler.CallGraphTest do
 
       assert result == MapSet.new([{OtherModule, :fetch_data, 1}, {Task, :await, 1}])
     end
+
+    test "does not copy the graph out of the agent" do
+      call_graph = add_edge(start(), {MyModule, :action, 3}, {Task, :await, 1})
+
+      async_mfas = call_without_copying_graph(fn -> list_async_mfas(call_graph) end)
+
+      assert async_mfas == MapSet.new([{MyModule, :action, 3}, {Task, :await, 1}])
+    end
   end
 
   describe "list_page_entry_mfas/2" do
@@ -1615,7 +2107,78 @@ defmodule Hologram.Compiler.CallGraphTest do
     end
   end
 
-  describe "list_page_mfas/4" do
+  describe "list_modules_reaching/2" do
+    setup %{empty_call_graph: call_graph} do
+      call_graph
+      |> add_edge({:module_1, :fun_a, 0}, {:module_2, :fun_b, 0})
+      |> add_edge({:module_2, :fun_b, 0}, {:module_3, :fun_c, 0})
+      |> add_edge({:module_4, :fun_d, 0}, :module_3)
+      |> add_edge({:module_5, :fun_e, 0}, {:module_6, :fun_f, 0})
+      # A page calling a protocol, the protocol dispatching to one implementation, and an ordinary
+      # caller of that implementation.
+      |> add_edge({:page_module, :template, 0}, {String.Chars, :to_string, 1})
+      |> add_edge({String.Chars, :to_string, 1}, {StringCharsModule12, :to_string, 1})
+      |> add_edge({:caller_module, :fun_g, 0}, {StringCharsModule12, :to_string, 1})
+
+      :ok
+    end
+
+    test "returns the modules reaching the given modules, the given modules included", %{
+      empty_call_graph: call_graph
+    } do
+      assert list_modules_reaching(call_graph, [:module_3]) ==
+               MapSet.new([:module_1, :module_2, :module_3, :module_4])
+    end
+
+    test "includes a given module that has no vertices", %{empty_call_graph: call_graph} do
+      assert list_modules_reaching(call_graph, [:module_3, :module_7]) ==
+               MapSet.new([:module_1, :module_2, :module_3, :module_4, :module_7])
+    end
+
+    test "given no module, returns the empty set", %{empty_call_graph: call_graph} do
+      assert list_modules_reaching(call_graph, []) == MapSet.new()
+    end
+
+    test "given no module, does not read the graph" do
+      # A read of a stopped call graph exits, so the call returns only if it reads nothing.
+      call_graph = CallGraph.start()
+      CallGraph.stop(call_graph)
+
+      assert list_modules_reaching(call_graph, []) == MapSet.new()
+    end
+
+    test "does not copy the graph out of the agent", %{empty_call_graph: call_graph} do
+      reaching_modules =
+        call_without_copying_graph(fn -> list_modules_reaching(call_graph, [:module_3]) end)
+
+      assert reaching_modules == MapSet.new([:module_1, :module_2, :module_3, :module_4])
+    end
+
+    test "doesn't follow outgoing edges", %{empty_call_graph: call_graph} do
+      assert list_modules_reaching(call_graph, [:module_2]) ==
+               MapSet.new([:module_1, :module_2])
+    end
+
+    test "stops at a protocol's dispatch function", %{empty_call_graph: call_graph} do
+      reaching_modules = list_modules_reaching(call_graph, [StringCharsModule12])
+
+      assert MapSet.member?(reaching_modules, StringCharsModule12)
+      refute MapSet.member?(reaching_modules, String.Chars)
+      refute MapSet.member?(reaching_modules, :page_module)
+    end
+
+    test "follows a non-dispatch caller of the same module", %{empty_call_graph: call_graph} do
+      reaching_modules = list_modules_reaching(call_graph, [StringCharsModule12])
+
+      assert MapSet.member?(reaching_modules, :caller_module)
+    end
+
+    test "empty modules list", %{empty_call_graph: call_graph} do
+      assert list_modules_reaching(call_graph, []) == MapSet.new()
+    end
+  end
+
+  describe "list_page_mfas/5" do
     setup %{full_call_graph: full_call_graph, runtime_mfas: runtime_mfas} do
       page_module_22_mfas =
         full_call_graph
@@ -1983,6 +2546,154 @@ defmodule Hologram.Compiler.CallGraphTest do
     test "results are sorted", %{page_module_22_mfas: result} do
       assert result == Enum.sort(result)
     end
+
+    test "computes and keeps the analyses of the templatables the PLT does not hold", %{
+      module_info_plt: module_info_plt
+    } do
+      call_graph =
+        [module_info_plt: module_info_plt]
+        |> start()
+        |> build(IR.for_module(Module14))
+        |> build(IR.for_module(Module15))
+        |> build(IR.for_module(Module16))
+
+      graph = CallGraph.get_graph(call_graph)
+      analyses = PLT.start()
+
+      list_page_mfas(graph, Module14, analyses, module_info_plt)
+
+      expected =
+        server_callback_analysis_by_templatable(graph, [Module14, Module15], module_info_plt)
+
+      assert PLT.get(analyses, Module14) == {:ok, expected[Module14]}
+      assert PLT.get(analyses, Module15) == {:ok, expected[Module15]}
+    end
+
+    test "reads a kept analysis instead of computing one", %{module_info_plt: module_info_plt} do
+      call_graph =
+        [module_info_plt: module_info_plt]
+        |> start()
+        |> build(IR.for_module(Module14))
+        |> build(IR.for_module(Module15))
+        |> build(IR.for_module(Module16))
+
+      # No walk of Module14's server callbacks finds this component, so its client MFAs are listed
+      # only when the kept analysis is read.
+      kept_analysis = %{
+        dispatch_types: MapSet.new(),
+        server_referenced_components: [Module38]
+      }
+
+      analyses = PLT.start(items: [{Module14, kept_analysis}])
+
+      result =
+        call_graph
+        |> build(IR.for_module(Module38))
+        |> CallGraph.get_graph()
+        |> list_page_mfas(Module14, analyses, module_info_plt)
+
+      assert {Module38, :template, 0} in result
+    end
+
+    test "lists the reflection functions of the types the page reaches, when no gate is given", %{
+      page_module_22_mfas: result
+    } do
+      # Module25 is a struct put into state by the page's init/3, Module21 an Ecto schema no
+      # templatable of the page reaches.
+      assert {Module25, :__struct__, 0} in result
+      assert {Module25, :__struct__, 1} in result
+
+      refute {Module21, :__changeset__, 0} in result
+      refute {Module21, :__struct__, 0} in result
+    end
+
+    test "lists the reflection functions of the types created in command/3", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      result =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> add_edge({Module22, :command, 3}, Module21)
+        |> list_page_mfas_with_analysis(Module22)
+
+      assert {Module21, :__changeset__, 0} in result
+      assert {Module21, :__schema__, 1} in result
+      assert {Module21, :__schema__, 2} in result
+      assert {Module21, :__struct__, 0} in result
+      assert {Module21, :__struct__, 1} in result
+    end
+
+    test "lists no reflection functions for the built-in types", %{page_module_22_mfas: result} do
+      refute {Map, :__struct__, 0} in result
+      refute {Atom, :__struct__, 0} in result
+    end
+
+    test "lists no reflection functions the gate closes", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      result =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> list_page_mfas_with_gate(Module43, %{
+          ir_plt: PLT.start(),
+          runtime: %{exposed: %{}, open: MapSet.new(), page_callers: %{}}
+        })
+
+      refute {Module24, :__changeset__, 0} in result
+      refute {Module24, :__schema__, 1} in result
+      refute {Module24, :__schema__, 2} in result
+      refute {Module24, :__struct__, 0} in result
+      refute {Module25, :__struct__, 0} in result
+      refute {Module25, :__struct__, 1} in result
+    end
+
+    test "lists the reflection functions the page's client code opens", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      # Module44's action calls __changeset__/0 on a module it does not name; the types come from
+      # the inits of the page (Module24, Module25) and of its layout (Module32, Module33).
+      result =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> list_page_mfas_with_gate(Module44, %{
+          ir_plt: PLT.start(),
+          runtime: %{exposed: %{}, open: MapSet.new(), page_callers: %{}}
+        })
+
+      assert {Module24, :__changeset__, 0} in result
+      assert {Module32, :__changeset__, 0} in result
+
+      refute {Module24, :__schema__, 1} in result
+      refute {Module24, :__struct__, 0} in result
+      refute {Module25, :__struct__, 0} in result
+      refute {Module33, :__struct__, 0} in result
+    end
+
+    test "lists the reflection functions the runtime opens", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      result =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> list_page_mfas_with_gate(Module43, %{
+          ir_plt: PLT.start(),
+          runtime: %{exposed: %{}, open: MapSet.new([{:__struct__, 0}]), page_callers: %{}}
+        })
+
+      assert {Module24, :__struct__, 0} in result
+      assert {Module25, :__struct__, 0} in result
+
+      refute {Module24, :__changeset__, 0} in result
+      refute {Module25, :__struct__, 1} in result
+    end
   end
 
   test "list_runtime_entry_mfas/0" do
@@ -2292,21 +3003,77 @@ defmodule Hologram.Compiler.CallGraphTest do
     test "results are sorted", %{runtime_mfas: result} do
       assert result == Enum.sort(result)
     end
+
+    # The analyses PLT is started from the agent, since the walk runs there, and is linked to it
+    # while it runs, so a PLT left running would stay among the agent's links.
+    test "stops the analyses PLT it starts", %{full_call_graph: call_graph} do
+      {:links, links_before} = Process.info(call_graph.pid, :links)
+
+      list_runtime_mfas(call_graph, Reflection.list_pages())
+
+      {:links, links_after} = Process.info(call_graph.pid, :links)
+
+      assert MapSet.new(links_after) == MapSet.new(links_before)
+    end
+
+    test "does not copy the graph out of the agent", %{
+      full_call_graph: call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      walked_mfas =
+        call_without_copying_graph(fn ->
+          list_runtime_mfas(call_graph, Reflection.list_pages())
+        end)
+
+      assert walked_mfas == runtime_mfas
+    end
   end
 
-  test "load/2", %{empty_call_graph: call_graph} do
-    add_edge(call_graph, :vertex_1, :vertex_2)
+  describe "load/2" do
+    setup do
+      dump_dir = Path.join([@tmp_dir, "tests", "compiler", "call_graph", "load_2"])
+      clean_dir(dump_dir)
 
-    dump_dir = Path.join([@tmp_dir, "tests", "compiler", "call_graph", "load_2"])
-    clean_dir(dump_dir)
+      [dump_path: Path.join(dump_dir, Reflection.call_graph_dump_file_name())]
+    end
 
-    dump_path = Path.join(dump_dir, Reflection.call_graph_dump_file_name())
-    dump(call_graph, dump_path)
+    test "loads the graph and the modules of a dump of this version", %{
+      dump_path: dump_path,
+      empty_call_graph: call_graph
+    } do
+      call_graph
+      |> add_edge(:vertex_1, :vertex_2)
+      |> build(IR.for_module(Module9))
+      |> dump(dump_path)
 
-    call_graph_2 = start()
+      call_graph_2 = start()
 
-    assert load(call_graph_2, dump_path) == call_graph_2
-    assert get_graph(call_graph_2) == get_graph(call_graph)
+      assert load(call_graph_2, dump_path) == :ok
+      assert get_graph(call_graph_2) == get_graph(call_graph)
+      assert modules(call_graph_2) == MapSet.new([Module9])
+    end
+
+    test "does not load a dump of another version", %{dump_path: dump_path} do
+      graph = Digraph.add_edge(Digraph.new(), :vertex_1, :vertex_2)
+      state = %{graph: graph, modules: MapSet.new([Module9])}
+      File.write!(dump_path, SerializationUtils.serialize({0, state}))
+
+      call_graph = start()
+
+      assert load(call_graph, dump_path) == :error
+      assert get_graph(call_graph) == Digraph.new()
+      assert modules(call_graph) == MapSet.new()
+    end
+
+    test "does not load a dump written before the dump version existed", %{dump_path: dump_path} do
+      graph = Digraph.add_edge(Digraph.new(), :vertex_1, :vertex_2)
+      File.write!(dump_path, SerializationUtils.serialize(graph))
+
+      call_graph = start()
+
+      assert load(call_graph, dump_path) == :error
+      assert get_graph(call_graph) == Digraph.new()
+    end
   end
 
   test "manually_ported_elixir_mfas/0" do
@@ -2315,34 +3082,6 @@ defmodule Hologram.Compiler.CallGraphTest do
     assert is_list(result)
     assert {Kernel, :inspect, 1} in result
     assert {String, :upcase, 1} in result
-  end
-
-  describe "maybe_load/2" do
-    setup do
-      dump_dir = Path.join([@tmp_dir, "tests", "compiler", "call_graph", "maybe_load_2"])
-      clean_dir(dump_dir)
-
-      [dump_path: Path.join(dump_dir, Reflection.call_graph_dump_file_name())]
-    end
-
-    test "dump file exists", %{dump_path: dump_path} do
-      graph = Digraph.add_edge(Digraph.new(), :vertex_1, :vertex_2)
-
-      data = SerializationUtils.serialize(graph)
-      File.write!(dump_path, data)
-
-      call_graph = start()
-
-      assert maybe_load(call_graph, dump_path) == call_graph
-      assert get_graph(call_graph) == graph
-    end
-
-    test "dump file doesn't exist", %{dump_path: dump_path} do
-      call_graph = start()
-
-      assert maybe_load(call_graph, dump_path) == call_graph
-      assert get_graph(call_graph) == Digraph.new()
-    end
   end
 
   test "module_vertices/2", %{empty_call_graph: call_graph} do
@@ -2361,11 +3100,143 @@ defmodule Hologram.Compiler.CallGraphTest do
            ]
   end
 
+  test "module_vertices/2 includes the dynamic calls of the module's functions", %{
+    empty_call_graph: call_graph
+  } do
+    build(call_graph, IR.for_module(Module42))
+
+    result =
+      call_graph
+      |> module_vertices(Module42)
+      |> Enum.sort()
+
+    assert result == [
+             {Module42, :my_fun, 1},
+             {:dynamic_call, {Module42, :my_fun, 1}, :__changeset__, 0, {:param, 0}}
+           ]
+  end
+
   test "module_info_plt/1" do
     module_info_plt = PLT.start()
 
     assert module_info_plt(start(module_info_plt: module_info_plt)) == module_info_plt
     assert module_info_plt(start()) == nil
+  end
+
+  describe "modules/1" do
+    test "empty at first", %{empty_call_graph: call_graph} do
+      assert modules(call_graph) == MapSet.new()
+    end
+
+    test "lists the modules whose definitions were built", %{empty_call_graph: call_graph} do
+      call_graph
+      |> build(IR.for_module(Module9))
+      |> build(IR.for_module(Module10))
+
+      assert modules(call_graph) == MapSet.new([Module9, Module10])
+    end
+
+    test "leaves out a module only named by a call", %{empty_call_graph: call_graph} do
+      build(call_graph, IR.for_module(Module14))
+
+      assert has_vertex?(call_graph, {Module16, :my_fun_16a, 2})
+      refute Module16 in modules(call_graph)
+    end
+  end
+
+  describe "narrow_diff/2" do
+    setup do
+      module_info_plt =
+        PLT.start()
+        |> PLT.put(NarrowDiff.Page, %{page?: true})
+        |> PLT.put(NarrowDiff.Caller, %{broadcast_caller?: true})
+        |> PLT.put(NarrowDiff.HeldImpl, %{
+          protocol_implementation?: true,
+          implemented_protocol: NarrowDiff.HeldProtocol
+        })
+        |> PLT.put(NarrowDiff.OtherImpl, %{
+          protocol_implementation?: true,
+          implemented_protocol: NarrowDiff.OtherProtocol
+        })
+        |> PLT.put(NarrowDiff.Held, %{})
+        |> PLT.put(NarrowDiff.Other, %{})
+
+      call_graph =
+        start(
+          modules: MapSet.new([NarrowDiff.Held, NarrowDiff.HeldProtocol]),
+          module_info_plt: module_info_plt
+        )
+
+      [call_graph: call_graph]
+    end
+
+    test "keeps every removed module", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([], [], [NarrowDiff.Held, NarrowDiff.Other])
+
+      assert narrow_diff(call_graph, diff) == diff
+    end
+
+    test "keeps an edited module the graph holds", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([], [NarrowDiff.Held], [])
+
+      assert narrow_diff(call_graph, diff) == diff
+    end
+
+    test "drops an edited module the graph does not hold", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([], [NarrowDiff.Other], [])
+
+      assert narrow_diff(call_graph, diff) == narrow_diff_fixture([], [], [])
+    end
+
+    test "drops an added module outside the reach", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([NarrowDiff.Other], [], [])
+
+      assert narrow_diff(call_graph, diff) == narrow_diff_fixture([], [], [])
+    end
+
+    test "keeps an added or edited page", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([NarrowDiff.Page], [NarrowDiff.Page], [])
+
+      assert narrow_diff(call_graph, diff) == diff
+    end
+
+    test "keeps an added or edited broadcast caller", %{call_graph: call_graph} do
+      diff = narrow_diff_fixture([NarrowDiff.Caller], [NarrowDiff.Caller], [])
+
+      assert narrow_diff(call_graph, diff) == diff
+    end
+
+    test "keeps an added or edited implementation of a protocol the graph holds", %{
+      call_graph: call_graph
+    } do
+      diff = narrow_diff_fixture([NarrowDiff.HeldImpl], [NarrowDiff.HeldImpl], [])
+
+      assert narrow_diff(call_graph, diff) == diff
+    end
+
+    test "drops an implementation of a protocol the graph does not hold", %{
+      call_graph: call_graph
+    } do
+      diff = narrow_diff_fixture([NarrowDiff.OtherImpl], [NarrowDiff.OtherImpl], [])
+
+      assert narrow_diff(call_graph, diff) == narrow_diff_fixture([], [], [])
+    end
+
+    test "keeps the order of the given lists", %{call_graph: call_graph} do
+      diff =
+        narrow_diff_fixture(
+          [NarrowDiff.Page, NarrowDiff.Other, NarrowDiff.Caller],
+          [NarrowDiff.HeldImpl, NarrowDiff.Other, NarrowDiff.Held],
+          []
+        )
+
+      assert narrow_diff(call_graph, diff) ==
+               narrow_diff_fixture(
+                 [NarrowDiff.Page, NarrowDiff.Caller],
+                 [NarrowDiff.HeldImpl, NarrowDiff.Held],
+                 []
+               )
+    end
   end
 
   describe "patch/3" do
@@ -2509,6 +3380,28 @@ defmodule Hologram.Compiler.CallGraphTest do
       assert has_edge?(call_graph, from_vertex, {impl_module, :to_string, 1})
     end
 
+    test "adds protocol dispatch edges when a protocol and its implementation are added together",
+         %{empty_call_graph: call_graph} do
+      ir_plt =
+        PLT.start(
+          items: [
+            {Protocol1, IR.for_module(Protocol1)},
+            {Protocol1.Integer, IR.for_module(Protocol1.Integer)}
+          ]
+        )
+
+      diff = %{
+        added_modules: [Protocol1, Protocol1.Integer],
+        removed_modules: [],
+        edited_modules: []
+      }
+
+      patch(call_graph, ir_plt, diff)
+
+      assert has_edge?(call_graph, {Protocol1, :my_fun, 1}, {Protocol1.Integer, :__impl__, 1})
+      assert has_edge?(call_graph, {Protocol1, :my_fun, 1}, {Protocol1.Integer, :my_fun, 1})
+    end
+
     test "updates modules", %{empty_call_graph: call_graph} do
       module_9_ir = IR.for_module(Module9)
       module_10_ir = IR.for_module(Module10)
@@ -2555,6 +3448,89 @@ defmodule Hologram.Compiler.CallGraphTest do
                {{:module_1, :fun_d, :arity_d}, Module9},
                {{:module_2, :fun_b, :arity_b}, {Module9, :my_fun_2, 0}},
                {{:module_3, :fun_c, :arity_c}, Module9}
+             ]
+    end
+
+    test "forgets a removed module", %{empty_call_graph: call_graph} do
+      call_graph
+      |> build(IR.for_module(Module9))
+      |> build(IR.for_module(Module10))
+
+      diff = %{added_modules: [], removed_modules: [Module9], edited_modules: []}
+      patch(call_graph, PLT.start(), diff)
+
+      assert modules(call_graph) == MapSet.new([Module10])
+    end
+
+    test "keeps an edited module", %{empty_call_graph: call_graph} do
+      module_9_ir = IR.for_module(Module9)
+      ir_plt = PLT.put(PLT.start(), Module9, module_9_ir)
+
+      build(call_graph, module_9_ir)
+
+      diff = %{added_modules: [], removed_modules: [], edited_modules: [Module9]}
+      patch(call_graph, ir_plt, diff)
+
+      assert modules(call_graph) == MapSet.new([Module9])
+    end
+
+    test "records an added module", %{empty_call_graph: call_graph} do
+      ir_plt = PLT.put(PLT.start(), Module9, IR.for_module(Module9))
+
+      diff = %{added_modules: [Module9], removed_modules: [], edited_modules: []}
+      patch(call_graph, ir_plt, diff)
+
+      assert modules(call_graph) == MapSet.new([Module9])
+    end
+
+    test "patching again with the same diff gives the same graph", %{empty_call_graph: call_graph} do
+      ir_plt =
+        PLT.start()
+        |> PLT.put(Module9, IR.for_module(Module9))
+        |> PLT.put(Module10, IR.for_module(Module10))
+
+      call_graph
+      |> add_edge({:module_1, :fun_a, :arity_a}, {Module9, :my_fun_1, 0})
+      |> add_edge({:module_2, :fun_b, :arity_b}, {Module9, :my_fun_2, 0})
+      |> add_edge({:module_3, :fun_c, :arity_c}, {:module_2, :fun_b, :arity_b})
+      |> add_edge({Module9, :my_fun_3, 2}, {:module_4, :fun_d, :arity_d})
+
+      diff = %{
+        added_modules: [Module10],
+        removed_modules: [:module_2],
+        edited_modules: [Module9]
+      }
+
+      patch(call_graph, ir_plt, diff)
+      graph_after_first_patch = get_graph(call_graph)
+
+      patch(call_graph, ir_plt, diff)
+
+      assert get_graph(call_graph) == graph_after_first_patch
+    end
+
+    test "removes the dynamic calls of a removed module", %{empty_call_graph: call_graph} do
+      build(call_graph, IR.for_module(Module42))
+
+      diff = %{added_modules: [], removed_modules: [Module42], edited_modules: []}
+      patch(call_graph, PLT.start(), diff)
+
+      assert vertices(call_graph) == []
+    end
+
+    test "replaces the dynamic calls of an edited module", %{empty_call_graph: call_graph} do
+      build(call_graph, IR.for_module(Module42))
+
+      # The edit takes the dynamic call out: the module now defines Module9's functions.
+      edited_ir = %{IR.for_module(Module9) | module: %IR.AtomType{value: Module42}}
+      ir_plt = PLT.put(PLT.start(), Module42, edited_ir)
+
+      diff = %{added_modules: [], removed_modules: [], edited_modules: [Module42]}
+      patch(call_graph, ir_plt, diff)
+
+      assert sorted_vertices(call_graph) == [
+               {Module42, :my_fun_1, 0},
+               {Module42, :my_fun_2, 0}
              ]
     end
   end
@@ -2659,10 +3635,12 @@ defmodule Hologram.Compiler.CallGraphTest do
   end
 
   test "put_graph", %{empty_call_graph: call_graph} do
+    build(call_graph, IR.for_module(Module9))
     graph = Digraph.add_edge(Digraph.new(), :vertex_3, :vertex_4)
 
     assert put_graph(call_graph, graph) == call_graph
     assert get_graph(call_graph) == graph
+    assert modules(call_graph) == MapSet.new([Module9])
   end
 
   describe "reachable_mfas/4" do
@@ -2873,19 +3851,54 @@ defmodule Hologram.Compiler.CallGraphTest do
     end
   end
 
-  test "remove_runtime_mfas!/2", %{ir_plt: ir_plt} do
-    call_graph = Compiler.build_call_graph(ir_plt)
-    runtime_mfas = list_runtime_mfas(call_graph, Reflection.list_pages())
+  describe "remove_runtime_mfas!/2" do
+    test "removes the runtime MFAs and keeps the rest", %{ir_plt: ir_plt} do
+      call_graph = Compiler.build_call_graph(ir_plt)
+      runtime_mfas = list_runtime_mfas(call_graph, Reflection.list_pages())
 
-    CallGraph.add_edge(call_graph, :my_vertex_1, :my_vertex_2)
+      CallGraph.add_edge(call_graph, :my_vertex_1, :my_vertex_2)
 
-    CallGraph.remove_runtime_mfas!(call_graph, runtime_mfas)
+      CallGraph.remove_runtime_mfas!(call_graph, runtime_mfas)
 
-    assert CallGraph.has_edge?(call_graph, :my_vertex_1, :my_vertex_2)
+      assert CallGraph.has_edge?(call_graph, :my_vertex_1, :my_vertex_2)
 
-    Enum.each(runtime_mfas, fn mfa ->
-      refute CallGraph.has_vertex?(call_graph, mfa)
-    end)
+      Enum.each(runtime_mfas, fn mfa ->
+        refute CallGraph.has_vertex?(call_graph, mfa)
+      end)
+    end
+
+    test "gives the graph removing the vertices gives", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      expected =
+        full_call_graph
+        |> CallGraph.get_graph()
+        |> Digraph.remove_vertices(runtime_mfas)
+
+      result =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> CallGraph.get_graph()
+
+      assert runtime_mfas != []
+      assert result == expected
+    end
+
+    test "leaves no empty neighbour map", %{
+      full_call_graph: full_call_graph,
+      runtime_mfas: runtime_mfas
+    } do
+      graph =
+        full_call_graph
+        |> CallGraph.clone()
+        |> remove_runtime_mfas!(runtime_mfas)
+        |> CallGraph.get_graph()
+
+      assert Enum.all?(graph.outgoing_edges, fn {_vertex, targets} -> map_size(targets) > 0 end)
+      assert Enum.all?(graph.incoming_edges, fn {_vertex, sources} -> map_size(sources) > 0 end)
+    end
   end
 
   test "remove_vertex/2", %{empty_call_graph: call_graph} do
@@ -2930,6 +3943,48 @@ defmodule Hologram.Compiler.CallGraphTest do
     assert has_edge?(call_graph, :vertex_4, :vertex_1)
   end
 
+  # How the runtime's dynamic calls are resolved is tested with Hologram.Compiler.DynamicCallGate.
+  describe "runtime_dynamic_calls/3" do
+    test "opens the reflection functions the runtime's functions call on unnamed modules", %{
+      empty_call_graph: call_graph
+    } do
+      # No runtime function calls either function, so their parameters can hold anything.
+      call_graph
+      |> build(IR.for_module(Module42))
+      |> add_edge(
+        {:module_1, :fun_a, 1},
+        {:dynamic_call, {:module_1, :fun_a, 1}, :__struct__, 1, :open}
+      )
+      |> add_edge(
+        {:module_1, :fun_a, 1},
+        {:dynamic_call, {:module_1, :fun_a, 1}, :__schema__, 2, {:param, 0}}
+      )
+
+      runtime_mfas = [{Module42, :my_fun, 1}, {:module_1, :fun_a, 1}]
+      result = runtime_dynamic_calls(call_graph, runtime_mfas, PLT.start())
+
+      assert result == %{
+               exposed: %{},
+               open: MapSet.new([{:__changeset__, 0}, {:__schema__, 2}, {:__struct__, 1}]),
+               page_callers: %{}
+             }
+    end
+
+    test "ignores the dynamic calls of functions outside the runtime", %{
+      empty_call_graph: call_graph
+    } do
+      call_graph
+      |> build(IR.for_module(Module42))
+      |> add_vertex({:module_1, :fun_a, 1})
+
+      assert runtime_dynamic_calls(call_graph, [{:module_1, :fun_a, 1}], PLT.start()) == %{
+               exposed: %{},
+               open: MapSet.new(),
+               page_callers: %{}
+             }
+    end
+  end
+
   describe "server_callback_analysis_by_templatable/3" do
     test "returns an entry for each given templatable" do
       graph =
@@ -2970,27 +4025,6 @@ defmodule Hologram.Compiler.CallGraphTest do
 
       assert Module12 in result[Module4].dispatch_types
       refute Struct1 in result[Module4].dispatch_types
-    end
-
-    test "collects reflection MFAs reachable from init/3" do
-      graph =
-        Digraph.new()
-        |> Digraph.add_edge({Module2, :init, 3}, {Module5, :my_fun, 0})
-        |> Digraph.add_edge({Module5, :my_fun, 0}, {Module5, :__schema__, 1})
-
-      result =
-        server_callback_analysis_by_templatable(graph, [Module2], module_info_plt_fixture())
-
-      assert result[Module2].reflection_mfas == [{Module5, :__schema__, 1}]
-    end
-
-    test "doesn't collect reflection MFAs reachable only from command/3" do
-      graph = Digraph.add_edge(Digraph.new(), {Module2, :command, 3}, {Module5, :__schema__, 1})
-
-      result =
-        server_callback_analysis_by_templatable(graph, [Module2], module_info_plt_fixture())
-
-      assert result[Module2].reflection_mfas == []
     end
 
     test "collects component modules referenced in the templatable's own server callbacks" do
@@ -3122,17 +4156,27 @@ defmodule Hologram.Compiler.CallGraphTest do
 
   describe "start/1" do
     test "default graph opt" do
-      assert %CallGraph{pid: pid} = start()
+      assert %CallGraph{pid: pid} = call_graph = start()
       assert is_pid(pid)
-      assert Agent.get(pid, & &1) == Digraph.new()
+      assert get_graph(call_graph) == Digraph.new()
     end
 
     test "graph opt specified" do
       graph = Digraph.add_vertex(Digraph.new(), :my_vertex)
 
-      assert %CallGraph{pid: pid} = start(graph: graph)
+      assert %CallGraph{pid: pid} = call_graph = start(graph: graph)
       assert is_pid(pid)
-      assert Agent.get(pid, & &1) == graph
+      assert get_graph(call_graph) == graph
+    end
+
+    test "default modules opt" do
+      assert modules(start()) == MapSet.new()
+    end
+
+    test "modules opt specified" do
+      modules = MapSet.new([Module9])
+
+      assert modules(start(modules: modules)) == modules
     end
 
     test "default module_info_plt opt" do
@@ -3232,6 +4276,22 @@ defmodule Hologram.Compiler.CallGraphTest do
     assert :vertex_3 in result
     assert :vertex_4 in result
     assert :vertex_5 in result
+  end
+
+  describe "vertex_module/1" do
+    test "MFA" do
+      assert vertex_module({Module1, :my_fun, 2}) == Module1
+    end
+
+    test "module" do
+      assert vertex_module(Module1) == Module1
+    end
+
+    test "dynamic call" do
+      site = {:dynamic_call, {Module1, :my_fun, 2}, :__struct__, 0, :open}
+
+      assert vertex_module(site) == Module1
+    end
   end
 
   describe "with_shared_graph/2" do

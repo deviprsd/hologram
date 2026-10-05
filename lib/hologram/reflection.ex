@@ -2,6 +2,7 @@ defmodule Hologram.Reflection do
   @moduledoc false
 
   alias Hologram.Commons.PLT
+  alias Hologram.Commons.TaskUtils
 
   @beam_info_keys [
     :digest,
@@ -15,6 +16,7 @@ defmodule Hologram.Reflection do
     :exception?,
     :ecto_schema?,
     :js_imports?,
+    :broadcast_caller?,
     :source_path,
     :layout_module,
     :route,
@@ -23,13 +25,30 @@ defmodule Hologram.Reflection do
     :implemented_protocol
   ]
 
+  # Functions that broadcast action params from arbitrary server code to connected clients.
+  # The Component helpers queue a broadcast on the server struct, which the framework
+  # flushes after the handler returns - they reach the same audience as the immediate
+  # Realtime functions, so their callers are analysed the same way.
+  @broadcast_mfas [
+    {Hologram.Component, :put_broadcast, 3},
+    {Hologram.Component, :put_broadcast, 4},
+    {Hologram.Component, :put_broadcast_except, 4},
+    {Hologram.Component, :put_broadcast_except, 5},
+    {Hologram.Realtime, :broadcast_action, 2},
+    {Hologram.Realtime, :broadcast_action, 3},
+    {Hologram.Realtime, :broadcast_action_except, 3},
+    {Hologram.Realtime, :broadcast_action_except, 4}
+  ]
+
   @call_graph_dump_file_name "call_graph.bin"
+
+  @compile_inputs_dump_file_name "compile_inputs.bin"
+
+  @compile_state_dump_file_name "compile_state.bin"
 
   @compiler_lock_file_name "hologram_compiler.lock"
 
   @ignored_modules [Kernel.SpecialForms]
-
-  @ir_plt_dump_file_name "ir.plt"
 
   @module_info_plt_dump_file_name "module_info.plt"
 
@@ -73,6 +92,8 @@ defmodule Hologram.Reflection do
   `__protocol__(:functions)`, `__impl__(:for)` and `__impl__(:protocol)` return them as literals. They
   are nil for every other kind of module, and nil when the function is missing or returns something
   that is not a literal.
+  `broadcast_caller?` says whether the module calls one of the broadcast functions (see
+  `broadcast_mfas/0`), read from the BEAM's import table, which lists every remote function it calls.
   The route is recorded as written: a route built at runtime (with interpolation, say) is nil here, and
   `Hologram.Compiler.validate_page_modules/2` checks that every page has a route and that it is a string.
   Returns nil when the BEAM is not an Elixir module (no `__info__/1` in its export table, as for an Erlang
@@ -94,6 +115,7 @@ defmodule Hologram.Reflection do
         exception?: false,
         ecto_schema?: false,
         js_imports?: false,
+        broadcast_caller?: false,
         source_path: "/path/to/lib/my_page.ex",
         layout_module: MyLayout,
         route: "/my-page",
@@ -102,6 +124,9 @@ defmodule Hologram.Reflection do
         implemented_protocol: nil
       }
   """
+  # WARNING: a change in what this records about a module needs a bump of the call graph's
+  # @dump_version (see the warning in Hologram.Compiler.CallGraph), or a kept module info dump keeps
+  # what the previous code recorded for every module whose beam did not change.
   # TODO: Narrow the spec back to charlist, and rename the param back to
   # beam_path, when beam_source/1 goes (see the removal note there) - nothing
   # passes a BEAM binary here once the umbrella fallback is gone.
@@ -118,6 +143,7 @@ defmodule Hologram.Reflection do
             exception?: boolean,
             ecto_schema?: boolean,
             js_imports?: boolean,
+            broadcast_caller?: boolean,
             source_path: String.t() | nil,
             layout_module: module | nil,
             route: term,
@@ -133,8 +159,14 @@ defmodule Hologram.Reflection do
     # size with the old digest, and that entry would be reused as long as the file stood still.
     {mtime, size} = beam_mtime_and_size(beam_source)
 
-    {:ok, {_module, [{:exports, exports}, {~c"Dbgi", dbgi_chunk}, {:compile_info, compile_info}]}} =
-      :beam_lib.chunks(beam_source, [:exports, ~c"Dbgi", :compile_info])
+    {:ok,
+     {_module,
+      [
+        {:exports, exports},
+        {~c"Dbgi", dbgi_chunk},
+        {:compile_info, compile_info},
+        {:imports, imports}
+      ]}} = :beam_lib.chunks(beam_source, [:exports, ~c"Dbgi", :compile_info, :imports])
 
     if {:__info__, 1} in exports do
       page? = {:__is_hologram_page__, 0} in exports
@@ -162,6 +194,7 @@ defmodule Hologram.Reflection do
         exception?: {:exception, 1} in exports and {:message, 1} in exports,
         ecto_schema?: {:__schema__, 1} in exports and {:__changeset__, 0} in exports,
         js_imports?: {:__js_imports__, 0} in exports,
+        broadcast_caller?: Enum.any?(@broadcast_mfas, &(&1 in imports)),
         source_path: compile_info_source(compile_info),
         layout_module: literal_return(definitions, :__layout_module__, []),
         route: literal_return(definitions, :__route__, []),
@@ -210,6 +243,14 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
+  Returns the functions that broadcast action params from server code to connected clients. The
+  compiler treats their callers as entry points: a broadcast can reach any connected client, so what
+  its caller's code creates and names is app-wide.
+  """
+  @spec broadcast_mfas() :: [mfa]
+  def broadcast_mfas, do: @broadcast_mfas
+
+  @doc """
   Returns the build directory path.
   """
   @spec build_dir() :: String.t()
@@ -225,6 +266,22 @@ defmodule Hologram.Reflection do
   @spec call_graph_dump_file_name() :: String.t()
   def call_graph_dump_file_name do
     @call_graph_dump_file_name
+  end
+
+  @doc """
+  Returns the compile inputs dump file name.
+  """
+  @spec compile_inputs_dump_file_name() :: String.t()
+  def compile_inputs_dump_file_name do
+    @compile_inputs_dump_file_name
+  end
+
+  @doc """
+  Returns the compile state dump file name.
+  """
+  @spec compile_state_dump_file_name() :: String.t()
+  def compile_state_dump_file_name do
+    @compile_state_dump_file_name
   end
 
   @doc "Returns Hologram compiler lock file name."
@@ -414,14 +471,6 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
-  Returns the IR PLT dump file name.
-  """
-  @spec ir_plt_dump_file_name() :: String.t()
-  def ir_plt_dump_file_name do
-    @ir_plt_dump_file_name
-  end
-
-  @doc """
   Returns true if the given module declares JS imports with `Hologram.JS`, or false otherwise.
   """
   @spec js_imports?(module) :: boolean
@@ -459,13 +508,18 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
-  Lists Elixir modules which are Hologram components and that belong to any of the OTP apps in the project.
+  Lists the Hologram component modules of the loaded OTP applications used by the project (except
+  :hex), sorted by name: the modules whose beam in an application's ebin directory exports
+  `__is_hologram_component__/0`. The beams are read, not loaded, and the code server is not asked about
+  any module.
 
   Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/reflection/list_components_0/README.md
   """
   @spec list_components() :: list(module)
   def list_components do
-    Enum.filter(list_elixir_modules(), &component?/1)
+    project_apps()
+    |> list_modules_exporting(:__is_hologram_component__, 0)
+    |> Enum.sort()
   end
 
   @doc """
@@ -476,11 +530,7 @@ defmodule Hologram.Reflection do
   """
   @spec list_candidate_modules() :: list(module)
   def list_candidate_modules do
-    Application.ensure_loaded(otp_app())
-
-    list_loaded_otp_apps()
-    |> Kernel.--([:hex])
-    |> list_candidate_modules()
+    list_candidate_modules(project_apps())
   end
 
   @doc """
@@ -520,30 +570,81 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
-  Lists Elixir modules belonging to any of the loaded OTP applications used by the project (except :hex).
-  Elixir modules listed in @ignored_modules module attribute, Elixir modules without a BEAM file, and Erlang modules are filtered out.
-  The project OTP application is included.
-
-  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/reflection/list_elixir_modules_0/README.md
+  Lists the loaded OTP applications whose beams a running VM can rewrite on a save: the project's
+  application, in an umbrella every child application, every path dependency, and the applications
+  the Phoenix endpoint is configured to reload (`:reloadable_apps`). The beams of every other
+  application stand still while the VM runs, since only `mix deps.compile` rewrites them. Requires a
+  Mix project context.
   """
-  @spec list_elixir_modules() :: list(module)
-  def list_elixir_modules do
-    Application.ensure_loaded(otp_app())
+  @spec list_editable_apps() :: list(atom)
+  def list_editable_apps do
+    otp_app = otp_app()
+    Application.ensure_loaded(otp_app)
 
-    list_loaded_otp_apps()
-    |> Kernel.--([:hex])
-    |> list_elixir_modules()
+    umbrella_apps =
+      case Mix.Project.apps_paths() do
+        nil -> []
+        apps_paths -> Map.keys(apps_paths)
+      end
+
+    path_dep_apps = for %Mix.Dep{app: app, scm: Mix.SCM.Path} <- Mix.Dep.cached(), do: app
+
+    # With no endpoint configured the key is nil, and the lookup returns the default.
+    phoenix_reloadable_apps =
+      otp_app
+      |> Application.get_env(phoenix_endpoint_for_app(otp_app), [])
+      |> Keyword.get(:reloadable_apps, [])
+
+    [otp_app | umbrella_apps ++ path_dep_apps ++ phoenix_reloadable_apps]
+    |> Enum.uniq()
+    |> Enum.filter(&Application.spec/1)
   end
 
   @doc """
-  Lists Elixir modules belonging to the given OTP apps.
-  Elixir modules listed in @ignored_modules module attribute and Erlang modules are filtered out.
+  Lists the beams a save can rewrite while the VM runs, as `{module, beam_path}` pairs with the path as a
+  charlist: the `Elixir.`-named beams in the ebin directory of every editable application (see
+  `list_editable_apps/0`) and in every consolidated protocols directory on the code path. The directories
+  are walked in code path order and a module is listed once, from the first directory that has it, which
+  is the beam the VM loads: a protocol of the project that is consolidated is listed from the consolidated
+  directory.
+  """
+  @spec list_editable_beams() :: list({module, charlist})
+  def list_editable_beams do
+    ebin_dirs =
+      for app <- list_editable_apps(),
+          lib_dir = :code.lib_dir(app),
+          is_list(lib_dir),
+          do: expand_dir(lib_dir, "ebin")
+
+    :code.get_path()
+    |> Enum.map(&expand_dir(&1, "."))
+    |> Enum.filter(&(&1 in ebin_dirs or Path.basename(&1) == "consolidated"))
+    |> Enum.flat_map(&list_beams_in_dir/1)
+    |> Enum.uniq_by(fn {module, _beam_path} -> module end)
+  end
+
+  @doc """
+  Lists the Elixir modules of the loaded OTP applications used by the project (except :hex), the project
+  OTP application included, from the beams in each application's ebin directory (see list_elixir_modules/1).
+
+  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/reflection/list_elixir_modules_0/README.md
+  """
+  @spec list_elixir_modules() :: list(module)
+  def list_elixir_modules do
+    list_elixir_modules(project_apps())
+  end
+
+  @doc """
+  Lists the Elixir modules of the given OTP apps: the modules whose beam in an app's ebin directory
+  exports `__info__/1`, which the Elixir compiler gives every Elixir module and an Erlang module with an
+  Elixir-style name lacks. Modules listed in @ignored_modules module attribute are left out. The beams
+  are read, not loaded, and the code server is not asked about any module.
   """
   @spec list_elixir_modules(list(atom)) :: list(module)
   def list_elixir_modules(apps) do
     apps
-    |> list_candidate_modules()
-    |> Enum.filter(&elixir_module?/1)
+    |> list_modules_exporting(:__info__, 1)
+    |> Kernel.--(@ignored_modules)
   end
 
   @doc """
@@ -583,40 +684,33 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
-  Lists Elixir modules which are Hologram pages and that belong to any of the OTP apps in the project.
+  Lists the Hologram page modules of the loaded OTP applications used by the project (except :hex),
+  sorted by name: the modules whose beam in an application's ebin directory exports
+  `__is_hologram_page__/0`. The beams are read, not loaded, and the code server is not asked about any
+  module.
 
-  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/reflection/list_pages_0/README.md
+  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/reflection/list_pages_0/README.md
   """
   @spec list_pages() :: list(module)
   def list_pages do
-    Enum.filter(list_elixir_modules(), &page?/1)
+    project_apps()
+    |> list_modules_exporting(:__is_hologram_page__, 0)
+    |> Enum.sort()
   end
 
   @doc """
-  Returns the list of modules that are implementations of the given protocol.
+  Returns the modules the given module info PLT records as implementations of the given protocol,
+  without listing any directory or reading any BEAM. An implementation whose `__impl__(:protocol)` is
+  not a literal has no protocol in the PLT and is not listed.
   """
-  @spec list_protocol_implementations(module) :: list(module)
-  def list_protocol_implementations(protocol) do
-    paths =
-      Enum.reduce(list_loaded_otp_apps(), [], fn app, acc ->
-        case :code.lib_dir(app) do
-          {:error, :bad_name} ->
-            acc
-
-          path ->
-            [Path.join(path, "ebin") | acc]
-        end
-      end)
-
-    protocol
-    |> Protocol.extract_impls(paths)
-    # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
-    |> Enum.map(&Module.concat(protocol, &1))
+  @spec list_protocol_implementations(module, PLT.t()) :: list(module)
+  def list_protocol_implementations(protocol, module_info_plt) do
+    PLT.keys(module_info_plt, %{implemented_protocol: protocol})
   end
 
   @doc """
-  Lists standard library Elixir modules, e.g. DateTime, Kernel, Calendar.ISO, etc.
-  Elixir modules listed in @ignored_modules module attribute, Elixir modules without a BEAM file, and Erlang modules are filtered out.
+  Lists standard library Elixir modules, e.g. DateTime, Kernel, Calendar.ISO, etc., from the beams in
+  the :elixir application's ebin directory (see list_elixir_modules/1).
   """
   @spec list_std_lib_elixir_modules() :: list(module)
   def list_std_lib_elixir_modules do
@@ -800,6 +894,21 @@ defmodule Hologram.Reflection do
   end
 
   @doc """
+  Like protocol_implementation/1, but answered from the given module info PLT when it holds the
+  module, without touching the module's code path or loading it. The PLT records nil for an
+  implementation whose `__impl__(:protocol)` is not a literal, as list_protocol_implementations/2
+  treats it. A nil PLT, or a module the PLT does not hold, is decided the protocol_implementation/1
+  way.
+  """
+  @spec protocol_implementation(module, PLT.t() | nil) :: module | nil
+  def protocol_implementation(module, module_info_plt) do
+    case module_info_value(module_info_plt, module, :implemented_protocol) do
+      {:ok, protocol} -> protocol
+      :error -> protocol_implementation(module)
+    end
+  end
+
+  @doc """
   Returns true if the given module is a protocol implementation, or false otherwise.
   """
   @spec protocol_implementation?(module) :: boolean
@@ -960,13 +1069,8 @@ defmodule Hologram.Reflection do
   # The export table in the beam is what the VM installs on load, so reading it
   # from the file answers the same question as function_exported?/3 would after
   # loading, without loading.
-  # A beam that cannot be read (removed after :code.which/1 found it, or not a beam) exports
-  # nothing, which is what Code.ensure_loaded/1 made of it before this read replaced it.
   defp beam_exports_function?(beam_path, function, arity) do
-    case :beam_lib.chunks(beam_path, [:exports]) do
-      {:ok, {_module, [{:exports, exports}]}} -> {function, arity} in exports
-      {:error, :beam_lib, _reason} -> false
-    end
+    module_exporting(beam_path, function, arity) != nil
   end
 
   defp compile_info_source(compile_info) do
@@ -999,6 +1103,15 @@ defmodule Hologram.Reflection do
     end
   end
 
+  # Both sides of a directory comparison are expanded, so that it does not depend on how each spells
+  # the path.
+  defp expand_dir(dir, subdir) do
+    dir
+    |> List.to_string()
+    |> Path.join(subdir)
+    |> Path.expand()
+  end
+
   defp include_app_elixir_modules(app, modules) do
     # Get modules from Application.spec (faster, but may miss newly compiled modules)
     spec_modules =
@@ -1021,6 +1134,52 @@ defmodule Hologram.Reflection do
     Enum.uniq(modules ++ spec_modules ++ ebin_modules)
   end
 
+  # The paths of the Elixir-named beams in the given OTP application's ebin directory, as charlists
+  # (what :beam_lib takes as a file name; a binary would be read as beam contents). An application
+  # with no lib dir has none.
+  defp list_app_elixir_beam_paths(app) do
+    case :code.lib_dir(app) do
+      {:error, :bad_name} ->
+        []
+
+      lib_dir ->
+        [lib_dir, "ebin", "Elixir.*.beam"]
+        |> Path.join()
+        |> Path.wildcard()
+        |> Enum.map(&String.to_charlist/1)
+    end
+  end
+
+  # A beam can belong to a module that is not loaded yet, whose name is not an atom yet.
+  # sobelow_skip ["DOS.StringToAtom"]
+  defp list_beams_in_dir(dir) do
+    dir
+    |> Path.join("*.beam")
+    |> Path.wildcard()
+    |> Enum.map(fn beam_path ->
+      module =
+        beam_path
+        |> Path.basename(".beam")
+        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+        |> String.to_atom()
+
+      {module, String.to_charlist(beam_path)}
+    end)
+    |> Enum.filter(fn {module, _beam_path} -> alias?(module) end)
+  end
+
+  # The modules of the given OTP applications whose beam exports the given function, from the
+  # Elixir-named beams in each application's ebin directory, in directory order. Each beam's export
+  # table is read from the file, in concurrent tasks, and the module name is taken from the beam: no
+  # module is loaded, no name is turned into an atom, and the code server is asked once per
+  # application (for its lib dir), not per module.
+  defp list_modules_exporting(apps, function, arity) do
+    apps
+    |> Enum.flat_map(&list_app_elixir_beam_paths/1)
+    |> TaskUtils.map_concurrently(&module_exporting(&1, function, arity))
+    |> Enum.reject(&is_nil/1)
+  end
+
   # The value returned by the clause of the named function that takes exactly the given literal
   # arguments and has no guard, when that value is a literal; nil when there is no such clause or
   # the clause computes its value. The body is the quoted form of the literal, and a binary built
@@ -1040,14 +1199,33 @@ defmodule Hologram.Reflection do
     end
   end
 
+  # The module of the beam at the given path when its export table has the function, else nil. A
+  # beam that cannot be read (removed after it was found, or not a beam) exports nothing.
+  defp module_exporting(beam_path, function, arity) do
+    case :beam_lib.chunks(beam_path, [:exports]) do
+      {:ok, {module, [{:exports, exports}]}} -> if {function, arity} in exports, do: module
+      {:error, :beam_lib, _reason} -> nil
+    end
+  end
+
   # The value of a boolean flag in the module info PLT entry of the given term, or :error when there
   # is no PLT, no entry, or the entry has no such flag (a dump written before the flag existed).
-  defp module_info_flag(nil, _term, _flag), do: :error
-
   defp module_info_flag(module_info_plt, term, flag) do
-    case PLT.get(module_info_plt, term) do
-      {:ok, %{^flag => value}} when is_boolean(value) -> {:ok, value}
+    case module_info_value(module_info_plt, term, flag) do
+      {:ok, value} when is_boolean(value) -> {:ok, value}
       _no_flag -> :error
+    end
+  end
+
+  # The value under the given key in the module info PLT entry of the given term, nil included, or
+  # :error when there is no PLT, no entry, or the entry has no such key (a dump written before the
+  # key existed).
+  defp module_info_value(nil, _term, _key), do: :error
+
+  defp module_info_value(module_info_plt, term, key) do
+    case PLT.get(module_info_plt, term) do
+      {:ok, %{^key => value}} -> {:ok, value}
+      _no_key -> :error
     end
   end
 
@@ -1106,5 +1284,11 @@ defmodule Hologram.Reflection do
     |> Enum.find_value(fn {key, value} ->
       if value && phoenix_endpoint?(key), do: key
     end)
+  end
+
+  # The loaded OTP applications used by the project, the project's own included and :hex left out.
+  defp project_apps do
+    Application.ensure_loaded(otp_app())
+    list_loaded_otp_apps() -- [:hex]
   end
 end

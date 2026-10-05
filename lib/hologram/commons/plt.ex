@@ -8,6 +8,7 @@ defmodule Hologram.Commons.PLT do
   use GenServer
 
   alias Hologram.Commons.ETS
+  alias Hologram.Commons.FileUtils
   alias Hologram.Commons.PLT
   alias Hologram.Commons.SerializationUtils
   alias Hologram.Commons.Types, as: T
@@ -53,7 +54,7 @@ defmodule Hologram.Commons.PLT do
     |> Path.dirname()
     |> File.mkdir_p!()
 
-    File.write!(path, data)
+    FileUtils.write_atomically!(path, data)
 
     plt
   end
@@ -110,6 +111,23 @@ defmodule Hologram.Commons.PLT do
 
   def init(table_name) do
     {:ok, ETS.create_named_table(table_name)}
+  end
+
+  @doc """
+  Returns the keys stored in the PLT, without copying the values out (get_all/1 copies the whole table).
+  """
+  @spec keys(PLT.t()) :: list
+  def keys(%{table_ref: table_ref}) do
+    ETS.keys(table_ref)
+  end
+
+  @doc """
+  Returns the keys whose value matches the given match pattern, without copying the other values out
+  (see `Hologram.Commons.ETS.keys/2`).
+  """
+  @spec keys(PLT.t(), term) :: list
+  def keys(%{table_ref: table_ref}, value_pattern) do
+    ETS.keys(table_ref, value_pattern)
   end
 
   @doc """
