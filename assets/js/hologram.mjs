@@ -1321,7 +1321,9 @@ export default class Hologram {
       history.replaceState(
         $.#historyId,
         null,
-        window.location.pathname + window.location.search + window.location.hash,
+        window.location.pathname +
+          window.location.search +
+          window.location.hash,
       );
     }
 
