@@ -30,30 +30,50 @@ defmodule Hologram.Commons.PLTTest do
     assert get_all(plt_clone) == get_all(plt)
   end
 
-  test "dump/2", %{plt: plt} do
-    dump_dir =
-      Path.join([
-        @tmp_dir,
-        "tests",
-        "commons",
-        "plt",
-        "dump_2",
-        "nested_a",
-        "nested_b"
-      ])
+  describe "dump/2" do
+    setup do
+      dump_dir =
+        Path.join([
+          @tmp_dir,
+          "tests",
+          "commons",
+          "plt",
+          "dump_2",
+          "nested_a",
+          "nested_b"
+        ])
 
-    clean_dir(dump_dir)
+      clean_dir(dump_dir)
 
-    dump_path = Path.join(dump_dir, "test.plt")
+      [dump_dir: dump_dir, dump_path: Path.join(dump_dir, "test.plt")]
+    end
 
-    assert dump(plt, dump_path) == plt
+    test "writes the PLT's items to the file", %{dump_path: dump_path, plt: plt} do
+      assert dump(plt, dump_path) == plt
 
-    items =
-      dump_path
-      |> File.read!()
-      |> SerializationUtils.deserialize()
+      items =
+        dump_path
+        |> File.read!()
+        |> SerializationUtils.deserialize()
 
-    assert items == Enum.into(@items, %{})
+      assert items == Enum.into(@items, %{})
+    end
+
+    test "replaces an earlier dump and leaves no temporary file", %{
+      dump_dir: dump_dir,
+      dump_path: dump_path,
+      plt: plt
+    } do
+      File.write!(dump_path, "earlier dump")
+
+      dump(plt, dump_path)
+
+      assert File.ls!(dump_dir) == ["test.plt"]
+
+      assert dump_path
+             |> File.read!()
+             |> SerializationUtils.deserialize() == Enum.into(@items, %{})
+    end
   end
 
   describe "get/2" do
@@ -96,6 +116,39 @@ defmodule Hologram.Commons.PLTTest do
 
   # Tested in start/1 tests:
   # test "init/1"
+
+  describe "keys/1" do
+    test "PLT with items", %{plt: plt} do
+      sorted_keys =
+        plt
+        |> keys()
+        |> Enum.sort()
+
+      assert sorted_keys == [:my_key_1, :my_key_2]
+    end
+
+    test "empty PLT" do
+      plt = start()
+      assert keys(plt) == []
+    end
+  end
+
+  describe "keys/2" do
+    test "keys whose value matches the pattern", %{plt: plt} do
+      put(plt, :my_key_3, :my_value_1)
+
+      sorted_keys =
+        plt
+        |> keys(:my_value_1)
+        |> Enum.sort()
+
+      assert sorted_keys == [:my_key_1, :my_key_3]
+    end
+
+    test "no value matches the pattern", %{plt: plt} do
+      assert keys(plt, :my_value_3) == []
+    end
+  end
 
   test "load/2", %{plt: plt} do
     dump_dir = Path.join([@tmp_dir, "tests", "commons", "plt", "load_2"])

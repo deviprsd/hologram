@@ -4,9 +4,9 @@ Last run: 2026-09-17 12:01:09 UTC
 
 ## Summary
 
-Total benchmarks: 38
+Total benchmarks: 37
 
-Successful: 38\
+Successful: 37\
 Warnings: 0\
 Failed: 0
 
@@ -304,32 +304,6 @@ do install     0.00018 K - 39751.25x slower +5.65 s
 ```
 
 
-### ✅ compiler » maybe_load_call_graph_1
-
-```
-Name              ips        average  deviation         median         99th %
-no load      165.33 K     0.00605 ms   ±186.16%     0.00546 ms      0.0140 ms
-do load      0.0105 K       95.38 ms     ±7.81%       94.43 ms      127.89 ms
-
-Comparison: 
-no load      165.33 K
-do load      0.0105 K - 15769.59x slower +95.38 ms
-```
-
-
-### ✅ compiler » maybe_load_ir_plt_1
-
-```
-Name              ips        average  deviation         median         99th %
-no load       76.52 K      0.0131 ms    ±59.81%      0.0119 ms      0.0216 ms
-do load     0.00149 K      673.23 ms     ±2.18%      666.55 ms      700.15 ms
-
-Comparison: 
-no load       76.52 K
-do load     0.00149 K - 51512.78x slower +673.21 ms
-```
-
-
 ### ✅ compiler » maybe_load_module_info_plt_1
 
 ```
@@ -435,14 +409,6 @@ list_elixir_modules/0          4.19      238.81 ms     ±6.60%      231.56 ms   
 ```
 Name                   ips        average  deviation         median         99th %
 list_pages/0          1.34      744.16 ms    ±20.88%      695.32 ms     1247.34 ms
-```
-
-
-### ✅ reflection » list_protocol_implementations_1
-
-```
-Name                                      ips        average  deviation         median         99th %
-list_protocol_implementations/1        132.84        7.53 ms    ±11.27%        7.43 ms        9.56 ms
 ```
 
 

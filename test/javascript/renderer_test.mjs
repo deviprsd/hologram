@@ -15,78 +15,79 @@ import {
   vnode,
 } from "./support/helpers.mjs";
 
-import { defineLayoutFixture } from "./support/fixtures/layout_fixture.mjs";
-import { defineModule1Fixture } from "./support/fixtures/renderer/module_1.mjs";
-import { defineModule10Fixture } from "./support/fixtures/renderer/module_10.mjs";
-import { defineModule11Fixture } from "./support/fixtures/renderer/module_11.mjs";
-import { defineModule12Fixture } from "./support/fixtures/renderer/module_12.mjs";
-import { defineModule14Fixture } from "./support/fixtures/renderer/module_14.mjs";
-import { defineModule15Fixture } from "./support/fixtures/renderer/module_15.mjs";
-import { defineModule16Fixture } from "./support/fixtures/renderer/module_16.mjs";
-import { defineModule17Fixture } from "./support/fixtures/renderer/module_17.mjs";
-import { defineModule18Fixture } from "./support/fixtures/renderer/module_18.mjs";
-import { defineModule2Fixture } from "./support/fixtures/renderer/module_2.mjs";
-import { defineModule21Fixture } from "./support/fixtures/renderer/module_21.mjs";
-import { defineModule23Fixture } from "./support/fixtures/renderer/module_23.mjs";
-import { defineModule24Fixture } from "./support/fixtures/renderer/module_24.mjs";
-import { defineModule25Fixture } from "./support/fixtures/renderer/module_25.mjs";
-import { defineModule26Fixture } from "./support/fixtures/renderer/module_26.mjs";
-import { defineModule27Fixture } from "./support/fixtures/renderer/module_27.mjs";
-import { defineModule3Fixture } from "./support/fixtures/renderer/module_3.mjs";
-import { defineModule31Fixture } from "./support/fixtures/renderer/module_31.mjs";
-import { defineModule32Fixture } from "./support/fixtures/renderer/module_32.mjs";
-import { defineModule33Fixture } from "./support/fixtures/renderer/module_33.mjs";
-import { defineModule34Fixture } from "./support/fixtures/renderer/module_34.mjs";
-import { defineModule35Fixture } from "./support/fixtures/renderer/module_35.mjs";
-import { defineModule36Fixture } from "./support/fixtures/renderer/module_36.mjs";
-import { defineModule37Fixture } from "./support/fixtures/renderer/module_37.mjs";
-import { defineModule38Fixture } from "./support/fixtures/renderer/module_38.mjs";
-import { defineModule39Fixture } from "./support/fixtures/renderer/module_39.mjs";
-import { defineModule4Fixture } from "./support/fixtures/renderer/module_4.mjs";
-import { defineModule40Fixture } from "./support/fixtures/renderer/module_40.mjs";
-import { defineModule41Fixture } from "./support/fixtures/renderer/module_41.mjs";
-import { defineModule42Fixture } from "./support/fixtures/renderer/module_42.mjs";
-import { defineModule43Fixture } from "./support/fixtures/renderer/module_43.mjs";
-import { defineModule44Fixture } from "./support/fixtures/renderer/module_44.mjs";
-import { defineModule45Fixture } from "./support/fixtures/renderer/module_45.mjs";
-import { defineModule46Fixture } from "./support/fixtures/renderer/module_46.mjs";
-import { defineModule47Fixture } from "./support/fixtures/renderer/module_47.mjs";
-import { defineModule51Fixture } from "./support/fixtures/renderer/module_51.mjs";
-import { defineModule52Fixture } from "./support/fixtures/renderer/module_52.mjs";
-import { defineModule55Fixture } from "./support/fixtures/renderer/module_55.mjs";
-import { defineModule56Fixture } from "./support/fixtures/renderer/module_56.mjs";
-import { defineModule57Fixture } from "./support/fixtures/renderer/module_57.mjs";
-import { defineModule58Fixture } from "./support/fixtures/renderer/module_58.mjs";
-import { defineModule59Fixture } from "./support/fixtures/renderer/module_59.mjs";
-import { defineModule60Fixture } from "./support/fixtures/renderer/module_60.mjs";
-import { defineModule61Fixture } from "./support/fixtures/renderer/module_61.mjs";
-import { defineModule62Fixture } from "./support/fixtures/renderer/module_62.mjs";
-import { defineModule63Fixture } from "./support/fixtures/renderer/module_63.mjs";
-import { defineModule64Fixture } from "./support/fixtures/renderer/module_64.mjs";
-import { defineModule65Fixture } from "./support/fixtures/renderer/module_65.mjs";
-import { defineModule66Fixture } from "./support/fixtures/renderer/module_66.mjs";
-import { defineModule67Fixture } from "./support/fixtures/renderer/module_67.mjs";
-import { defineModule68Fixture } from "./support/fixtures/renderer/module_68.mjs";
-import { defineModule7Fixture } from "./support/fixtures/renderer/module_7.mjs";
-import { defineModule76Fixture } from "./support/fixtures/renderer/module_76.mjs";
-import { defineModule77Fixture } from "./support/fixtures/renderer/module_77.mjs";
-import { defineModule78Fixture } from "./support/fixtures/renderer/module_78.mjs";
-import { defineModule86Fixture } from "./support/fixtures/renderer/module_86.mjs";
-import { defineModule87Fixture } from "./support/fixtures/renderer/module_87.mjs";
-import { defineModule8Fixture } from "./support/fixtures/renderer/module_8.mjs";
-import { defineModule89Fixture } from "./support/fixtures/renderer/module_89.mjs";
-import { defineModule9Fixture } from "./support/fixtures/renderer/module_9.mjs";
-import { defineModule91Fixture } from "./support/fixtures/renderer/module_91.mjs";
-import { defineClientOnlyModule1Fixture } from "./support/fixtures/renderer/client_only/module_1.mjs";
-import { defineClientOnlyModule2Fixture } from "./support/fixtures/renderer/client_only/module_2.mjs";
-import { defineClientOnlyModule3Fixture } from "./support/fixtures/renderer/client_only/module_3.mjs";
+import {defineLayoutFixture} from "./support/fixtures/layout_fixture.mjs";
+import {defineModule1Fixture} from "./support/fixtures/renderer/module_1.mjs";
+import {defineModule10Fixture} from "./support/fixtures/renderer/module_10.mjs";
+import {defineModule11Fixture} from "./support/fixtures/renderer/module_11.mjs";
+import {defineModule12Fixture} from "./support/fixtures/renderer/module_12.mjs";
+import {defineModule14Fixture} from "./support/fixtures/renderer/module_14.mjs";
+import {defineModule15Fixture} from "./support/fixtures/renderer/module_15.mjs";
+import {defineModule16Fixture} from "./support/fixtures/renderer/module_16.mjs";
+import {defineModule17Fixture} from "./support/fixtures/renderer/module_17.mjs";
+import {defineModule18Fixture} from "./support/fixtures/renderer/module_18.mjs";
+import {defineModule2Fixture} from "./support/fixtures/renderer/module_2.mjs";
+import {defineModule21Fixture} from "./support/fixtures/renderer/module_21.mjs";
+import {defineModule23Fixture} from "./support/fixtures/renderer/module_23.mjs";
+import {defineModule24Fixture} from "./support/fixtures/renderer/module_24.mjs";
+import {defineModule25Fixture} from "./support/fixtures/renderer/module_25.mjs";
+import {defineModule26Fixture} from "./support/fixtures/renderer/module_26.mjs";
+import {defineModule27Fixture} from "./support/fixtures/renderer/module_27.mjs";
+import {defineModule3Fixture} from "./support/fixtures/renderer/module_3.mjs";
+import {defineModule31Fixture} from "./support/fixtures/renderer/module_31.mjs";
+import {defineModule32Fixture} from "./support/fixtures/renderer/module_32.mjs";
+import {defineModule33Fixture} from "./support/fixtures/renderer/module_33.mjs";
+import {defineModule34Fixture} from "./support/fixtures/renderer/module_34.mjs";
+import {defineModule35Fixture} from "./support/fixtures/renderer/module_35.mjs";
+import {defineModule36Fixture} from "./support/fixtures/renderer/module_36.mjs";
+import {defineModule37Fixture} from "./support/fixtures/renderer/module_37.mjs";
+import {defineModule38Fixture} from "./support/fixtures/renderer/module_38.mjs";
+import {defineModule39Fixture} from "./support/fixtures/renderer/module_39.mjs";
+import {defineModule4Fixture} from "./support/fixtures/renderer/module_4.mjs";
+import {defineModule40Fixture} from "./support/fixtures/renderer/module_40.mjs";
+import {defineModule41Fixture} from "./support/fixtures/renderer/module_41.mjs";
+import {defineModule42Fixture} from "./support/fixtures/renderer/module_42.mjs";
+import {defineModule43Fixture} from "./support/fixtures/renderer/module_43.mjs";
+import {defineModule44Fixture} from "./support/fixtures/renderer/module_44.mjs";
+import {defineModule45Fixture} from "./support/fixtures/renderer/module_45.mjs";
+import {defineModule46Fixture} from "./support/fixtures/renderer/module_46.mjs";
+import {defineModule47Fixture} from "./support/fixtures/renderer/module_47.mjs";
+import {defineModule51Fixture} from "./support/fixtures/renderer/module_51.mjs";
+import {defineModule52Fixture} from "./support/fixtures/renderer/module_52.mjs";
+import {defineModule55Fixture} from "./support/fixtures/renderer/module_55.mjs";
+import {defineModule56Fixture} from "./support/fixtures/renderer/module_56.mjs";
+import {defineModule57Fixture} from "./support/fixtures/renderer/module_57.mjs";
+import {defineModule58Fixture} from "./support/fixtures/renderer/module_58.mjs";
+import {defineModule59Fixture} from "./support/fixtures/renderer/module_59.mjs";
+import {defineModule60Fixture} from "./support/fixtures/renderer/module_60.mjs";
+import {defineModule61Fixture} from "./support/fixtures/renderer/module_61.mjs";
+import {defineModule62Fixture} from "./support/fixtures/renderer/module_62.mjs";
+import {defineModule63Fixture} from "./support/fixtures/renderer/module_63.mjs";
+import {defineModule64Fixture} from "./support/fixtures/renderer/module_64.mjs";
+import {defineModule65Fixture} from "./support/fixtures/renderer/module_65.mjs";
+import {defineModule66Fixture} from "./support/fixtures/renderer/module_66.mjs";
+import {defineModule67Fixture} from "./support/fixtures/renderer/module_67.mjs";
+import {defineModule68Fixture} from "./support/fixtures/renderer/module_68.mjs";
+import {defineModule7Fixture} from "./support/fixtures/renderer/module_7.mjs";
+import {defineModule76Fixture} from "./support/fixtures/renderer/module_76.mjs";
+import {defineModule77Fixture} from "./support/fixtures/renderer/module_77.mjs";
+import {defineModule78Fixture} from "./support/fixtures/renderer/module_78.mjs";
+import {defineModule86Fixture} from "./support/fixtures/renderer/module_86.mjs";
+import {defineModule87Fixture} from "./support/fixtures/renderer/module_87.mjs";
+import {defineModule8Fixture} from "./support/fixtures/renderer/module_8.mjs";
+import {defineModule89Fixture} from "./support/fixtures/renderer/module_89.mjs";
+import {defineModule9Fixture} from "./support/fixtures/renderer/module_9.mjs";
+import {defineModule91Fixture} from "./support/fixtures/renderer/module_91.mjs";
+import {defineClientOnlyModule1Fixture} from "./support/fixtures/renderer/client_only/module_1.mjs";
+import {defineClientOnlyModule2Fixture} from "./support/fixtures/renderer/client_only/module_2.mjs";
+import {defineClientOnlyModule3Fixture} from "./support/fixtures/renderer/client_only/module_3.mjs";
+import {defineClientOnlyModule4Fixture} from "./support/fixtures/renderer/client_only/module_4.mjs";
 
+import ActionQueue from "../../assets/js/action_queue.mjs";
 import Bitstring from "../../assets/js/bitstring.mjs";
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
 import EventListeners from "../../assets/js/event_listeners.mjs";
 import Hologram from "../../assets/js/hologram.mjs";
 import HologramRuntimeError from "../../assets/js/errors/runtime_error.mjs";
-import InitActionQueue from "../../assets/js/init_action_queue.mjs";
 import Interpreter from "../../assets/js/interpreter.mjs";
 import Once from "../../assets/js/once.mjs";
 import RenderCache from "../../assets/js/render_cache.mjs";
@@ -160,6 +161,7 @@ defineModule9Fixture();
 defineClientOnlyModule1Fixture();
 defineClientOnlyModule2Fixture();
 defineClientOnlyModule3Fixture();
+defineClientOnlyModule4Fixture();
 
 describe("Renderer", () => {
   beforeEach(() => {
@@ -10905,7 +10907,7 @@ describe("Renderer", () => {
 
   describe("queuing actions from client-side init/2", () => {
     beforeEach(() => {
-      InitActionQueue.queue = [];
+      ActionQueue.entries = [];
     });
 
     it("does not queue action when init/2 doesn't set next action", () => {
@@ -10927,7 +10929,7 @@ describe("Renderer", () => {
       Renderer.renderDom(node, context, slots, defaultTarget, parentTagName);
 
       // Check that no action was queued
-      assert.strictEqual(InitActionQueue.queue.length, 0);
+      assert.strictEqual(ActionQueue.entries.length, 0);
     });
 
     it("does not queue action when component is already initialized", () => {
@@ -10963,7 +10965,7 @@ describe("Renderer", () => {
       Renderer.renderDom(node, context, slots, defaultTarget, parentTagName);
 
       // Check that no action was queued
-      assert.strictEqual(InitActionQueue.queue.length, 0);
+      assert.strictEqual(ActionQueue.entries.length, 0);
     });
 
     it("queues action when init/2 sets next action", () => {
@@ -10988,9 +10990,9 @@ describe("Renderer", () => {
 
       // Check that action was queued with original target preserved
 
-      assert.strictEqual(InitActionQueue.queue.length, 1);
+      assert.strictEqual(ActionQueue.entries.length, 1);
 
-      const queuedAction = InitActionQueue.queue[0];
+      const queuedAction = ActionQueue.entries[0].action;
 
       assert.deepStrictEqual(
         Erlang_Maps["get/2"](Type.atom("name"), queuedAction),
@@ -11001,6 +11003,8 @@ describe("Renderer", () => {
         Erlang_Maps["get/2"](Type.atom("target"), queuedAction),
         Type.bitstring("custom_target_from_init"),
       );
+
+      assert.equal(ActionQueue.entries[0].epoch, Hologram.registryEpoch);
     });
 
     it("sets the current component as the target when init/2 sets next action that doesn't have target specified", () => {
@@ -11025,9 +11029,9 @@ describe("Renderer", () => {
 
       // Check that action was queued with target added
 
-      assert.strictEqual(InitActionQueue.queue.length, 1);
+      assert.strictEqual(ActionQueue.entries.length, 1);
 
-      const queuedAction = InitActionQueue.queue[0];
+      const queuedAction = ActionQueue.entries[0].action;
 
       assert.deepStrictEqual(
         Erlang_Maps["get/2"](Type.atom("name"), queuedAction),
@@ -11065,6 +11069,50 @@ describe("Renderer", () => {
         Erlang_Maps["get/2"](Type.atom("next_action"), struct),
         Type.nil(),
       );
+    });
+
+    // A delay in init/2 means "this long after the render", and an entry runs as soon as it can.
+    it("schedules a delayed action instead of queueing it", () => {
+      const scheduleActionStub = sinon.stub(Hologram, "scheduleAction");
+
+      try {
+        const cid = Type.bitstring("my_component");
+
+        const node = Type.tuple([
+          Type.atom("component"),
+          Type.alias(
+            "Hologram.Test.Fixtures.Template.Renderer.ClientOnly.Module4",
+          ),
+          Type.list([
+            Type.tuple([
+              Type.bitstring("cid"),
+              Type.keywordList([[Type.atom("text"), cid]]),
+            ]),
+          ]),
+          Type.list(),
+        ]);
+
+        Renderer.renderDom(node, context, slots, defaultTarget, parentTagName);
+
+        sinon.assert.calledOnce(scheduleActionStub);
+
+        const [scheduledAction, epoch] = scheduleActionStub.firstCall.args;
+
+        assert.deepStrictEqual(
+          Erlang_Maps["get/2"](Type.atom("name"), scheduledAction),
+          Type.atom("delayed_action_from_init"),
+        );
+
+        assert.deepStrictEqual(
+          Erlang_Maps["get/2"](Type.atom("target"), scheduledAction),
+          cid,
+        );
+
+        assert.equal(epoch, Hologram.registryEpoch);
+        assert.strictEqual(ActionQueue.entries.length, 0);
+      } finally {
+        scheduleActionStub.restore();
+      }
     });
   });
 

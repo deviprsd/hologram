@@ -2,6 +2,7 @@ defmodule Hologram.Compiler do
   @moduledoc false
 
   alias Hologram.Commons.CryptographicUtils
+  alias Hologram.Commons.FileUtils
   alias Hologram.Commons.PathUtils
   alias Hologram.Commons.PLT
   alias Hologram.Commons.StringUtils
@@ -10,9 +11,13 @@ defmodule Hologram.Compiler do
   alias Hologram.Commons.Types, as: T
   alias Hologram.Compiler.CallGraph
   alias Hologram.Compiler.Context
+  alias Hologram.Compiler.Digraph
   alias Hologram.Compiler.Encoder
   alias Hologram.Compiler.IR
   alias Hologram.Reflection
+
+  @type js_input_fingerprint ::
+          {:digest, integer} | {:stat, non_neg_integer, non_neg_integer} | :fresh | :missing
 
   @doc """
   Aggregates JS imports from all Elixir modules referenced by the given MFAs,
@@ -66,6 +71,27 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
+  Whether the application versions `build_app_versions/1` computes can differ from the ones an earlier
+  compile computed, given that compile's module digests diff and the project's OTP application.
+
+  They change in two ways. A module of an application appears in or disappears from the call graph,
+  which takes an added or a removed module. Or an application's version changes, which for a
+  dependency comes with its modules being recompiled, so they show up as edited. An edit to the
+  project's own modules does neither, which is what an ordinary save is, so the kept versions stand.
+
+  A module of no application, or of a sibling application in an umbrella, counts as not the
+  project's: recomputing then is safe, and cheap next to being wrong.
+  """
+  @spec app_versions_changed?(map, atom) :: boolean
+  def app_versions_changed?(module_digests_diff, otp_app) do
+    module_digests_diff.added_modules != [] or module_digests_diff.removed_modules != [] or
+      Enum.any?(
+        module_digests_diff.edited_modules,
+        &(Application.get_application(&1) != otp_app)
+      )
+  end
+
+  @doc """
   Returns the version of each OTP application the given call graph reaches, keyed by application
   name and sorted by it.
 
@@ -78,10 +104,7 @@ defmodule Hologram.Compiler do
   def build_app_versions(call_graph) do
     call_graph
     |> CallGraph.vertices()
-    |> Enum.map(fn
-      {module, _function, _arity} -> module
-      module -> module
-    end)
+    |> Enum.map(&CallGraph.vertex_module/1)
     |> Enum.uniq()
     |> Enum.map(&Application.get_application/1)
     |> Enum.reject(&is_nil/1)
@@ -90,6 +113,49 @@ defmodule Hologram.Compiler do
     |> Enum.reject(fn {_app, vsn} -> is_nil(vsn) end)
     |> Enum.map(fn {app, vsn} -> {app, to_string(vsn)} end)
     |> Enum.sort()
+  end
+
+  @doc """
+  Returns what every bundle depends on besides the modules it carries, apart from Hologram's own
+  modules (see `build_bundle_inputs/2`): the client stack traces setting (bundles built with it on
+  register module metadata and app versions), the mtime and size of each of Hologram's JavaScript
+  sources under the `:js_dir` opt (esbuild copies them into every bundle) and the digest of
+  `package.json` in the `:assets_dir` opt (which pins esbuild).
+
+  The JavaScript sources are compared by mtime and size rather than by content: they belong to a
+  dependency, which changes with an upgrade or a fetch, never within a second of a compile.
+  """
+  @spec build_bundle_inputs(T.opts()) :: %{
+          client_stacktraces?: boolean,
+          js_sources: [{String.t(), integer, non_neg_integer}],
+          package_json_digest: binary
+        }
+  def build_bundle_inputs(opts) do
+    %{
+      client_stacktraces?: Hologram.client_stacktraces?(),
+      js_sources: list_js_sources(opts[:js_dir]),
+      package_json_digest: get_package_json_digest(opts[:assets_dir])
+    }
+  end
+
+  @doc """
+  Returns what every bundle depends on besides the modules it carries: the inputs that need no
+  module (see `build_bundle_inputs/1`) and the digests of Hologram's own modules, the ones compiled
+  from its lib dir, from the given module info PLT (the encoder and the transformer decide what a
+  module encodes to). Two compiles whose inputs are equal make the same bundle from the same
+  modules; the compile task rebuilds every bundle when the inputs differ from the ones its kept
+  bundles were built with (see `Hologram.Compiler.Cache.forget_bundles/0`).
+  """
+  @spec build_bundle_inputs(PLT.t(), T.opts()) :: %{
+          client_stacktraces?: boolean,
+          hologram_modules: [{module, integer}],
+          js_sources: [{String.t(), integer, non_neg_integer}],
+          package_json_digest: binary
+        }
+  def build_bundle_inputs(module_info_plt, opts) do
+    opts
+    |> build_bundle_inputs()
+    |> Map.put(:hologram_modules, list_hologram_module_digests(module_info_plt))
   end
 
   @doc """
@@ -134,6 +200,8 @@ defmodule Hologram.Compiler do
   Builds IR persistent lookup table (PLT) of all modules in the project.
   Pass `modules:` to build IR for exactly those modules instead of listing them; the compile task passes the
   module info PLT's keys.
+  Pass `plt:` to fill an existing PLT instead of starting one; the compile task passes the PLT it keeps between
+  compiles.
 
   Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/compiler/build_ir_plt_1/README.md
   """
@@ -141,7 +209,7 @@ defmodule Hologram.Compiler do
   # credo:disable-for-lines:26 Credo.Check.Refactor.Nesting
   # The above Credo check is disabled because the function is optimised this way
   def build_ir_plt(opts \\ []) do
-    ir_plt = PLT.start(opts)
+    ir_plt = opts[:plt] || PLT.start(opts)
 
     modules = opts[:modules] || Reflection.list_elixir_modules()
 
@@ -170,6 +238,18 @@ defmodule Hologram.Compiler do
     )
 
     ir_plt
+  end
+
+  @doc """
+  Builds the IR of the given modules that the IR PLT does not hold yet, and returns the PLT. The compile task
+  calls it for the modules it is about to read, once the call graph says which they are.
+
+  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/compiler/build_missing_ir!_2/README.md
+  """
+  @spec build_missing_ir!(PLT.t(), [module]) :: PLT.t()
+  def build_missing_ir!(ir_plt, modules) do
+    missing_modules = Enum.reject(modules, &PLT.member?(ir_plt, &1))
+    build_ir_plt(plt: ir_plt, modules: missing_modules)
   end
 
   @doc """
@@ -219,16 +299,13 @@ defmodule Hologram.Compiler do
 
   @doc """
   Builds page digest PLT, where the keys represent page modules,
-  and the values are hex digests of their corresponding JavaScript bundles.
+  and the values are the digests of their JavaScript bundles (esbuild's content hashes).
   """
   @spec build_page_digest_plt(list(map), T.opts()) :: {PLT.t(), T.file_path()}
   def build_page_digest_plt(bundle_info, opts) do
     page_digest_plt_items =
-      bundle_info
-      |> Enum.reject(fn %{entry_name: entry_name} -> entry_name == "runtime" end)
-      |> Enum.reduce([], fn %{entry_name: page_module, digest: digest}, acc ->
-        [{page_module, digest} | acc]
-      end)
+      for %{bundle_name: "page", entry_name: page_module, digest: digest} <- bundle_info,
+          do: {page_module, digest}
 
     page_digest_plt = PLT.start(items: page_digest_plt_items, supervisor: opts[:supervisor])
 
@@ -241,7 +318,7 @@ defmodule Hologram.Compiler do
   @doc """
   Builds JavaScript code for the given Hologram page.
 
-  The page's reachable MFAs are given (see `CallGraph.list_page_mfas/4`), so that a caller building
+  The page's reachable MFAs are given (see `CallGraph.list_page_mfas/5`), so that a caller building
   many pages can encode their functions first with `encode_reachable_functions/5` and render every
   page from the encode PLT.
 
@@ -322,6 +399,20 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
+  Grows the call graph until it holds every module the pages, the runtime and the broadcast callers
+  reach (see `CallGraph.build_reach/3`), building the IR of each module the walk asks for into the IR
+  PLT first, and returns the modules built. The walk asks only for modules the graph's module info
+  PLT holds, so each has a beam to build IR from.
+  """
+  @spec build_reach!(CallGraph.t(), PLT.t(), map) :: [module]
+  def build_reach!(call_graph, ir_plt, graph_diff) do
+    CallGraph.build_reach(call_graph, graph_diff, fn modules ->
+      build_missing_ir!(ir_plt, modules)
+      TaskUtils.map_concurrently(modules, &CallGraph.build_for_module(call_graph, ir_plt, &1))
+    end)
+  end
+
+  @doc """
   Builds Hologram runtime JavaScript source code.
 
   ## Options
@@ -396,7 +487,7 @@ defmodule Hologram.Compiler do
 
     const startTime = PerformanceTimer.start();
 
-    globalThis.Hologram.config = #{render_client_config()};
+    globalThis.Hologram.config = #{client_config()};
 
     ERTS.appVersions = #{render_app_versions(app_versions)};#{module_metadata_registration}#{js_bindings_registration_call}#{erlang_function_defs}#{elixir_function_defs}#{manually_ported_clause_heads}
 
@@ -411,13 +502,13 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
-  Bundles multiple entry files.
-  Includes the source maps of the output files.
-  The output files' and source maps' file names contain hex digest.
+  Bundles multiple entry files, each as `bundle/4` does. An entry is given as
+  `{entry_name, entry_file_path, bundle_name}`, the entry name `nil` for a bundle name with a single
+  entry.
 
   Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/compiler/bundle_2/README.md
   """
-  @spec bundle(list({term, T.file_path(), String.t()}), T.opts()) :: list(map)
+  @spec bundle(list({module | nil, T.file_path(), String.t()}), T.opts()) :: list(map)
   def bundle(entry_files_info, opts) do
     # Unlike the other TaskUtils.map_concurrently/3 call sites in this module (pure
     # in-BEAM computation over module ASTs), each task here shells out to its
@@ -442,21 +533,37 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
-  Bundles the given entry file.
-  Includes the source map of the output file.
-  The output file and source map file names contain hex digest.
+  Bundles the given entry file with esbuild, which names the output `<bundle_name>-<hash>.js` and
+  its source map `<bundle_name>-<hash>.js.map` by the content hash, with the entry name, a module
+  written without its `Elixir.` prefix, between the bundle name and the hash when one is given: a
+  bundle name shared by many entries (the page bundles) needs it to tell them apart, one with a
+  single entry (the runtime) does not. The returned digest is the hash.
+
+  The returned `js_inputs` are the files esbuild read for the bundle besides the entry file,
+  Hologram's own sources under the `:js_dir` opt and the packages under the `:node_modules_path`
+  opt, with their fingerprints (see `fingerprint_js_inputs/2`), taken against the time esbuild
+  started: a bundle inlines them, and a kept bundle whose files moved must be built again.
   """
-  @spec bundle(term, T.file_path(), String.t(), T.opts()) :: map
+  @spec bundle(module | nil, T.file_path(), String.t(), T.opts()) :: map
   # sobelow_skip ["CI.System"]
   def bundle(entry_name, entry_file_path, bundle_name, opts) do
-    output_bundle_path = Path.join(opts[:tmp_dir], "#{entry_name}.output.js")
+    # esbuild names the bundle and its source map by their content hash and writes the source map
+    # comment to match, so neither file is read back or rewritten. Each bundle gets its own output
+    # dir: the name is only known once esbuild has run, so the dir is listed for it, and it is
+    # recreated so that a bundle left there by a run that failed the size check is not listed too.
+    output_name = bundle_output_name(bundle_name, entry_name)
+    output_dir = Path.join(opts[:tmp_dir], "#{output_name}.output")
+    FileUtils.recreate_dir(output_dir)
+    metafile_path = Path.join(output_dir, "meta.json")
 
     esbuild_cmd = [
-      entry_file_path,
+      "#{output_name}=#{entry_file_path}",
       "--bundle",
+      "--entry-names=[name]-[hash]",
       "--log-level=warning",
+      "--metafile=#{metafile_path}",
       "--minify",
-      "--outfile=#{output_bundle_path}",
+      "--outdir=#{output_dir}",
       "--sourcemap",
       "--sources-content=true",
       "--target=es2021"
@@ -481,6 +588,10 @@ defmodule Hologram.Compiler do
       parallelism: true
     ]
 
+    # A file whose mtime is not older than this may have been written after esbuild read it (see
+    # list_bundle_js_inputs/3).
+    started_at = System.os_time(:second)
+
     {_exit_msg, exit_status} =
       SystemUtils.cmd_cross_platform(opts[:esbuild_bin_path], esbuild_cmd, esbuild_opts)
 
@@ -490,54 +601,69 @@ defmodule Hologram.Compiler do
           "esbuild bundler failed for entry file: #{entry_file_path} (probably there were JavaScript syntax errors)"
     end
 
-    maybe_ensure_bundle_within_size_limit!(entry_name, output_bundle_path)
+    [bundle_file_name] =
+      output_dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".js"))
+
+    output_bundle_path = Path.join(output_dir, bundle_file_name)
+
+    maybe_ensure_bundle_within_size_limit!(output_name, output_bundle_path)
 
     digest =
-      output_bundle_path
-      |> File.read!()
-      |> CryptographicUtils.digest(:md5, :hex)
+      bundle_file_name
+      |> Path.basename(".js")
+      |> String.replace_prefix("#{output_name}-", "")
 
-    static_bundle_path_with_digest = Path.join(opts[:static_dir], "#{bundle_name}-#{digest}.js")
+    static_bundle_path = Path.join(opts[:static_dir], bundle_file_name)
+    static_source_map_path = static_bundle_path <> ".map"
 
-    output_source_map_path = output_bundle_path <> ".map"
-    static_source_map_path_with_digest = static_bundle_path_with_digest <> ".map"
+    File.rename!(output_bundle_path, static_bundle_path)
+    File.rename!(output_bundle_path <> ".map", static_source_map_path)
 
-    File.rename!(output_bundle_path, static_bundle_path_with_digest)
-    File.rename!(output_source_map_path, static_source_map_path_with_digest)
-
-    js_with_replaced_source_map_url =
-      static_bundle_path_with_digest
-      |> File.read!()
-      |> String.replace(
-        "//# sourceMappingURL=#{entry_name}.output.js.map",
-        "//# sourceMappingURL=#{bundle_name}-#{digest}.js.map"
-      )
-
-    File.write!(static_bundle_path_with_digest, js_with_replaced_source_map_url)
+    # Read once and removed, so that the output dir is left empty, as the bundle and its source map
+    # leave it.
+    js_inputs = list_bundle_js_inputs(metafile_path, started_at, opts)
+    File.rm!(metafile_path)
 
     %{
       bundle_name: bundle_name,
       digest: digest,
       entry_name: entry_name,
-      static_bundle_path: static_bundle_path_with_digest,
-      static_source_map_path: static_source_map_path_with_digest
+      js_inputs: js_inputs,
+      static_bundle_path: static_bundle_path,
+      static_source_map_path: static_source_map_path
     }
   end
 
   @doc """
-  Creates page bundle entry file.
-  Pass `components:` in opts to use exactly those component modules instead of listing them; the compile task
-  passes the module info PLT's components.
-  The page graph is shared with the page tasks through `CallGraph.with_shared_graph/2`, so no task
-  copies it. Every page's reachable MFAs are listed first, their functions are encoded into the
-  encode PLT with one IR read per module (`encode_reachable_functions/5`), and then the pages are
-  rendered from that cache.
+  Returns the client config the runtime bundle sets as `globalThis.Hologram.config`: whether the
+  error overlay is on, whether live reload is (it runs in dev only, and in test, so that the feature
+  tests can drive it, as the SSE stream's live reload subscription does), and whether client stack
+  traces are. `liveReload` lets the client load a page afresh when it holds that page's code in an
+  older version (see live_reload.mjs). The runtime bundle carries it as written here, so the
+  compile task keeps a runtime bundle only while this is what it was built with.
+  """
+  @spec client_config() :: String.t()
+  def client_config do
+    live_reload? = Hologram.env() in [:dev, :test]
 
-  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/compiler/create_page_entry_files_7/README.md
+    "{errorOverlay: #{Hologram.client_error_overlay?()}, liveReload: #{live_reload?}, " <>
+      "stacktraces: #{Hologram.client_stacktraces?()}}"
+  end
+
+  @doc """
+  Creates the page bundle entry files, given each page's reachable MFAs (see `list_mfas_by_page/5`).
+  The functions of all the given pages are encoded into the encode PLT first, with one IR read per
+  module (`encode_reachable_functions/5`), and then each page is rendered from that cache, so a
+  module's IR is read once for all the pages of one call. The compile task calls it once per batch;
+  a function already in the encode PLT, encoded for an earlier batch or an earlier compile, is not
+  encoded again. The module info PLT is taken from the `module_info_plt:` opt.
+
+  Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/elixir/compiler/create_page_entry_files_6/README.md
   """
   @spec create_page_entry_files(
-          list(module),
-          CallGraph.t(),
+          list({module, list(mfa)}),
           PLT.t(),
           PLT.t(),
           MapSet.t(mfa),
@@ -545,62 +671,33 @@ defmodule Hologram.Compiler do
           T.opts()
         ) :: list({module, T.file_path()})
   def create_page_entry_files(
-        page_modules,
-        call_graph,
+        mfas_by_page,
         ir_plt,
         encode_plt,
         async_mfas,
         runtime_js_binding_modules,
         opts
       ) do
-    module_info_plt = CallGraph.module_info_plt(call_graph)
-    templatables = page_modules ++ (opts[:components] || Reflection.list_components())
+    module_info_plt = opts[:module_info_plt]
 
-    # The tasks get the reader, which captures only the shared graph's key: a closure that
-    # captured the graph itself would copy it into every task it starts.
-    CallGraph.with_shared_graph(call_graph, fn read_graph ->
-      server_callback_analysis_by_templatable =
-        CallGraph.server_callback_analysis_by_templatable(
-          read_graph.(),
-          templatables,
-          module_info_plt
+    mfas_by_page
+    |> Enum.flat_map(fn {_page_module, mfas} -> mfas end)
+    |> encode_reachable_functions(ir_plt, encode_plt, async_mfas, module_info_plt)
+
+    TaskUtils.map_concurrently(mfas_by_page, fn {page_module, mfas} ->
+      entry_name = Reflection.module_name(page_module)
+
+      entry_file_path =
+        mfas
+        |> build_page_js(ir_plt, encode_plt, async_mfas,
+          js_dir: opts[:js_dir],
+          module_info_plt: module_info_plt,
+          module_metadata: opts[:module_metadata],
+          runtime_js_binding_modules: runtime_js_binding_modules
         )
+        |> create_entry_file(entry_name, opts[:tmp_dir])
 
-      # Listing a page's MFAs is a cheap graph walk, and knowing every page's before rendering any
-      # lets each module's IR be read once for all pages, rather than by every page that finds one
-      # of its functions missing, concurrently with the others.
-      mfas_by_page =
-        TaskUtils.map_concurrently(page_modules, fn page_module ->
-          mfas =
-            CallGraph.list_page_mfas(
-              read_graph.(),
-              page_module,
-              server_callback_analysis_by_templatable,
-              module_info_plt
-            )
-
-          {page_module, mfas}
-        end)
-
-      mfas_by_page
-      |> Enum.flat_map(fn {_page_module, mfas} -> mfas end)
-      |> encode_reachable_functions(ir_plt, encode_plt, async_mfas, module_info_plt)
-
-      TaskUtils.map_concurrently(mfas_by_page, fn {page_module, mfas} ->
-        entry_name = Reflection.module_name(page_module)
-
-        entry_file_path =
-          mfas
-          |> build_page_js(ir_plt, encode_plt, async_mfas,
-            js_dir: opts[:js_dir],
-            module_info_plt: module_info_plt,
-            module_metadata: opts[:module_metadata],
-            runtime_js_binding_modules: runtime_js_binding_modules
-          )
-          |> create_entry_file(entry_name, opts[:tmp_dir])
-
-        {page_module, entry_file_path}
-      end)
+      {page_module, entry_file_path}
     end)
   end
 
@@ -625,6 +722,37 @@ defmodule Hologram.Compiler do
       module_metadata: opts[:module_metadata]
     )
     |> create_entry_file("runtime", opts[:tmp_dir])
+  end
+
+  @doc """
+  Deletes from the encode PLT the entries of the given modules' functions, and returns the PLT. A
+  module's functions are encoded again from its IR once it was edited, and are gone with it once it
+  was removed. Reads the keys only, never the values. Given no module, it reads nothing.
+  """
+  @spec delete_module_encodings(PLT.t(), [module]) :: PLT.t()
+  def delete_module_encodings(encode_plt, []), do: encode_plt
+
+  def delete_module_encodings(encode_plt, modules) do
+    dropped_modules = MapSet.new(modules)
+
+    encode_plt
+    |> PLT.keys()
+    |> Enum.filter(fn {module, _function, _arity} -> MapSet.member?(dropped_modules, module) end)
+    |> Enum.each(&PLT.delete(encode_plt, &1))
+
+    encode_plt
+  end
+
+  @doc """
+  Deletes the IR of the given modules from the IR PLT and returns the PLT. The compile task calls it
+  with the removed and edited modules of a compile: a removed module's IR is not read again, and an
+  edited module's is built again from its new beam, with `build_missing_ir!/2`, by whatever reads it
+  in this compile or a later one.
+  """
+  @spec delete_module_ir(PLT.t(), [module]) :: PLT.t()
+  def delete_module_ir(ir_plt, modules) do
+    TaskUtils.map_concurrently(modules, &PLT.delete(ir_plt, &1))
+    ir_plt
   end
 
   @doc """
@@ -689,6 +817,25 @@ defmodule Hologram.Compiler do
     end)
 
     :ok
+  end
+
+  @doc """
+  Returns the fingerprint of each given file, keyed by its path: `{:digest, digest}` of the content
+  for a file outside any `node_modules` dir (the app's own JavaScript, which the dev saves,
+  sometimes within the second of a compile), `{:stat, mtime, size}` for a file under one (packages
+  change on install, never within a second of a compile, and a bundle can read dozens of them),
+  `:fresh` for a file whose mtime is not older than `started_at` in posix seconds (it may have been
+  written after the reader that started then read it, so its record must never match; nil takes no
+  file as fresh) and `:missing` for a file that is not there or cannot be read (one removed between
+  its stat and its read included). A bundle records the fingerprints of the files esbuild read for
+  it (see `bundle/4`), and the compile task compares them with the fingerprints now to find the
+  bundles to rebuild.
+  """
+  @spec fingerprint_js_inputs([String.t()], non_neg_integer | nil) :: %{
+          String.t() => js_input_fingerprint
+        }
+  def fingerprint_js_inputs(paths, started_at) do
+    Map.new(paths, &{&1, fingerprint_js_input(&1, started_at)})
   end
 
   @doc """
@@ -759,6 +906,22 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
+  Whether a bundle's recorded inputs (see `bundle/4`) no longer match the files: any recorded file
+  whose fingerprint differs from its fingerprint now in `js_fingerprints` (see
+  `fingerprint_js_inputs/2`), or that `js_fingerprints` does not hold. Each bundle is compared on
+  its own record: two bundles can hold different fingerprints of one file, when it was saved
+  between the two builds, and only the one that read the old content is stale.
+  """
+  @spec js_inputs_changed?(%{String.t() => js_input_fingerprint}, %{
+          String.t() => js_input_fingerprint
+        }) :: boolean
+  def js_inputs_changed?(js_inputs, js_fingerprints) do
+    Enum.any?(js_inputs, fn {path, fingerprint} ->
+      Map.get(js_fingerprints, path) != fingerprint
+    end)
+  end
+
+  @doc """
   Returns every component usage found in the given IR, as `{component_module, props, has_spread?}`
   tuples, in the order they appear in the template.
 
@@ -791,6 +954,20 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
+  Lists the modules whose IR the entry files rendered from the given MFAs read: the modules of those MFAs and
+  of the manually ported MFAs (the runtime entry file renders their clause heads), each once. Only the modules
+  the module info PLT holds are listed, since the IR PLT is built for those alone (an Erlang module has no IR).
+  """
+  @spec list_ir_modules([mfa], PLT.t()) :: [module]
+  def list_ir_modules(mfas, module_info_plt) do
+    [mfas, CallGraph.manually_ported_elixir_mfas()]
+    |> Stream.concat()
+    |> Stream.map(fn {module, _function, _arity} -> module end)
+    |> Stream.uniq()
+    |> Enum.filter(&PLT.member?(module_info_plt, &1))
+  end
+
+  @doc """
   Lists the Elixir modules referenced by the given MFAs that declare JS imports. The IR PLT tells
   the Elixir modules apart from the Erlang ones, and the module info PLT says which of them declare
   imports without touching their code paths; with nil, every module is asked.
@@ -805,11 +982,132 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
+  Lists the modules whose IR and function encodings a compile keeps: the modules the runtime entry file
+  reads (see `list_ir_modules/2`) and the modules each page reaches, each once. A page's modules are
+  given as the `MapSet` of the modules of its reachable MFAs, as a page state keeps it, so they include
+  the page itself: every page is kept, and a component no page reaches is not. Only the modules the
+  module info PLT holds are listed, since the IR PLT is built for those alone.
+  """
+  @spec list_kept_modules([mfa], [{module, MapSet.t(module)}], PLT.t()) :: [module]
+  def list_kept_modules(runtime_mfas, modules_by_page, module_info_plt) do
+    page_reached_modules =
+      modules_by_page
+      |> Enum.reduce(MapSet.new(), fn {_page_module, modules}, acc ->
+        MapSet.union(acc, modules)
+      end)
+      |> Enum.filter(&PLT.member?(module_info_plt, &1))
+
+    runtime_mfas
+    |> list_ir_modules(module_info_plt)
+    |> Enum.concat(page_reached_modules)
+    |> Enum.uniq()
+  end
+
+  @doc """
+  Lists, for each page, the MFAs reachable from it (see `CallGraph.list_page_mfas/5`), sharing the call
+  graph's graph with the page tasks (see `CallGraph.with_shared_graph/2`) and the server callback
+  analyses they compute, for this call. The compile task lists its batches with `list_mfas_by_page/5`
+  against a graph and analyses it shares for the whole compile; this is for a caller that lists once.
+  With no page, the graph is not read: a graph still being rebuilt is not waited for. A caller
+  with no graph to give (see the compile task's pages graph) passes nil with no page. The opts are
+  passed on to `CallGraph.list_page_mfas/5` (the `:gate` opt says which reflection functions the
+  pages can call).
+  """
+  @spec list_mfas_by_page([module], CallGraph.t() | nil, T.opts()) :: [{module, [mfa]}]
+  def list_mfas_by_page(page_modules, call_graph, opts \\ [])
+
+  def list_mfas_by_page([], _call_graph, _opts), do: []
+
+  def list_mfas_by_page(page_modules, call_graph, opts) do
+    module_info_plt = CallGraph.module_info_plt(call_graph)
+    analyses = PLT.start()
+
+    try do
+      CallGraph.with_shared_graph(
+        call_graph,
+        &list_mfas_by_page(page_modules, &1, analyses, module_info_plt, opts)
+      )
+    after
+      PLT.stop(analyses)
+    end
+  end
+
+  @doc """
+  Lists, for each page, the MFAs reachable from it (see `CallGraph.list_page_mfas/5`), one task per
+  page, through the reader of a shared graph (see `CallGraph.with_shared_graph/2`) and the PLT of
+  server callback analyses, which the pages fill as they go: a caller listing pages in rounds, as the
+  compile task does with its batches, computes each templatable's analysis once for all of them. The
+  opts are passed on to `CallGraph.list_page_mfas/5`.
+  """
+  @spec list_mfas_by_page([module], (-> Digraph.t()), PLT.t(), PLT.t() | nil, T.opts()) ::
+          [{module, [mfa]}]
+  def list_mfas_by_page(page_modules, read_graph, analyses, module_info_plt, opts \\ []) do
+    # The tasks get the reader, which captures only the shared graph's key: a closure that
+    # captured the graph itself would copy it into every task it starts. Listing a page's MFAs is
+    # a cheap graph walk.
+    TaskUtils.map_concurrently(page_modules, fn page_module ->
+      mfas = CallGraph.list_page_mfas(read_graph.(), page_module, analyses, module_info_plt, opts)
+      {page_module, mfas}
+    end)
+  end
+
+  @doc """
+  Lists, for each given page, the pages among the modules it reaches, itself excluded. A link or a
+  path helper in a template is a call with the page module as an argument, which reaches the page's
+  module vertex and through it `__params__/0` and `__route__/0` only, so the modules of a page's
+  reachable MFAs, given as the `MapSet` a page state keeps, name exactly the pages it links to, one
+  hop away. A page whose modules are not given, one no compile has built, links to no page.
+  """
+  @spec list_page_links([{module, MapSet.t(module)}], [module]) :: %{module => MapSet.t(module)}
+  def list_page_links(modules_by_page, page_modules) do
+    page_set = MapSet.new(page_modules)
+
+    links =
+      Map.new(modules_by_page, fn {page_module, modules} ->
+        linked_pages =
+          modules
+          |> MapSet.intersection(page_set)
+          |> MapSet.delete(page_module)
+
+        {page_module, linked_pages}
+      end)
+
+    Map.new(page_modules, &{&1, Map.get(links, &1, MapSet.new())})
+  end
+
+  @doc """
   Lists the page modules recorded in the given module info PLT, sorted by name.
   """
   @spec list_pages(PLT.t()) :: list(module)
   def list_pages(module_info_plt) do
     list_modules_where(module_info_plt, :page?)
+  end
+
+  @doc """
+  Lists the templatables whose prop usages a compile validates: every one when no earlier validation
+  is kept (`template_modules` nil), else the ones the module digests diff added or edited, and the
+  ones whose template uses an added, edited or removed module, as `template_modules` (each
+  templatable's used modules, from `validate_prop_usages/2`) records them. A usage's validity
+  depends on its template and on the used component's props, which live in those modules' beams
+  alone.
+  """
+  @spec list_templatables_to_validate([module], map, %{module => MapSet.t(module)} | nil) ::
+          [module]
+  def list_templatables_to_validate(templatable_modules, _module_digests_diff, nil) do
+    templatable_modules
+  end
+
+  def list_templatables_to_validate(templatable_modules, module_digests_diff, template_modules) do
+    changed_modules =
+      MapSet.new(
+        module_digests_diff.added_modules ++
+          module_digests_diff.edited_modules ++ module_digests_diff.removed_modules
+      )
+
+    Enum.filter(templatable_modules, fn module ->
+      MapSet.member?(changed_modules, module) or
+        not MapSet.disjoint?(template_modules[module], changed_modules)
+    end)
   end
 
   @doc """
@@ -835,34 +1133,6 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
-  Loads call graph from a dump file if the file exists or creates an empty call graph.
-
-  Benchmarks: https://github.com/bartblast/hologram/blob/master/benchmarks/compiler/maybe_load_call_graph_1/README.md
-  """
-  @spec maybe_load_call_graph(T.file_path(), T.opts()) :: {CallGraph.t(), String.t()}
-  def maybe_load_call_graph(build_dir, opts \\ []) do
-    call_graph = CallGraph.start(opts)
-    call_graph_dump_path = Path.join(build_dir, Reflection.call_graph_dump_file_name())
-    CallGraph.maybe_load(call_graph, call_graph_dump_path)
-
-    {call_graph, call_graph_dump_path}
-  end
-
-  @doc """
-  Loads IR PLT from a dump file if the file exists or creates an empty PLT.
-
-  Benchmarks: https://github.com/bartblast/hologram/blob/master/benchmarks/compiler/maybe_load_ir_plt_1/README.md
-  """
-  @spec maybe_load_ir_plt(T.file_path()) :: {PLT.t(), String.t()}
-  def maybe_load_ir_plt(build_dir) do
-    ir_plt = PLT.start()
-    ir_plt_dump_path = Path.join(build_dir, Reflection.ir_plt_dump_file_name())
-    PLT.maybe_load(ir_plt, ir_plt_dump_path)
-
-    {ir_plt, ir_plt_dump_path}
-  end
-
-  @doc """
   Loads the module info PLT from its dump file in the build dir if the file exists, or creates an empty PLT.
   Returns the PLT, the dump path, and the dump file's mtime in posix seconds (nil when there is no dump),
   which `build_module_info_plt!/3` uses to decide which entries can be reused.
@@ -872,12 +1142,7 @@ defmodule Hologram.Compiler do
   def maybe_load_module_info_plt(build_dir, opts \\ []) do
     plt = PLT.start(opts)
     dump_path = Path.join(build_dir, Reflection.module_info_plt_dump_file_name())
-
-    dumped_at =
-      case File.stat(dump_path, time: :posix) do
-        {:ok, %File.Stat{mtime: mtime}} -> mtime
-        {:error, _reason} -> nil
-      end
+    dumped_at = module_info_dumped_at(dump_path)
 
     PLT.maybe_load(plt, dump_path)
 
@@ -885,56 +1150,285 @@ defmodule Hologram.Compiler do
   end
 
   @doc """
-  Given a module digests diff, updates the IR persistent lookup table (PLT)
-  by deleting entries for modules that have been removed,
-  rebuilding the IR of modules that have been edited,
-  and adding the IR of new modules.
+  Returns the mtime in posix seconds of the module info dump at the given path, which
+  `build_module_info_plt!/3` takes as `dumped_at`, or nil when there is no dump.
   """
-  @spec patch_ir_plt!(PLT.t(), map) :: PLT.t()
-  def patch_ir_plt!(ir_plt, module_digests_diff) do
-    # TODO: Remove this flag and the argument it feeds to rebuild_ir_plt_entry!/3
-    # when resolve_beam_source/2 goes (see the removal note there).
-    umbrella? = Reflection.umbrella?()
-
-    TaskUtils.map_concurrently(module_digests_diff.removed_modules, &PLT.delete(ir_plt, &1))
-
-    TaskUtils.map_concurrently(
-      module_digests_diff.edited_modules ++ module_digests_diff.added_modules,
-      &rebuild_ir_plt_entry!(ir_plt, &1, umbrella?)
-    )
-
-    ir_plt
+  @spec module_info_dumped_at(T.file_path()) :: non_neg_integer | nil
+  def module_info_dumped_at(dump_path) do
+    case File.stat(dump_path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} -> mtime
+      {:error, _reason} -> nil
+    end
   end
 
   @doc """
-  Keeps only those IR expressions that are function definitions of the given reachable MFAs.
-  For protocol modules, additionally drops the consolidated impl_for/1 and struct_impl_for/1
-  clauses that return implementations not included in the given reachable MFAs.
-  """
-  @spec prune_module_def(IR.ModuleDefinition.t(), list(mfa)) :: IR.ModuleDefinition.t()
-  def prune_module_def(module_def_ir, reachable_mfas) do
-    module = module_def_ir.module.value
+  Splits the given pages into the ones a compile must rebuild and the ones whose bundle it can reuse.
 
-    module_reachable_mfas =
-      reachable_mfas
-      |> Enum.filter(fn {reachable_module, _function, _arity} -> reachable_module == module end)
-      |> MapSet.new()
+  A page is rebuilt when the pages PLT holds no state for it (a new page, or the first compile in a
+  VM), when the modules of its kept MFAs meet `reaching_modules` (see
+  `Hologram.Compiler.CallGraph.list_modules_reaching/2`: every way a page's bundle depends on a
+  module is a path in the call graph from a vertex of the page, or of a component it renders, to that
+  module), when the bundle its kept state describes or that bundle's source map is no longer on disk
+  (a build dir can lose bundles to another build env sharing the static dir), or when that bundle
+  belongs to a static dir other than the given one. A page whose bundle's recorded inputs no longer
+  match `js_fingerprints`, the fingerprints of the files now, is rebuilt as well (see
+  `js_inputs_changed?/2`): no beam moves when a JavaScript file a bundle inlines is edited. A page
+  in `pending_pages` is rebuilt too: an earlier compile set out to build it and did not, so its kept
+  bundle may predate an edit.
+
+  Returns `{pages_to_rebuild, kept_pages}`, where the kept pages carry their state, both in the order
+  the pages were given.
+  """
+  @spec partition_affected_pages(
+          [module],
+          MapSet.t(module),
+          %{String.t() => js_input_fingerprint},
+          MapSet.t(module),
+          PLT.t(),
+          T.file_path()
+        ) ::
+          {[module], [{module, map}]}
+  def partition_affected_pages(
+        page_modules,
+        reaching_modules,
+        js_fingerprints,
+        pending_pages,
+        pages_plt,
+        static_dir
+      ) do
+    {kept_pages, pages_to_rebuild} =
+      page_modules
+      |> Enum.map(fn page_module ->
+        page_state =
+          keepable_page_state(
+            pages_plt,
+            page_module,
+            reaching_modules,
+            js_fingerprints,
+            pending_pages,
+            static_dir
+          )
+
+        {page_module, page_state}
+      end)
+      |> Enum.split_with(fn {_page_module, page_state} -> page_state end)
+
+    {Enum.map(pages_to_rebuild, fn {page_module, nil} -> page_module end), kept_pages}
+  end
+
+  @doc """
+  Returns `{pages_to_rebuild, kept_pages}`: the pages this compile must rebuild, which it lists with
+  their batches (see `list_mfas_by_page/5`), and the pages whose kept bundle it can reuse, each with
+  its state.
+
+  Options:
+
+    * `:gate` - the dynamic call gate the pages are listed with (see
+      `Hologram.Compiler.DynamicCallGate`); read only with `:relist_all?`, where the kept pages are
+      listed again with it, as their kept MFA lists were. Defaults to none.
+    * `:pages_plt` - the PLT of page states kept by `Hologram.Compiler.Cache`.
+    * `:page_mfas_plt` - the PLT of page MFA lists kept by `Hologram.Compiler.Cache`; read only with
+      `:relist_all?`. A kept page it has no list for is rebuilt then.
+    * `:pending_pages` - the pages an earlier compile left unbuilt (see
+      `Hologram.Compiler.Cache.put_pending_pages/1`); they are rebuilt whether or not the edit reaches
+      them. Defaults to none.
+    * `:reaching_modules` - the modules that reach the changed ones, from
+      `Hologram.Compiler.CallGraph.list_modules_reaching/2`; see `partition_affected_pages/6` for
+      what makes a page affected.
+    * `:js_fingerprints` - the fingerprints now of the files the kept bundles read (see
+      `fingerprint_js_inputs/2`); a kept page whose recorded inputs no longer match them is
+      rebuilt. Defaults to none, which only a page that recorded no input matches.
+    * `:static_dir` - the dir this compile writes its bundles to; a kept bundle must live there.
+    * `:relist_all?` - when the runtime bundle's MFA set, or what its dynamic calls open (see
+      `Hologram.Compiler.CallGraph.runtime_dynamic_calls/2`), changed. A kept page's MFAs can then
+      have moved although nothing it reaches was edited: a function that joined the runtime's set
+      leaves the page's bundle, and one that left it enters, and a reflection function the runtime
+      opens or closes enters or leaves it. The otherwise kept pages are listed again and those whose
+      list differs from the one their bundle was built from are rebuilt, and listed again with their
+      batch: few pages move, and a page's list is taken when the page is built.
+    * `:rebuild_all?` - when the JS import modules the runtime registers changed. Page bundles leave
+      those imports out, which their MFA lists do not show, so every page is rebuilt.
+
+  The call graph is read only with `:relist_all?`, so a caller that passes it false may pass nil.
+  """
+  @spec partition_pages_to_rebuild([module], CallGraph.t() | nil, T.opts()) ::
+          {[module], [{module, map}]}
+  def partition_pages_to_rebuild(page_modules, call_graph, opts) do
+    {pages_to_rebuild, kept_pages} =
+      if opts[:rebuild_all?] do
+        {page_modules, []}
+      else
+        partition_affected_pages(
+          page_modules,
+          opts[:reaching_modules],
+          Keyword.get(opts, :js_fingerprints, %{}),
+          Keyword.get(opts, :pending_pages, MapSet.new()),
+          opts[:pages_plt],
+          opts[:static_dir]
+        )
+      end
+
+    if opts[:relist_all?] do
+      {moved_pages, still_kept_pages} =
+        relist_kept_pages(kept_pages, call_graph, opts[:page_mfas_plt], opts[:gate])
+
+      {pages_to_rebuild ++ moved_pages, still_kept_pages}
+    else
+      {pages_to_rebuild, kept_pages}
+    end
+  end
+
+  @doc """
+  Brings the module info PLT of the last finished compile in this VM in line with the beams now, in
+  place, and returns what changed: the module digests diff (as `diff_module_info_plts/2` returns it,
+  each list sorted) and whether any entry changed at all (an entry whose mtime moved but whose
+  digest did not is changed, but no edit).
+
+  A module the compiler reported since the last compile (`compiled_modules`, see
+  `Hologram.Compiler.Tracer.take/1`) is read, whatever its entry says. The entry of any other module
+  is left where it is, unless it is a protocol's, whose consolidated beam a new implementation
+  rewrites without a compile, or there is none; that one is checked against the entry's mtime and
+  size, as in `build_module_info_plt!/3`, with `dumped_at` the mtime of the dump the last compile
+  wrote. A module of `editable_modules` that is not among `editable_beams` now is looked up as
+  `build_module_info_plt!/3` looks up every module, and loses its entry only when the VM has no beam
+  for it: a deleted module is purged, while a consolidated protocol whose directory is off the code
+  path for a moment (Phoenix's reloader takes it off while it recompiles) keeps its entry. Leaving
+  the entries a scan into a new PLT would copy is what makes a compile that changed nothing cheap.
+  """
+  @spec patch_module_info_plt!(
+          PLT.t(),
+          non_neg_integer | nil,
+          MapSet.t(module),
+          list({module, charlist}),
+          MapSet.t(module)
+        ) :: {map, boolean}
+  def patch_module_info_plt!(plt, dumped_at, editable_modules, editable_beams, compiled_modules) do
+    beam_results =
+      TaskUtils.map_concurrently(editable_beams, fn {module, beam_path} ->
+        patch_module_info_plt_entry!(plt, module, beam_path, dumped_at, compiled_modules)
+      end)
+
+    listed_modules = MapSet.new(editable_beams, fn {module, _beam_path} -> module end)
+    umbrella? = Reflection.umbrella?()
+
+    vanished_results =
+      editable_modules
+      |> MapSet.difference(listed_modules)
+      |> Enum.map(&patch_vanished_module_info!(plt, &1, dumped_at, umbrella?))
+
+    results = beam_results ++ vanished_results
+
+    diff = %{
+      added_modules: list_results(results, :added),
+      edited_modules: list_results(results, :edited),
+      removed_modules: list_results(results, :removed)
+    }
+
+    {diff, Enum.any?(results, &(&1 != :kept))}
+  end
+
+  @doc """
+  Returns the kept module metadata (see `build_module_metadata/1`) brought in line with the module
+  digests diff: the entries of the removed and edited modules dropped, the entries of the added and
+  edited modules built from the module info PLT, as `build_module_metadata/1` builds them. An entry
+  depends on its module's beam alone, since the application tables it names do not move within a VM.
+  """
+  @spec patch_module_metadata(%{module => map}, map, PLT.t()) :: %{module => map}
+  def patch_module_metadata(module_metadata, module_digests_diff, module_info_plt) do
+    root_dir = Reflection.root_dir()
+
+    rebuilt_entries =
+      for module <- module_digests_diff.added_modules ++ module_digests_diff.edited_modules,
+          {:ok, %{source_path: source_path}} when is_binary(source_path) <-
+            [PLT.get(module_info_plt, module)],
+          into: %{} do
+        {module,
+         %{
+           app: module_application(module),
+           file: Reflection.relative_source_path(source_path, root_dir)
+         }}
+      end
+
+    module_metadata
+    |> Map.drop(module_digests_diff.removed_modules ++ module_digests_diff.edited_modules)
+    |> Map.merge(rebuilt_entries)
+  end
+
+  @doc """
+  Deletes from the IR PLT the entries of modules not in the given list, and returns the modules it
+  deleted. Reads the keys only, never the values: the table can hold gigabytes.
+  """
+  @spec prune_ir_plt(PLT.t(), [module]) :: [module]
+  def prune_ir_plt(ir_plt, modules) do
+    kept_modules = MapSet.new(modules)
+
+    dropped_modules =
+      ir_plt
+      |> PLT.keys()
+      |> Enum.reject(&MapSet.member?(kept_modules, &1))
+
+    Enum.each(dropped_modules, &PLT.delete(ir_plt, &1))
+
+    dropped_modules
+  end
+
+  @doc """
+  Whether the runtime bundle must be rebuilt because its inputs differ from the ones the kept runtime
+  state was built from: its MFAs, the JS import modules it registers (which every page bundle leaves
+  out) and the application versions it carries. True when there is no kept state.
+  """
+  @spec runtime_changed?(map | nil, [mfa], MapSet.t(module), keyword(String.t())) :: boolean
+  def runtime_changed?(kept_runtime, runtime_mfas, js_binding_modules, app_versions)
+
+  def runtime_changed?(nil, _runtime_mfas, _js_binding_modules, _app_versions), do: true
+
+  def runtime_changed?(kept_runtime, runtime_mfas, js_binding_modules, app_versions) do
+    kept_runtime.mfas != runtime_mfas or
+      kept_runtime.js_binding_modules != js_binding_modules or
+      kept_runtime.app_versions != app_versions
+  end
+
+  @doc """
+  Keeps only those IR expressions that are function definitions of the given reachable MFAs of
+  the module. For protocol modules, additionally drops the consolidated impl_for/1 and
+  struct_impl_for/1 clauses that return implementations not among the given reachable modules.
+  Which modules are protocols and implementations is answered from the given module info PLT
+  (nil to ask the modules), so no module is loaded to prune a dispatcher.
+  """
+  @spec prune_module_def(IR.ModuleDefinition.t(), list(mfa), MapSet.t(module), PLT.t() | nil) ::
+          IR.ModuleDefinition.t()
+  def prune_module_def(module_def_ir, module_mfas, reachable_modules, module_info_plt) do
+    module = module_def_ir.module.value
+    module_mfas = MapSet.new(module_mfas)
 
     function_defs =
       module_def_ir.body.expressions
       |> Enum.filter(fn
         %IR.FunctionDefinition{name: function, arity: arity} ->
-          MapSet.member?(module_reachable_mfas, {module, function, arity})
+          MapSet.member?(module_mfas, {module, function, arity})
 
         _fallback ->
           false
       end)
-      |> maybe_prune_protocol_dispatcher_function_defs(module, reachable_mfas)
+      |> maybe_prune_protocol_dispatcher_function_defs(module, reachable_modules, module_info_plt)
 
     %IR.ModuleDefinition{
       module: module_def_ir.module,
       body: %IR.Block{expressions: function_defs}
     }
+  end
+
+  @doc """
+  Whether the bundle the given bundle info describes can still be served from the given static dir:
+  it was written there, and both the bundle and its source map are on disk. A build dir can lose
+  bundles to another build env sharing the static dir, and the info names one static dir, so reusing
+  it for another would put a digest into that dir's page digest PLT whose file lives elsewhere.
+  """
+  @spec usable_bundle?(map, T.file_path()) :: boolean
+  def usable_bundle?(bundle_info, static_dir) do
+    Path.dirname(bundle_info.static_bundle_path) == static_dir and
+      File.exists?(bundle_info.static_bundle_path) and
+      File.exists?(bundle_info.static_source_map_path)
   end
 
   @doc """
@@ -961,14 +1455,26 @@ defmodule Hologram.Compiler do
   never written at the usage. Those cases, along with dynamic tags, are left to the renderers.
 
   Modules missing from the IR PLT are skipped - a module without a BEAM source has no IR to walk.
+
+  Returns, for each given module, the modules its template uses as components, whether or not they
+  are components: with its own template, all its result depends on (see
+  `list_templatables_to_validate/3`). A skipped module uses none.
   """
-  @spec validate_prop_usages(list(module), PLT.t()) :: :ok
+  @spec validate_prop_usages(list(module), PLT.t()) :: %{module => MapSet.t(module)}
   def validate_prop_usages(modules, ir_plt) do
-    Enum.each(modules, fn module ->
-      case PLT.get(ir_plt, module) do
-        {:ok, ir} -> validate_module_prop_usages(module, ir)
-        _fallback -> :ok
-      end
+    Map.new(modules, fn module ->
+      usages =
+        case PLT.get(ir_plt, module) do
+          {:ok, ir} -> validate_module_prop_usages(module, ir)
+          :error -> []
+        end
+
+      used_modules =
+        MapSet.new(usages, fn {component_module, _prop_entries, _has_spread?} ->
+          component_module
+        end)
+
+      {module, used_modules}
     end)
   end
 
@@ -979,6 +1485,15 @@ defmodule Hologram.Compiler do
   # github.com/deviprsd/hologram/issues/48.
   defp compile_max_concurrency do
     Application.get_env(:hologram, :compile_max_concurrency, System.schedulers_online())
+  end
+
+  # An entry name, a module, tells apart the entries bundled under one bundle name (the pages), so
+  # it goes into the file name, without its Elixir prefix like the entry file name; a bundle name
+  # with a single entry (the runtime) has none.
+  defp bundle_output_name(bundle_name, nil), do: bundle_name
+
+  defp bundle_output_name(bundle_name, entry_name) do
+    "#{bundle_name}-#{Reflection.module_name(entry_name)}"
   end
 
   # A component node is a 4-element tuple whose first element is the :component atom and whose
@@ -1051,6 +1566,13 @@ defmodule Hologram.Compiler do
     Enum.all?(Reflection.beam_info_keys(), &Map.has_key?(info, &1))
   end
 
+  defp digest_js_input(path) do
+    case File.read(path) do
+      {:ok, content} -> {:digest, :erlang.phash2(content)}
+      {:error, _reason} -> :missing
+    end
+  end
+
   defp edited_module?(old_infos, module, digest) do
     match?(%{digest: old_digest} when old_digest != digest, old_infos[module])
   end
@@ -1114,7 +1636,7 @@ defmodule Hologram.Compiler do
     Enum.flat_map(fun_arities, fn {function, arity} ->
       case PLT.get(encode_plt, {module, function, arity}) do
         # A reachable MFA with no definition in the module IR renders nothing, which is what
-        # prune_module_def/2 has always done with it.
+        # prune_module_def/4 does with it.
         {:ok, nil} ->
           []
 
@@ -1160,8 +1682,32 @@ defmodule Hologram.Compiler do
     end)
   end
 
+  defp fingerprint_js_input(path, started_at) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} when is_integer(started_at) and mtime >= started_at ->
+        :fresh
+
+      {:ok, %File.Stat{mtime: mtime, size: size}} ->
+        if "node_modules" in Path.split(path) do
+          {:stat, mtime, size}
+        else
+          digest_js_input(path)
+        end
+
+      {:error, _reason} ->
+        :missing
+    end
+  end
+
   defp function_encoded?(encode_plt, module, {function, arity}) do
     PLT.member?(encode_plt, {module, function, arity})
+  end
+
+  defp get_module_info(plt, module) do
+    case PLT.get(plt, module) do
+      {:ok, info} -> info
+      :error -> nil
+    end
   end
 
   defp get_package_json_digest(assets_dir) do
@@ -1197,37 +1743,149 @@ defmodule Hologram.Compiler do
     end)
   end
 
-  defp included_protocol_implementations(reachable_mfas, protocol) do
-    reachable_mfas
-    |> Enum.map(fn {module, _function, _arity} -> module end)
-    |> Enum.uniq()
-    |> Enum.filter(&(Reflection.protocol_implementation(&1) == protocol))
+  defp included_protocol_implementations(reachable_modules, protocol, module_info_plt) do
+    reachable_modules
+    |> Enum.filter(&(Reflection.protocol_implementation(&1, module_info_plt) == protocol))
     |> MapSet.new()
   end
 
+  # The catch-all clause returns nil and every included implementation ships in the bundle, so
+  # only a clause naming another module needs the module info PLT to say whether it is an
+  # implementation of this protocol (dropped) or something else (kept).
   defp keep_protocol_dispatcher_function_def?(
          %IR.FunctionDefinition{name: function, arity: 1, clause: clause},
          protocol,
-         included_impls
+         included_impls,
+         module_info_plt
        )
        when function in [:impl_for, :struct_impl_for] do
     case clause do
       %IR.FunctionClause{body: %IR.Block{expressions: [%IR.AtomType{value: value}]}} ->
-        Reflection.protocol_implementation(value) != protocol or
-          MapSet.member?(included_impls, value)
+        is_nil(value) or MapSet.member?(included_impls, value) or
+          Reflection.protocol_implementation(value, module_info_plt) != protocol
 
       _clause ->
         true
     end
   end
 
-  defp keep_protocol_dispatcher_function_def?(_function_def, _protocol, _included_impls), do: true
+  defp keep_protocol_dispatcher_function_def?(
+         _function_def,
+         _protocol,
+         _included_impls,
+         _module_info_plt
+       ),
+       do: true
 
+  # nil when the page must be rebuilt, its kept state otherwise.
+  defp keepable_page_state(
+         pages_plt,
+         page_module,
+         reaching_modules,
+         js_fingerprints,
+         pending_pages,
+         static_dir
+       ) do
+    with false <- MapSet.member?(pending_pages, page_module),
+         {:ok, page_state} <- PLT.get(pages_plt, page_module),
+         true <- MapSet.disjoint?(page_state.modules, reaching_modules),
+         false <- js_inputs_changed?(page_state.bundle_info.js_inputs, js_fingerprints),
+         true <- usable_bundle?(page_state.bundle_info, static_dir) do
+      page_state
+    else
+      _fallback -> nil
+    end
+  end
+
+  # The files esbuild read for a bundle, as its metafile lists them relative to the working dir,
+  # with their fingerprints taken against the time esbuild started (see fingerprint_js_inputs/2).
+  # The entry file (under the tmp dir), Hologram's own sources (under the js dir) and the packages
+  # they use are left out: the bundle inputs cover those for every bundle at once (see
+  # build_bundle_inputs/2). esbuild resolves a package from the importing file's dir upwards, so
+  # Hologram's sources take theirs from the node_modules next to the js dir; the node_modules path
+  # opt names the same dir in an app, and is left out too.
+  defp list_bundle_js_inputs(metafile_path, started_at, opts) do
+    cwd = File.cwd!()
+
+    hologram_node_modules_dir =
+      if opts[:js_dir] do
+        opts[:js_dir]
+        |> Path.dirname()
+        |> Path.join("node_modules")
+      end
+
+    left_out_dirs =
+      [opts[:tmp_dir], opts[:js_dir], hologram_node_modules_dir, opts[:node_modules_path]]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map(&Path.expand/1)
+
+    metafile_path
+    |> File.read!()
+    |> JSON.decode!()
+    |> Map.fetch!("inputs")
+    |> Map.keys()
+    |> Enum.map(&Path.expand(&1, cwd))
+    |> Enum.reject(fn path -> Enum.any?(left_out_dirs, &(Path.relative_to(path, &1) != path)) end)
+    |> fingerprint_js_inputs(started_at)
+  end
+
+  # Hologram's own modules that the module info PLT holds, with their digests, sorted: the modules of
+  # the :hologram app whose source is in Hologram's lib dir, the dir the Hologram module itself was
+  # compiled from. Hologram's own tests compile their fixtures into the :hologram app too, and an
+  # edit of a fixture is an edit of an app module, not of Hologram.
+  defp list_hologram_module_digests(module_info_plt) do
+    Application.ensure_loaded(:hologram)
+
+    lib_dir =
+      :compile
+      |> Hologram.module_info()
+      |> Keyword.fetch!(:source)
+      |> to_string()
+      |> Path.dirname()
+
+    digests =
+      for module <- Application.spec(:hologram, :modules),
+          {:ok, %{digest: digest, source_path: source_path}} <- [PLT.get(module_info_plt, module)],
+          is_binary(source_path),
+          Path.relative_to(source_path, lib_dir) != source_path do
+        {module, digest}
+      end
+
+    Enum.sort(digests)
+  end
+
+  # Every regular file under the given dir, as its path relative to the dir with its mtime and size,
+  # sorted.
+  defp list_js_sources(js_dir) do
+    js_dir
+    |> Path.join("**/*")
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      case File.stat!(path, time: :posix) do
+        %File.Stat{type: :regular, mtime: mtime, size: size} ->
+          [{Path.relative_to(path, js_dir), mtime, size}]
+
+        _directory ->
+          []
+      end
+    end)
+    |> Enum.sort()
+  end
+
+  # Filtered in the table, so no info is copied out of it.
   defp list_modules_where(module_info_plt, flag) do
     module_info_plt
-    |> PLT.get_all()
-    |> Enum.filter(fn {_module, info} -> info[flag] end)
-    |> Enum.map(fn {module, _info} -> module end)
+    |> PLT.keys(%{flag => true})
+    |> Enum.sort()
+  end
+
+  # The modules of the given kind among the results of patch_module_info_plt_entry!/5, sorted.
+  defp list_results(results, kind) do
+    results
+    |> Enum.flat_map(fn
+      {^kind, module} -> [module]
+      _other -> []
+    end)
     |> Enum.sort()
   end
 
@@ -1255,13 +1913,19 @@ defmodule Hologram.Compiler do
   # Consolidated protocol dispatchers list every loaded implementation. Keep only
   # clauses for implementations that ship in the same bundle, so dispatch on other
   # types falls through to the catch-all clause and raises Protocol.UndefinedError.
-  defp maybe_prune_protocol_dispatcher_function_defs(function_defs, module, reachable_mfas) do
-    if Reflection.protocol?(module) do
-      included_impls = included_protocol_implementations(reachable_mfas, module)
+  defp maybe_prune_protocol_dispatcher_function_defs(
+         function_defs,
+         module,
+         reachable_modules,
+         module_info_plt
+       ) do
+    if Reflection.protocol?(module, module_info_plt) do
+      included_impls =
+        included_protocol_implementations(reachable_modules, module, module_info_plt)
 
       Enum.filter(
         function_defs,
-        &keep_protocol_dispatcher_function_def?(&1, module, included_impls)
+        &keep_protocol_dispatcher_function_def?(&1, module, included_impls, module_info_plt)
       )
     else
       function_defs
@@ -1329,6 +1993,52 @@ defmodule Hologram.Compiler do
     |> Enum.map(fn {name, _type, _opts} -> name end)
   end
 
+  # The application Reflection.list_module_applications/0 names for the module: the first loaded
+  # application, in the same order, whose modules list it.
+  defp module_application(module) do
+    Enum.find_value(Application.loaded_applications(), fn {app, _description, _version} ->
+      if module in List.wrap(Application.spec(app, :modules)), do: app
+    end)
+  end
+
+  # A compiled module is read. The entry of any other module is left as it is, unless it is a
+  # protocol's, whose consolidated beam a new implementation rewrites without a compile; that one,
+  # and a beam with no entry, is checked against its mtime and size first.
+  defp patch_module_info_plt_entry!(plt, module, beam_path, dumped_at, compiled_modules) do
+    old_info = get_module_info(plt, module)
+
+    cond do
+      MapSet.member?(compiled_modules, module) ->
+        put_compared_module_info(plt, module, old_info, Reflection.beam_info(beam_path))
+
+      match?(%{protocol?: false}, old_info) ->
+        :kept
+
+      true ->
+        new_info =
+          reusable_module_info(module, beam_path, plt, dumped_at) ||
+            Reflection.beam_info(beam_path)
+
+        put_compared_module_info(plt, module, old_info, new_info)
+    end
+  end
+
+  # A module that left the listing without its beam being deleted, as the full scan would see it. A
+  # path the VM still names for a module whose file is gone, or for one compiled in memory, has
+  # nothing to read, so the module loses its entry, as a deleted one.
+  defp patch_vanished_module_info!(plt, module, dumped_at, umbrella?) do
+    beam_source = resolve_beam_source(module, umbrella?)
+    old_info = get_module_info(plt, module)
+
+    new_info =
+      if beam_source && (is_binary(beam_source) or File.regular?(beam_source)) do
+        reusable_module_info(module, beam_source, plt, dumped_at) ||
+          Reflection.beam_info(beam_source)
+      end
+
+    put_compared_module_info(plt, module, old_info, new_info)
+  end
+
   # $-prefixed entries are the framework's own ($key, event bindings), never something the author
   # declared with prop/3, so they are not props as far as a usage is concerned.
   defp prop_entries(props) do
@@ -1368,28 +2078,70 @@ defmodule Hologram.Compiler do
 
   defp static_prop_value(_value_dom), do: :unknown
 
-  # TODO: Drop the umbrella? param and resolve the beam path with :code.which/1
-  # when resolve_beam_source/2 goes (see the removal note there).
-  defp rebuild_ir_plt_entry!(ir_plt, module, umbrella?) do
-    # A nil beam source must not reach IR.for_module/2 - it resolves a nil one
-    # with :code.which/1, which is exactly the stale path that yielded nil here.
-    if beam_source = resolve_beam_source(module, umbrella?) do
-      PLT.put(ir_plt, module, IR.for_module(module, beam_source))
+  # Read gives nil: not an Elixir module.
+  # Puts the new entry in place of the old one and says what that was: an addition, an edit (another
+  # digest), a touch (the same digest, another mtime or size), a removal (a beam that no longer reads
+  # as an Elixir module, or none), or nothing.
+  defp put_compared_module_info(_plt, _module, nil, nil), do: :kept
+
+  defp put_compared_module_info(plt, module, _old_info, nil) do
+    PLT.delete(plt, module)
+    {:removed, module}
+  end
+
+  defp put_compared_module_info(_plt, _module, info, info), do: :kept
+
+  defp put_compared_module_info(plt, module, old_info, new_info) do
+    PLT.put(plt, module, new_info)
+
+    cond do
+      old_info == nil -> {:added, module}
+      old_info.digest != new_info.digest -> {:edited, module}
+      true -> {:touched, module}
     end
+  end
+
+  defp put_module_info(new_plt, module, info) do
+    if info, do: PLT.put(new_plt, module, info)
+  end
+
+  # Not reusable: read it.
+  defp put_module_info_plt_entry!(new_plt, module, beam_source, old_plt, dumped_at) do
+    info =
+      reusable_module_info(module, beam_source, old_plt, dumped_at) ||
+        Reflection.beam_info(beam_source)
+
+    put_module_info(new_plt, module, info)
+  end
+
+  # The kept pages whose MFAs moved, and the ones whose MFAs are unchanged, with their states. A
+  # page's MFAs as its bundle was built from them are read from the page MFAs PLT. A page with no
+  # list there counts as moved: its state was loaded from the compile state dump, which does not hold
+  # the lists (see Hologram.Compiler.Cache.dump_compile_state/2).
+  defp relist_kept_pages(kept_pages, call_graph, page_mfas_plt, gate) do
+    mfas_by_kept_page =
+      kept_pages
+      |> Enum.map(fn {page_module, _page_state} -> page_module end)
+      |> list_mfas_by_page(call_graph, gate: gate)
+      |> Map.new()
+
+    {changed_pages, unchanged_pages} =
+      Enum.split_with(kept_pages, fn {page_module, _page_state} ->
+        PLT.get(page_mfas_plt, page_module) != {:ok, mfas_by_kept_page[page_module]}
+      end)
+
+    moved_pages = Enum.map(changed_pages, fn {page_module, _page_state} -> page_module end)
+
+    {moved_pages, unchanged_pages}
   end
 
   # TODO: Drop the umbrella? param and resolve the beam path with :code.which/1
   # when resolve_beam_source/2 goes (see the removal note there).
   defp rebuild_module_info_plt_entry!(module, old_plt, dumped_at, new_plt, umbrella?) do
-    beam_source = resolve_beam_source(module, umbrella?)
-
-    # No beam: not a module of this project. Not reusable: read it. Read gives nil: not an Elixir module.
-    info =
-      beam_source &&
-        (reusable_module_info(module, beam_source, old_plt, dumped_at) ||
-           Reflection.beam_info(beam_source))
-
-    if info, do: PLT.put(new_plt, module, info)
+    # No beam: not a module of this project.
+    if beam_source = resolve_beam_source(module, umbrella?) do
+      put_module_info_plt_entry!(new_plt, module, beam_source, old_plt, dumped_at)
+    end
   end
 
   # Travels with the per-module metadata, which is emitted under the same
@@ -1415,23 +2167,24 @@ defmodule Hologram.Compiler do
     end
   end
 
-  defp render_client_config do
-    ~s/{errorOverlay: #{Hologram.client_error_overlay?()}, stacktraces: #{Hologram.client_stacktraces?()}}/
-  end
-
   # Functions are listed by module, then function name, then arity. The module order is the
   # sort below; the order within a module comes from IR.aggregate_module_funs/1 on the protocol
   # path and from the sort in render_module_function_defs/7 on the cached one.
   defp render_elixir_function_defs(mfas, ir_plt, encode_plt, async_mfas, module_info_plt) do
-    mfas
-    |> filter_elixir_mfas(ir_plt)
-    |> group_mfas_by_module()
-    |> Enum.sort()
+    mfas_by_module =
+      mfas
+      |> filter_elixir_mfas(ir_plt)
+      |> group_mfas_by_module()
+      |> Enum.sort()
+
+    reachable_modules = MapSet.new(mfas_by_module, fn {module, _module_mfas} -> module end)
+
+    mfas_by_module
     |> TaskUtils.map_concurrently(fn {module, module_mfas} ->
       render_module_function_defs(
         module,
         module_mfas,
-        mfas,
+        reachable_modules,
         ir_plt,
         encode_plt,
         async_mfas,
@@ -1484,15 +2237,15 @@ defmodule Hologram.Compiler do
   end
 
   # A protocol's dispatcher functions are selected against the whole reachable set, in
-  # maybe_prune_protocol_dispatcher_function_defs/3, so their JavaScript depends on the entry
+  # maybe_prune_protocol_dispatcher_function_defs/4, so their JavaScript depends on the entry
   # file being built and cannot be keyed by MFA alone. Every other module's functions encode
   # the same wherever they are reached from, so each is encoded once per compile in the common
-  # case, and never differently. The module info PLT answers whether a module is a protocol, so a
-  # module that is not loaded is not asked once per entry file.
+  # case, and never differently. The module info PLT answers whether a module is a protocol and
+  # which protocol a module implements, so no module is asked, or loaded, once per entry file.
   defp render_module_function_defs(
          module,
          module_mfas,
-         mfas,
+         reachable_modules,
          ir_plt,
          encode_plt,
          async_mfas,
@@ -1503,7 +2256,7 @@ defmodule Hologram.Compiler do
     if Reflection.protocol?(module, module_info_plt) do
       ir_plt
       |> PLT.get!(module)
-      |> prune_module_def(mfas)
+      |> prune_module_def(module_mfas, reachable_modules, module_info_plt)
       |> Encoder.encode_ir(context)
     else
       module_mfas
@@ -1570,9 +2323,9 @@ defmodule Hologram.Compiler do
   # pointing at purged consolidated beams. That means this function,
   # Reflection.beam_source/1 and Reflection.umbrella?/0 (if nothing else uses
   # them by then), plus unwinding the umbrella? flag threaded through
-  # build_ir_plt/1, build_module_info_plt!/3, patch_ir_plt!/2,
-  # rebuild_ir_plt_entry!/3 and rebuild_module_info_plt_entry!/5 - their
-  # bodies go back to resolving the beam path with :code.which/1 directly.
+  # build_ir_plt/1, build_module_info_plt!/3 and
+  # rebuild_module_info_plt_entry!/5 - their bodies go back to resolving the
+  # beam path with :code.which/1 directly.
   @spec resolve_beam_source(module, boolean) :: T.file_path() | nil
   def resolve_beam_source(module, true), do: Reflection.beam_source(module)
 
@@ -1605,10 +2358,14 @@ defmodule Hologram.Compiler do
   defp reusable_module_info(_module, _beam_source, _old_plt, _dumped_at), do: nil
 
   defp validate_module_prop_usages(module, ir) do
-    ir
-    |> template_ir()
-    |> list_component_usages()
-    |> Enum.each(&validate_prop_usage(&1, module))
+    usages =
+      ir
+      |> template_ir()
+      |> list_component_usages()
+
+    Enum.each(usages, &validate_prop_usage(&1, module))
+
+    usages
   end
 
   # Only the template's own DOM is validated. A component node is an ordinary 4-tuple, so code

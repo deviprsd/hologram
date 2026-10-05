@@ -10,9 +10,11 @@ defmodule Hologram.ControllerTest do
   alias Hologram.Commons.ETS
   alias Hologram.Commons.SystemUtils
   alias Hologram.Compiler.Encoder
+  alias Hologram.LiveReload
   alias Hologram.Realtime
   alias Hologram.Realtime.Handshake
   alias Hologram.Realtime.Receipt
+  alias Hologram.Realtime.SSE
   alias Hologram.Realtime.SubscriptionRegistry
   alias Hologram.Realtime.Tombstone
   alias Hologram.Router.SearchTree
@@ -178,7 +180,7 @@ defmodule Hologram.ControllerTest do
     ]
   end
 
-  defp post_handshake(instance_id, session_data, receipts \\ []) do
+  defp post_handshake(instance_id, session_data, receipts \\ [], cookies \\ []) do
     parsed_json =
       instance_id
       |> handshake_request_body(receipts)
@@ -188,8 +190,30 @@ defmodule Hologram.ControllerTest do
     :post
     |> Plug.Test.conn("/hologram/sse/handshake", "")
     |> Plug.Test.init_test_session(session_data)
+    |> put_req_cookies(cookies)
     |> Map.put(:body_params, %{"_json" => parsed_json})
     |> handle_sse_handshake_request()
+  end
+
+  # Puts the env var back as it was before the test, set or not.
+  defp put_hologram_env(env) do
+    previous = System.get_env("HOLOGRAM_ENV")
+
+    on_exit(fn ->
+      if previous do
+        System.put_env("HOLOGRAM_ENV", previous)
+      else
+        System.delete_env("HOLOGRAM_ENV")
+      end
+    end)
+
+    System.put_env("HOLOGRAM_ENV", env)
+  end
+
+  defp put_req_cookies(conn, cookies) do
+    Enum.reduce(cookies, conn, fn {name, value}, acc ->
+      Plug.Test.put_req_cookie(acc, name, value)
+    end)
   end
 
   defp render_page_with_instance(page_module, instance_id, client_claimed_sub_keys \\ []) do
@@ -202,6 +226,11 @@ defmodule Hologram.ControllerTest do
       instance_id: instance_id,
       csrf_token: @masked_csrf_token
     )
+  end
+
+  defp start_live_reload do
+    wait_for_process_cleanup(LiveReload)
+    start_supervised!({LiveReload, watch?: false})
   end
 
   defp serialize_params(params) when params == %{} do
@@ -1957,6 +1986,53 @@ defmodule Hologram.ControllerTest do
       :ok
     end
 
+    test "in dev, tells live reload which page the tab rendered" do
+      put_hologram_env("dev")
+      start_live_reload()
+      :ok = SubscriptionRegistry.register_connection("test-instance-id", self())
+
+      render_page_with_instance(Module14, "test-instance-id")
+
+      assert LiveReload.open_pages() == %{"test-instance-id" => Module14}
+    end
+
+    test "outside dev, tells live reload nothing" do
+      put_hologram_env("test")
+      start_live_reload()
+      :ok = SubscriptionRegistry.register_connection("test-instance-id", self())
+
+      render_page_with_instance(Module14, "test-instance-id")
+
+      assert LiveReload.open_pages() == %{}
+    end
+
+    test "in dev, renders a page whose bundle a live reload is building once it is built" do
+      put_hologram_env("dev")
+      pid = start_live_reload()
+
+      # A pass is building the page: pending, with a pass running, so the request waits rather
+      # than starting one.
+      pass_ref = make_ref()
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | pass: %{ref: pass_ref, registries_reloaded?: true},
+            pending: MapSet.new([Module14])
+        }
+      end)
+
+      request = Task.async(fn -> render_page_with_instance(Module14, "test-instance-id") end)
+
+      wait_until(fn -> Map.has_key?(:sys.get_state(pid).waiters, Module14) end)
+      assert Task.yield(request, 50) == nil
+
+      # The pass ends, which answers the requests still waiting.
+      send(pid, {pass_ref, :ok})
+
+      assert %Plug.Conn{status: 200} = Task.await(request)
+    end
+
     test "skips the render and sends the terminal response when page middleware terminates" do
       conn = render_page_with_instance(Module25, "test-instance-id")
 
@@ -2196,6 +2272,25 @@ defmodule Hologram.ControllerTest do
 
       assert {:ok, %{"handshakeId" => handshake_id}} = Jason.decode(conn.resp_body)
       assert {:ok, _info} = UUID.info(handshake_id)
+    end
+
+    test "returns the heartbeat interval the stream will use" do
+      conn = post_handshake("test-instance-id", %{hologram_session_id: "test-session-id"})
+
+      assert {:ok, %{"heartbeatIntervalMs" => interval_ms}} = Jason.decode(conn.resp_body)
+      assert is_integer(interval_ms)
+      assert interval_ms > 0
+    end
+
+    test "returns the seam's heartbeat interval when the cookie is set" do
+      Application.put_env(:hologram, :__sse_test_seams_enabled__, true)
+      on_exit(fn -> Application.delete_env(:hologram, :__sse_test_seams_enabled__) end)
+
+      session_data = %{hologram_session_id: "test-session-id"}
+      cookies = [{SSE.heartbeat_interval_cookie(), "1000"}]
+      conn = post_handshake("test-instance-id", session_data, [], cookies)
+
+      assert {:ok, %{"heartbeatIntervalMs" => 1000}} = Jason.decode(conn.resp_body)
     end
 
     test "returns 401 when the session has no Hologram session_id" do
