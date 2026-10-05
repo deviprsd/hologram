@@ -628,15 +628,18 @@ defmodule Mix.Tasks.Compile.HologramCi do
     server_callback_analysis_by_templatable =
       CallGraph.server_callback_analysis_by_templatable(page_graph, templatables, nil)
 
+    # list_page_mfas/5 reads the analyses from a PLT (and computes into it what is missing), where
+    # it used to take the map this returns. Seeded with every templatable's analysis, so it never
+    # has to compute one itself.
+    analyses =
+      PLT.start(
+        items: Map.to_list(server_callback_analysis_by_templatable),
+        supervisor: sup
+      )
+
     page_mfas_by_page =
       Map.new(page_modules, fn page_module ->
-        {page_module,
-         CallGraph.list_page_mfas(
-           page_graph,
-           page_module,
-           server_callback_analysis_by_templatable,
-           nil
-         )}
+        {page_module, CallGraph.list_page_mfas(page_graph, page_module, analyses, nil)}
       end)
 
     page_mfas =
