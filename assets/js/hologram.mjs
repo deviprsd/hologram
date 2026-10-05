@@ -1280,7 +1280,11 @@ export default class Hologram {
       }
     } else {
       $.#historyId = Utils.randomUUID();
-      history.replaceState($.#historyId, null, window.location.pathname);
+      history.replaceState(
+        $.#historyId,
+        null,
+        window.location.pathname + window.location.search + window.location.hash,
+      );
     }
 
     await $.#restoreEts();
