@@ -292,7 +292,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
         {entry_name, entry_file_path, "page"}
       end)
 
-    entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
+    entry_files_info = [{nil, runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
     {ir_plt, entry_files_info}
   end
@@ -439,7 +439,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
         result
       end)
 
-    entry_files_info = [{"runtime", runtime_entry_file_path, "runtime"} | page_entry_files_info]
+    entry_files_info = [{nil, runtime_entry_file_path, "runtime"} | page_entry_files_info]
 
     {ir_plt, entry_files_info}
   end
