@@ -856,6 +856,11 @@ defmodule Mix.Tasks.Compile.HologramCi do
     match?({:ok, _ir}, PLT.get(ir_plt, module))
   end
 
+  # A dynamic call vertex belongs to the module of the function that makes the call: it is derived
+  # from that module's IR, so it goes when that module does.
+  defp vertex_module({:dynamic_call, {module, _function, _arity}, _name, _arity2, _kind}),
+    do: module
+
   defp vertex_module({module, _function, _arity}), do: module
   defp vertex_module(module) when is_atom(module), do: module
 end
