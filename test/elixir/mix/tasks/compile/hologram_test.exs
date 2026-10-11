@@ -174,6 +174,12 @@ defmodule Mix.Tasks.Compile.HologramTest do
     |> SerializationUtils.deserialize()
   end
 
+  # Names files in the manifest as an earlier compile of this env that wrote them would have: only
+  # what the manifest names is removed, never what another env left in the shared static dir.
+  defp record_static_artifacts(paths, opts) do
+    write_static_artifacts_manifest(paths ++ read_static_artifacts_manifest(opts), opts)
+  end
+
   defp write_static_artifacts_manifest(paths, opts) do
     data = SerializationUtils.serialize(paths)
 
@@ -377,6 +383,7 @@ defmodule Mix.Tasks.Compile.HologramTest do
     old_source_map_path = old_bundle_path <> ".map"
     File.rename!(bundle_info.static_bundle_path, old_bundle_path)
     File.rename!(bundle_info.static_source_map_path, old_source_map_path)
+    record_static_artifacts([old_bundle_path, old_source_map_path], opts)
 
     old_bundle_info = %{
       bundle_info
@@ -796,7 +803,10 @@ defmodule Mix.Tasks.Compile.HologramTest do
 
       manifest = read_static_artifacts_manifest(opts)
 
-      assert length(manifest) == (@num_pages + 1) * 2
+      # Every bundle the build serves, with its source map: the pages' and the runtime's, and the
+      # chunks'.
+      assert length(manifest) >= (@num_pages + 1) * 2
+      assert Enum.any?(manifest, &String.contains?(&1, "chunk-"))
 
       Enum.each(manifest, fn path ->
         assert String.starts_with?(path, opts[:static_dir])
@@ -2399,6 +2409,7 @@ defmodule Mix.Tasks.Compile.HologramTest do
       bundle_path = Path.join(opts[:static_dir], "chunk-NOSUCH11.js")
       File.write!(bundle_path, "")
       File.write!(bundle_path <> ".map", "")
+      record_static_artifacts([bundle_path, bundle_path <> ".map"], opts)
 
       bundle_info = %{
         bundle_name: "chunk",
