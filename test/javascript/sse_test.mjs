@@ -773,14 +773,23 @@ describe("Sse", () => {
       const evalStub = stubHandshakeResponse();
       evalStub.withArgs("encoded-action-expression").returns(decodedAction);
 
-      const scheduleStub = sinon.stub(Hologram, "scheduleAction");
+      const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
-      Sse.eventSource.listeners.action({data: "encoded-action-expression"});
+
+      Sse.eventSource.listeners.action({
+        data: JSON.stringify({
+          action: "encoded-action-expression",
+          chunks: ["AAAAAAAA", "BBBBBBBB"],
+        }),
+      });
 
       sinon.assert.calledWith(evalStub, "encoded-action-expression");
 
-      sinon.assert.calledOnceWithExactly(scheduleStub, decodedAction);
+      sinon.assert.calledOnceWithExactly(scheduleStub, decodedAction, [
+        "AAAAAAAA",
+        "BBBBBBBB",
+      ]);
     });
 
     it("silently drops the action when the target cid is not mounted", async () => {
@@ -792,10 +801,13 @@ describe("Sse", () => {
       const evalStub = stubHandshakeResponse();
       evalStub.withArgs("encoded-action-expression").returns(decodedAction);
 
-      const scheduleStub = sinon.stub(Hologram, "scheduleAction");
+      const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
-      Sse.eventSource.listeners.action({data: "encoded-action-expression"});
+
+      Sse.eventSource.listeners.action({
+        data: JSON.stringify({action: "encoded-action-expression", chunks: []}),
+      });
 
       sinon.assert.notCalled(scheduleStub);
     });
@@ -820,26 +832,31 @@ describe("Sse", () => {
       const evalStub = stubHandshakeResponse();
       evalStub.withArgs("encoded-broadcast").returns(envelope);
 
-      const scheduleStub = sinon.stub(Hologram, "scheduleAction");
+      const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
-      Sse.eventSource.listeners.broadcast({data: "encoded-broadcast"});
 
-      sinon.assert.calledTwice(scheduleStub);
-
-      sinon.assert.calledWith(
-        scheduleStub,
-        Type.actionStruct({name: actionName, params: params, target: chat}),
-      );
-
-      sinon.assert.calledWith(
-        scheduleStub,
-        Type.actionStruct({
-          name: actionName,
-          params: params,
-          target: sidebar,
+      Sse.eventSource.listeners.broadcast({
+        data: JSON.stringify({
+          chunks: ["AAAAAAAA", "BBBBBBBB"],
+          data: "encoded-broadcast",
         }),
-      );
+      });
+
+      assert.deepStrictEqual(scheduleStub.args, [
+        [
+          Type.actionStruct({name: actionName, params: params, target: chat}),
+          ["AAAAAAAA", "BBBBBBBB"],
+        ],
+        [
+          Type.actionStruct({
+            name: actionName,
+            params: params,
+            target: sidebar,
+          }),
+          ["AAAAAAAA", "BBBBBBBB"],
+        ],
+      ]);
     });
 
     it("silently drops cids that are not mounted", async () => {
@@ -858,14 +875,18 @@ describe("Sse", () => {
       const evalStub = stubHandshakeResponse();
       evalStub.withArgs("encoded-broadcast").returns(envelope);
 
-      const scheduleStub = sinon.stub(Hologram, "scheduleAction");
+      const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
-      Sse.eventSource.listeners.broadcast({data: "encoded-broadcast"});
+
+      Sse.eventSource.listeners.broadcast({
+        data: JSON.stringify({chunks: [], data: "encoded-broadcast"}),
+      });
 
       sinon.assert.calledOnceWithExactly(
         scheduleStub,
         Type.actionStruct({name: actionName, params: params, target: chat}),
+        [],
       );
     });
 
@@ -879,10 +900,13 @@ describe("Sse", () => {
       const evalStub = stubHandshakeResponse();
       evalStub.withArgs("encoded-broadcast").returns(envelope);
 
-      const scheduleStub = sinon.stub(Hologram, "scheduleAction");
+      const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
-      Sse.eventSource.listeners.broadcast({data: "encoded-broadcast"});
+
+      Sse.eventSource.listeners.broadcast({
+        data: JSON.stringify({chunks: [], data: "encoded-broadcast"}),
+      });
 
       sinon.assert.notCalled(scheduleStub);
     });
