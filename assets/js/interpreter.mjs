@@ -5,6 +5,7 @@ import CallStack from "./erts/call_stack.mjs";
 import ERTS from "./erts.mjs";
 import HologramBoxedError from "./errors/boxed_error.mjs";
 import HologramInterpreterError from "./errors/interpreter_error.mjs";
+import LiteralSet from "./literal_set.mjs";
 import NodeTable from "./erts/node_table.mjs";
 import PerformanceTimer from "./performance_timer.mjs";
 import Type from "./type.mjs";
@@ -88,15 +89,17 @@ export default class Interpreter {
   // Clause heads of manually ported functions, keyed by "Module.function/arity".
   static #functionClauseHeads = {};
 
-  // The functions a missing one gets a hint for in raiseUndefinedFunctionError(). Keep in sync with
-  // Hologram.Compiler.DynamicCallSites.reflection_functions/0.
+  // The reflection functions, which a missing one gets a hint for in raiseUndefinedFunctionError().
+  // Keep in sync with Hologram.Compiler.DynamicCallSites.reflection_functions/0.
   static #REFLECTION_FUNCTIONS = new Set([
     "__changeset__/0",
     "__schema__/1",
     "__schema__/2",
-    "__struct__/0",
-    "__struct__/1",
   ]);
+
+  // The functions every struct type has, which a missing one gets a hint of its own for in
+  // raiseUndefinedFunctionError().
+  static #STRUCT_FUNCTIONS = new Set(["__struct__/0", "__struct__/1"]);
 
   // Deps: [:lists.keyfind/3]
   static accessKeywordListElement(keywordList, key, defaultValue = null) {
@@ -861,6 +864,12 @@ export default class Interpreter {
     }
   }
 
+  // A set of the literal terms the given function returns. The function runs
+  // once, on the set's first lookup.
+  static literalSet(build) {
+    return new LiteralSet(build);
+  }
+
   // context.vars.__matched__ keeps track of already pattern matched variables,
   // which enables to fail pattern matching if the variables with the same name
   // are being pattern matched to different values
@@ -1275,7 +1284,9 @@ export default class Interpreter {
   // reaches it like any other function, but a call on a module the code does
   // not name ships it only for the types the page can see, and only when the
   // compiler detects the call (see Hologram.Compiler.DynamicCallGate), so the
-  // message says what makes such a call detectable. The hint follows the text
+  // message says what makes such a call detectable. A missing struct function
+  // gets a hint of its own: it is in no bundle, and loads with its type's
+  // chunks, so the message says what loads those. The hint follows the text
   // the struct's message/1 callback derives, kept as the eager message.
   static raiseUndefinedFunctionError(
     module,
@@ -1295,13 +1306,15 @@ export default class Interpreter {
       [Type.atom("reason"), Type.atom(reason)],
     ];
 
-    if (Interpreter.#REFLECTION_FUNCTIONS.has(`${functionName}/${arity}`)) {
+    const hint = Interpreter.#undefinedFunctionHint(functionName, arity);
+
+    if (hint !== null) {
       const struct = Type.struct("UndefinedFunctionError", [
         [Type.atom("__exception__"), Type.boolean(true)],
         ...fields,
       ]);
 
-      const message = `${Interpreter.resolveErrorMessage(struct)}. A reflection function (__struct__/0, __struct__/1, __changeset__/0, __schema__/1, __schema__/2) that client code calls on a module it does not name, such as mod.__changeset__(), is bundled only for the types the page can see; a call through apply/3 with a function name known only at runtime is not detected.`;
+      const message = `${Interpreter.resolveErrorMessage(struct)}. ${hint}`;
 
       fields[2] = [Type.atom("message"), Type.bitstring(message)];
     }
@@ -1346,6 +1359,39 @@ export default class Interpreter {
     if (frame) {
       frame.line = line;
     }
+  }
+
+  // The JavaScript boolean of a boxed boolean, which is what a short-circuit
+  // operator tests an operand by. Anything else is a badarg carrying the term,
+  // attributed to the function the operator sits in - the operators have no
+  // frame of their own. The line is the operator's, which is the line the BEAM
+  // reports the error on.
+  static toBoolean(term, line) {
+    if (term.type === "atom") {
+      if (term.value === "true") return true;
+      if (term.value === "false") return false;
+    }
+
+    const error = new HologramBoxedError(
+      Interpreter.#boxErrorReason(["badarg", term]),
+    );
+
+    const [enclosingFrame, ...outerFrames] = error.stacktrace;
+
+    // The captured frames are shared with the live call stack, so the line
+    // goes onto a copy - the function may rescue this error and carry on,
+    // recording other lines on its frame.
+    if (enclosingFrame) {
+      const raisingFrame = {
+        ...enclosingFrame,
+        line: line ?? enclosingFrame.line,
+      };
+
+      error.stacktrace = [raisingFrame, ...outerFrames];
+      error.rederive(Type.list(error.stacktrace.map(CallStack.boxFrame)));
+    }
+
+    throw error;
   }
 
   // SYNC/ASYNC PAIR: When modifying this function, also update asyncTry().
@@ -1779,10 +1825,16 @@ export default class Interpreter {
       );
     }
 
+    // The operands of a chain stay side by side, the way they arrive, so
+    // nothing built from them is nested once per operand: a or b or c is
+    // {:or, [a, b, c]}.
     return Type.tuple([
       Type.atom(guard.operator),
-      Interpreter.#blameGuard(guard.left, context),
-      Interpreter.#blameGuard(guard.right, context),
+      Type.list(
+        guard.operands.map((operand) =>
+          Interpreter.#blameGuard(operand, context),
+        ),
+      ),
     ]);
   }
 
@@ -2755,6 +2807,22 @@ export default class Interpreter {
     ]);
 
     Erlang["error/1"](struct);
+  }
+
+  // What the message of an UndefinedFunctionError adds for the given function,
+  // or null for a function that gets no hint.
+  static #undefinedFunctionHint(functionName, arity) {
+    const key = `${functionName}/${arity}`;
+
+    if (Interpreter.#REFLECTION_FUNCTIONS.has(key)) {
+      return "A reflection function (__changeset__/0, __schema__/1, __schema__/2) that client code calls on a module it does not name, such as mod.__changeset__(), is bundled only for the types the page can see; a call through apply/3 with a function name known only at runtime is not detected.";
+    }
+
+    if (Interpreter.#STRUCT_FUNCTIONS.has(key)) {
+      return "The browser loads a struct type's __struct__ functions when a struct of the type or the type's module reaches it from the server, or when the page's client code names the type. It loads none for a module that client code builds from a string.";
+    }
+
+    return null;
   }
 
   // SYNC/ASYNC PAIR: When modifying this function, also update #asyncWalkComprehension().

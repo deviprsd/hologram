@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
   This task builds IR only for modules actually reachable from pages and the runtime,
   discovered via the same reachability logic `Mix.Tasks.Compile.Hologram` already uses
-  to decide what goes into a bundle (`CallGraph.list_runtime_mfas/2`,
+  to decide what goes into a bundle (`CallGraph.list_runtime_mfas/1`,
   `CallGraph.list_page_mfas/3`) - just run repeatedly against a graph that starts small
   and grows only as far as those functions say is needed, instead of once against a
   graph that already contains everything.
@@ -27,6 +27,13 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
   Deliberately not a drop-in replacement for `Mix.Tasks.Compile.Hologram`:
 
+    * **Not chunk-aware.** The page and runtime bundles no longer carry the protocol
+      implementations of struct types that only a page or a server callback names: those ship in
+      per-type chunk bundles, announced by a chunk registry (see `Hologram.Compiler.bundle_chunks/2`
+      and `Hologram.Compiler.build_chunk_registry_plt/…`). This task builds neither, so a page that
+      receives such a struct in the browser lacks its protocol implementations. Use
+      `Mix.Tasks.Compile.Hologram` for an app that sends structs to the client, until this task
+      builds chunks or is replaced by it.
     * No incremental/warm-build support - always does a full cold build. Correct for a
       one-shot CI/CD build stage; wrong for a long-running dev server's live reload.
     * No compiler lock - intended to run as a single one-shot process
@@ -127,7 +134,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
 
       templatables = page_modules ++ Reflection.list_components()
 
-      # Seed with what CallGraph.list_runtime_mfas/2's and CallGraph.list_page_mfas/3's
+      # Seed with what CallGraph.list_runtime_mfas/1's and CallGraph.list_page_mfas/3's
       # own entry vertices need to already exist as graph vertices (they're roots, not
       # something reached *from* elsewhere, so nothing would ever discover them via
       # traversal): the runtime's fixed "always needed" MFAs, plus every page and
@@ -250,7 +257,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       |> CallGraph.clone(supervisor: sup)
       |> CallGraph.remove_manually_ported_mfas()
 
-    runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime, page_modules)
+    runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime)
     app_versions = Compiler.build_app_versions(call_graph_for_runtime)
 
     # Filled by the entry file renderers as they go: each reachable function's JavaScript
@@ -347,7 +354,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       |> CallGraph.clone(supervisor: sup)
       |> CallGraph.remove_manually_ported_mfas()
 
-    runtime_mfas = CallGraph.list_runtime_mfas(discovery_call_graph_for_runtime, page_modules)
+    runtime_mfas = CallGraph.list_runtime_mfas(discovery_call_graph_for_runtime)
     app_versions = Compiler.build_app_versions(discovery_call_graph_for_runtime)
 
     # Unioned together: both are "can't attribute to one batch, so always keep
@@ -559,7 +566,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
   # Builds IR (and, for anything successfully built, graph edges + protocol dispatch
   # edges via CallGraph.patch/3, reused unchanged) for whichever of the given modules
   # don't already have IR in ir_plt. Erlang modules are skipped - MFAs from
-  # CallGraph.list_runtime_mfas/2 and list_page_mfas/3 legitimately include calls into
+  # CallGraph.list_runtime_mfas/1 and list_page_mfas/3 legitimately include calls into
   # the Erlang stdlib (:code, :lists, etc.), which have no Elixir AST for IR.for_module/2
   # to build and are handled by a separate hand-ported-JS mechanism entirely
   # (Compiler.get_erlang_function_js/4); Reflection.list_elixir_modules/0, which
@@ -620,7 +627,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       |> CallGraph.clone(supervisor: sup)
       |> CallGraph.remove_manually_ported_mfas()
 
-    runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime, page_modules)
+    runtime_mfas = CallGraph.list_runtime_mfas(call_graph_for_runtime)
     call_graph_for_pages = CallGraph.remove_runtime_mfas!(call_graph_for_runtime, runtime_mfas)
 
     page_graph = CallGraph.get_graph(call_graph_for_pages)
@@ -647,7 +654,7 @@ defmodule Mix.Tasks.Compile.HologramCi do
       |> Map.values()
       |> List.flatten()
 
-    # list_runtime_mfas/2 and list_page_mfas/3 only return {module, function, arity}
+    # list_runtime_mfas/1 and list_page_mfas/3 only return {module, function, arity}
     # vertices - CallGraph.finalize_reachable_mfas/2 (private) drops bare-module
     # vertices, which represent "this MFA's IR references this module as a struct/type
     # literal" (e.g. %SetuCommerce.Catalog.Product{}), not a function call. A bare-module
@@ -848,6 +855,11 @@ defmodule Mix.Tasks.Compile.HologramCi do
   defp module_ir_built?(ir_plt, module) do
     match?({:ok, _ir}, PLT.get(ir_plt, module))
   end
+
+  # A dynamic call vertex belongs to the module of the function that makes the call: it is derived
+  # from that module's IR, so it goes when that module does.
+  defp vertex_module({:dynamic_call, {module, _function, _arity}, _name, _arity2, _kind}),
+    do: module
 
   defp vertex_module({module, _function, _arity}), do: module
   defp vertex_module(module) when is_atom(module), do: module

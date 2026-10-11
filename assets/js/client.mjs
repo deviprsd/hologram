@@ -186,8 +186,11 @@ export default class Client {
         $.#failCommand(response.status);
       }
 
+      // The chunks are the ones the struct types in the next action and in the self echoes need
+      // (see Hologram.schedulePushedAction). A reply from a server that names none has none.
       const {
         action,
+        chunks = [],
         selfEchoes: encodedSelfEchoes,
         status,
         subReceiptAdds: encodedSubReceiptAdds,
@@ -211,14 +214,14 @@ export default class Client {
       const nextAction = Interpreter.evaluateJavaScriptExpression(action);
 
       if (!Type.isNil(nextAction)) {
-        Hologram.scheduleAction(nextAction, epoch);
+        Hologram.schedulePushedAction(nextAction, chunks, epoch);
       }
 
       const selfEchoes =
         Interpreter.evaluateJavaScriptExpression(encodedSelfEchoes);
 
       for (const action of selfEchoes.data) {
-        Hologram.scheduleAction(action, epoch);
+        Hologram.schedulePushedAction(action, chunks, epoch);
       }
     } catch (error) {
       if (error instanceof HologramRuntimeError) {

@@ -241,5 +241,28 @@ defmodule Mix.Tasks.Compile.HologramCiTest do
 
       DynamicSupervisor.stop(sup)
     end
+
+    # The graph holds a vertex for each dynamic call a function makes, which belongs to the module
+    # of that function. Without a clause for it, evicting a batch crashed on the first one found.
+    test "removes the dynamic call vertices of the batch's modules and keeps the others" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+      ir_plt = PLT.start(supervisor: sup)
+      call_graph = CallGraph.start(supervisor: sup)
+
+      batch_dynamic_call = {:dynamic_call, {BatchModule, :action, 3}, :__schema__, 1, :open}
+      core_dynamic_call = {:dynamic_call, {CoreModule, :action, 3}, :__schema__, 1, :open}
+
+      CallGraph.add_edge(call_graph, {BatchModule, :action, 3}, batch_dynamic_call)
+      CallGraph.add_edge(call_graph, {CoreModule, :action, 3}, core_dynamic_call)
+
+      evict_batch_modules!(ir_plt, call_graph, MapSet.new([BatchModule]))
+
+      vertices = call_graph |> CallGraph.get_graph() |> Digraph.vertices()
+
+      refute batch_dynamic_call in vertices
+      assert core_dynamic_call in vertices
+
+      DynamicSupervisor.stop(sup)
+    end
   end
 end
