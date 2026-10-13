@@ -5,6 +5,7 @@ defmodule Hologram.Assets.PathRegistry do
 
   alias Hologram.Commons.ETS
   alias Hologram.Commons.FileUtils
+  alias Hologram.Commons.SerializationUtils
   alias Hologram.Reflection
 
   @doc """
@@ -16,6 +17,12 @@ defmodule Hologram.Assets.PathRegistry do
   Returns the process name registered for the the asset path registry.
   """
   @callback process_name() :: atom
+
+  @doc """
+  Returns the paths of the compiler bundles this build environment wrote to the static dir,
+  or nil when it recorded none.
+  """
+  @callback static_artifacts() :: [String.t()] | nil
 
   @doc """
   Returns the path of the static dir used by the asset path registry registered process.
@@ -103,6 +110,24 @@ defmodule Hologram.Assets.PathRegistry do
   end
 
   @doc """
+  Returns the paths of the compiler bundles that this build environment's last compile wrote, as
+  its static artifacts manifest records them (see `Hologram.Reflection.static_artifacts_manifest_file_name/0`),
+  or nil when there is no manifest or it is empty, e.g. in a build that never wrote one.
+  """
+  @spec static_artifacts() :: [String.t()] | nil
+  def static_artifacts do
+    manifest_path =
+      Path.join(Reflection.build_dir(), Reflection.static_artifacts_manifest_file_name())
+
+    with {:ok, data} <- File.read(manifest_path),
+         [_first | _rest] = artifacts <- SerializationUtils.deserialize(data) do
+      artifacts
+    else
+      _fallback -> nil
+    end
+  end
+
+  @doc """
   Returns the implementation of the asset path registry's static dir path.
   """
   @spec static_dir() :: String.t()
@@ -125,7 +150,10 @@ defmodule Hologram.Assets.PathRegistry do
   end
 
   defp find_assets(static_dir) do
-    static_files = FileUtils.list_files_recursively(static_dir)
+    static_files =
+      static_dir
+      |> FileUtils.list_files_recursively()
+      |> reject_other_envs_bundles(static_dir, impl().static_artifacts())
 
     assets_with_digest_suffix = find_assets_with_digest_suffix(static_dir, static_files)
 
@@ -175,6 +203,25 @@ defmodule Hologram.Assets.PathRegistry do
     impl().static_dir()
     |> find_assets()
     |> Enum.each(fn {key, value} -> ETS.put(ets_table_name, key, value) end)
+  end
+
+  # The static dir is shared by every build environment of the project (see the note in
+  # `Mix.Tasks.Compile.Hologram` on `:code.priv_dir/1`), so beside this environment's bundles it can
+  # hold the ones another environment built, e.g. a dev runtime beside the test runtime. Those carry
+  # the same names but for the content hash, and with the files sorted the last one would win the
+  # registry key, whichever environment built it. A bundle this environment's manifest doesn't
+  # name is another's, and is left out. Without a manifest every file is taken.
+  defp reject_other_envs_bundles(static_files, _static_dir, nil), do: static_files
+
+  defp reject_other_envs_bundles(static_files, static_dir, static_artifacts) do
+    hologram_dir = Path.join(static_dir, "hologram")
+    own_bundle_names = MapSet.new(static_artifacts, &Path.basename/1)
+
+    Enum.reject(static_files, fn file_path ->
+      Path.dirname(file_path) == hologram_dir and
+        Regex.match?(~r/-[A-Z2-7]{8}\.[^\/]+$/, file_path) and
+        Path.basename(file_path) not in own_bundle_names
+    end)
   end
 
   defp stream_build_asset_entries(file_infos) do

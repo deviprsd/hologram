@@ -7,6 +7,8 @@ defmodule Hologram.Assets.PathRegistryTest do
 
   alias Hologram.Assets.PathRegistry, as: AssetPathRegistry
   alias Hologram.Commons.ETS
+  alias Hologram.Commons.SerializationUtils
+  alias Hologram.Reflection
 
   use_module_stub :asset_path_registry
 
@@ -77,6 +79,85 @@ defmodule Hologram.Assets.PathRegistryTest do
     test "page bundle named by esbuild" do
       assert lookup("hologram/page-Elixir.MyPage1.js") == :error
       assert lookup("hologram/page-Elixir.MyPage1-BBBBBBBB.js") == :error
+    end
+  end
+
+  describe "bundles of another build environment in the shared static dir" do
+    setup do
+      hologram_dir = Path.join(AssetPathRegistryStub.static_dir(), "hologram")
+      runtime_path = Path.join(hologram_dir, "runtime-ZZZZZZZZ.js")
+      source_map_path = Path.join(hologram_dir, "runtime-ZZZZZZZZ.js.map")
+
+      # Sorts after the stub's runtime-AAAAAAAA.js, as a digest of another env's runtime may
+      File.write!(runtime_path, "// another env's runtime")
+      File.write!(source_map_path, "{}")
+
+      :ok
+    end
+
+    test "without a manifest, the last runtime in name order wins" do
+      AssetPathRegistry.start_link([])
+
+      assert lookup("hologram/runtime.js") == {:ok, "/hologram/runtime-ZZZZZZZZ.js"}
+    end
+
+    test "the runtime the manifest names wins, whatever it sorts as" do
+      stub(AssetPathRegistryMock, :static_artifacts, fn ->
+        ["/some/dir/hologram/runtime-AAAAAAAA.js", "/some/dir/hologram/runtime-AAAAAAAA.js.map"]
+      end)
+
+      AssetPathRegistry.start_link([])
+
+      assert lookup("hologram/runtime.js") == {:ok, "/hologram/runtime-AAAAAAAA.js"}
+    end
+
+    test "files that are not compiler bundles are taken whether the manifest names them or not" do
+      stub(AssetPathRegistryMock, :static_artifacts, fn ->
+        ["/some/dir/hologram/runtime-AAAAAAAA.js"]
+      end)
+
+      AssetPathRegistry.start_link([])
+
+      assert lookup("test_dir_3/test_file_10.css") == {:ok, "/test_dir_3/test_file_10.css"}
+
+      assert lookup("test_dir_1/test_dir_2/test_file_1.css") ==
+               {:ok, "/test_dir_1/test_dir_2/test_file_1-11111111111111111111111111111111.css"}
+    end
+  end
+
+  describe "static_artifacts/0" do
+    setup do
+      manifest_path =
+        Path.join(Reflection.build_dir(), Reflection.static_artifacts_manifest_file_name())
+
+      original = File.read(manifest_path)
+
+      on_exit(fn ->
+        case original do
+          {:ok, data} -> File.write!(manifest_path, data)
+          {:error, _reason} -> File.rm(manifest_path)
+        end
+      end)
+
+      [manifest_path: manifest_path]
+    end
+
+    test "reads the paths the manifest records", %{manifest_path: manifest_path} do
+      File.write!(manifest_path, SerializationUtils.serialize(["/a/runtime-AAAAAAAA.js"]))
+
+      assert AssetPathRegistry.static_artifacts() == ["/a/runtime-AAAAAAAA.js"]
+    end
+
+    test "no manifest", %{manifest_path: manifest_path} do
+      File.rm(manifest_path)
+
+      assert AssetPathRegistry.static_artifacts() == nil
+    end
+
+    test "empty manifest", %{manifest_path: manifest_path} do
+      File.write!(manifest_path, SerializationUtils.serialize([]))
+
+      assert AssetPathRegistry.static_artifacts() == nil
     end
   end
 
