@@ -148,6 +148,8 @@ defmodule Hologram.Test.Stubs do
         def ets_table_name, do: unquote(random_atom())
 
         def process_name, do: unquote(random_atom())
+
+        def static_artifacts, do: nil
       end
 
       alias alias!(unquote(random_module).AssetPathRegistryStub)
