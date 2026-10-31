@@ -1,6 +1,6 @@
 "use strict";
 
-import {assert, defineRuntimeGlobals} from "../support/helpers.mjs";
+import { assert, defineRuntimeGlobals } from "../support/helpers.mjs";
 
 import KeyboardEvent from "../../../assets/js/events/keyboard_event.mjs";
 import Type from "../../../assets/js/type.mjs";
@@ -18,7 +18,7 @@ describe("KeyboardEvent", () => {
       metaKey: false,
       repeat: true,
       shiftKey: true,
-      target: {selectionStart: 2, selectionEnd: 5},
+      target: { selectionStart: 2, selectionEnd: 5 },
     };
 
     const result = KeyboardEvent.buildOperationParam(event);
@@ -71,71 +71,47 @@ describe("KeyboardEvent", () => {
     );
   });
 
-  it("buildOperationParam(), event.key is undefined (confirmed real, not just a spec edge case)", () => {
-    const event = {
-      altKey: false,
-      code: "",
-      ctrlKey: false,
-      key: undefined,
-      metaKey: false,
-      repeat: false,
-      shiftKey: false,
-      target: {},
-    };
+  describe("isEventIgnored()", () => {
+    it("is false for a keyboard event with a key", () => {
+      assert.isFalse(KeyboardEvent.isEventIgnored({ key: "k" }));
+    });
 
-    const result = KeyboardEvent.buildOperationParam(event);
-
-    assert.deepStrictEqual(
-      result,
-      Type.map([
-        [Type.atom("alt_key"), Type.boolean(false)],
-        [Type.atom("code"), Type.bitstring("")],
-        [Type.atom("ctrl_key"), Type.boolean(false)],
-        [Type.atom("is_composing"), Type.boolean(false)],
-        [Type.atom("key"), Type.nil()],
-        [Type.atom("meta_key"), Type.boolean(false)],
-        [Type.atom("repeat"), Type.boolean(false)],
-        [Type.atom("selection_end"), Type.nil()],
-        [Type.atom("selection_start"), Type.nil()],
-        [Type.atom("shift_key"), Type.boolean(false)],
-      ]),
-    );
-  });
-
-  it("isEventIgnored()", () => {
-    assert.isFalse(KeyboardEvent.isEventIgnored({}));
+    it("is true for an event with no key", () => {
+      // A bare Event dispatched as keydown has no key, code or modifier flags.
+      assert.isTrue(KeyboardEvent.isEventIgnored({}));
+    });
   });
 
   describe("matchesKeyFilter()", () => {
     it("matches a named key against the lowercased event.key", () => {
       const filter = Type.list([Type.bitstring("enter")]);
 
-      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, {key: "Enter"}));
-      assert.isFalse(KeyboardEvent.matchesKeyFilter(filter, {key: "Escape"}));
+      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, { key: "Enter" }));
+      assert.isFalse(KeyboardEvent.matchesKeyFilter(filter, { key: "Escape" }));
     });
 
     it("matches the key case-insensitively", () => {
       const filter = Type.list([Type.bitstring("k")]);
 
       // Shift or Caps Lock makes event.key uppercase "K".
-      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, {key: "K"}));
+      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, { key: "K" }));
     });
 
     it("matches an arrow key against its PascalCase event.key", () => {
       const filter = Type.list([Type.bitstring("arrowup")]);
 
-      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, {key: "ArrowUp"}));
+      assert.isTrue(KeyboardEvent.matchesKeyFilter(filter, { key: "ArrowUp" }));
     });
 
     it("requires the filtered modifier to be held", () => {
       const filter = Type.list([Type.bitstring("ctrl"), Type.bitstring("k")]);
 
       assert.isTrue(
-        KeyboardEvent.matchesKeyFilter(filter, {key: "k", ctrlKey: true}),
+        KeyboardEvent.matchesKeyFilter(filter, { key: "k", ctrlKey: true }),
       );
 
       assert.isFalse(
-        KeyboardEvent.matchesKeyFilter(filter, {key: "k", ctrlKey: false}),
+        KeyboardEvent.matchesKeyFilter(filter, { key: "k", ctrlKey: false }),
       );
     });
 
@@ -188,10 +164,10 @@ describe("KeyboardEvent", () => {
       );
     });
 
-    it("is a clean non-match, not a crash, when event.key is undefined", () => {
+    it("does not match an event with no key", () => {
       const filter = Type.list([Type.bitstring("enter")]);
 
-      assert.isFalse(KeyboardEvent.matchesKeyFilter(filter, {key: undefined}));
+      assert.isFalse(KeyboardEvent.matchesKeyFilter(filter, {}));
     });
   });
 });

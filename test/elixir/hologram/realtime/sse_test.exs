@@ -5,12 +5,13 @@ defmodule Hologram.Realtime.SSETest do
   import Hologram.Test.Stubs
   import Mox
 
-  alias Hologram.Compiler.Encoder
   alias Hologram.Component.Action
+  alias Hologram.LiveReload
   alias Hologram.Realtime
   alias Hologram.Realtime.Handshake
   alias Hologram.Realtime.Receipt
   alias Hologram.Realtime.SubscriptionRegistry
+  alias Hologram.Runtime.Serializer
   alias Hologram.Test.Fixtures.Realtime.SSE.Module1
 
   use_module_stub :chunk_registry
@@ -92,10 +93,10 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
-  # Pulls the signed token out of an encoded add_sub_receipts chunk, which carries it as
-  # the third element of each {channel, cid, token} tuple.
+  # Pulls the signed token out of a serialized add_sub_receipts chunk, which carries it as
+  # the third element of each {channel, cid, token} tuple, a string marked with "s".
   defp extract_receipt_token(resp_body) do
-    [_full_match, token] = Regex.run(~r/Type\.bitstring\("(SFMyNTY\.[^"]+)"\)/, resp_body)
+    [_full_match, token] = Regex.run(~r/"s(SFMyNTY\.[^"]+)"/, resp_body)
 
     token
   end
@@ -175,42 +176,45 @@ defmodule Hologram.Realtime.SSETest do
   describe "encode_action_envelope/2" do
     test "names the chunks the struct types in the action need" do
       action = %Action{name: :my_action, params: %{date: ~D[2026-10-05]}, target: "c1"}
-      {:ok, encoded} = Encoder.encode_term(action)
+      serialized = Serializer.serialize!(action)
+      expected = Jason.decode!(serialized)
 
       assert 42
              |> encode_action_envelope(action)
              |> decode_envelope() ==
                {"action", 42,
                 %{
-                  "action" => encoded,
+                  "action" => expected,
                   "chunks" => ["BBBBBBBB", "CCCCCCCC"]
                 }}
     end
 
-    test "wraps an encoded action in the SSE event envelope" do
+    test "wraps a serialized action in the SSE event envelope" do
       action = %Action{name: :my_action, target: "c1"}
-      {:ok, encoded} = Encoder.encode_term(action)
+      serialized = Serializer.serialize!(action)
+      expected = Jason.decode!(serialized)
 
       assert 42
              |> encode_action_envelope(action)
-             |> decode_envelope() == {"action", 42, %{"action" => encoded, "chunks" => []}}
+             |> decode_envelope() == {"action", 42, %{"action" => expected, "chunks" => []}}
     end
   end
 
   describe "encode_add_sub_receipts_envelope/2" do
     test "wraps the receipts list in an add_sub_receipts SSE event envelope" do
       receipts = [{:notifications, "c1", "token-a"}]
-      {:ok, encoded} = Encoder.encode_term(receipts)
+      serialized = Serializer.serialize!(receipts)
 
       assert encode_add_sub_receipts_envelope(42, receipts) ==
-               "event: add_sub_receipts\nid: 42\ndata: #{encoded}\n\n"
+               "event: add_sub_receipts\nid: 42\ndata: #{serialized}\n\n"
     end
   end
 
   describe "encode_broadcast_envelope/4" do
     test "names the chunks the struct types in the params need" do
       params = %{time: ~T[12:34:56]}
-      {:ok, encoded} = Encoder.encode_term({:append, params, ["chat"]})
+      serialized = Serializer.serialize!({:append, params, ["chat"]})
+      expected = Jason.decode!(serialized)
 
       assert 42
              |> encode_broadcast_envelope(:append, params, ["chat"])
@@ -218,33 +222,36 @@ defmodule Hologram.Realtime.SSETest do
                {"broadcast", 42,
                 %{
                   "chunks" => ["AAAAAAAA", "CCCCCCCC"],
-                  "data" => encoded
+                  "data" => expected
                 }}
     end
 
     test "wraps a single-cid payload in a broadcast SSE event envelope" do
-      {:ok, encoded} = Encoder.encode_term({:append, %{text: "hi"}, ["chat"]})
+      serialized = Serializer.serialize!({:append, %{text: "hi"}, ["chat"]})
+      expected = Jason.decode!(serialized)
 
       assert 42
              |> encode_broadcast_envelope(:append, %{text: "hi"}, ["chat"])
-             |> decode_envelope() == {"broadcast", 42, %{"chunks" => [], "data" => encoded}}
+             |> decode_envelope() == {"broadcast", 42, %{"chunks" => [], "data" => expected}}
     end
 
     test "wraps a multi-cid payload in a broadcast SSE event envelope" do
       cids = ["chat", "sidebar", "minimap"]
-      {:ok, encoded} = Encoder.encode_term({:append, %{text: "hi"}, cids})
+      serialized = Serializer.serialize!({:append, %{text: "hi"}, cids})
+      expected = Jason.decode!(serialized)
 
       assert 42
              |> encode_broadcast_envelope(:append, %{text: "hi"}, cids)
-             |> decode_envelope() == {"broadcast", 42, %{"chunks" => [], "data" => encoded}}
+             |> decode_envelope() == {"broadcast", 42, %{"chunks" => [], "data" => expected}}
     end
 
     test "handles empty params" do
-      {:ok, encoded} = Encoder.encode_term({:ping, %{}, ["page"]})
+      serialized = Serializer.serialize!({:ping, %{}, ["page"]})
+      expected = Jason.decode!(serialized)
 
       assert 1
              |> encode_broadcast_envelope(:ping, %{}, ["page"])
-             |> decode_envelope() == {"broadcast", 1, %{"chunks" => [], "data" => encoded}}
+             |> decode_envelope() == {"broadcast", 1, %{"chunks" => [], "data" => expected}}
     end
   end
 
@@ -257,13 +264,19 @@ defmodule Hologram.Realtime.SSETest do
     end
   end
 
+  describe "encode_compiled_envelope/1" do
+    test "wraps the id in a compiled SSE event envelope with no data" do
+      assert encode_compiled_envelope(42) == "event: compiled\nid: 42\ndata:\n\n"
+    end
+  end
+
   describe "encode_drop_sub_receipts_envelope/2" do
     test "wraps the keys list in a drop_sub_receipts SSE event envelope" do
       keys = [{:notifications, "c1"}]
-      {:ok, encoded} = Encoder.encode_term(keys)
+      serialized = Serializer.serialize!(keys)
 
       assert encode_drop_sub_receipts_envelope(42, keys) ==
-               "event: drop_sub_receipts\nid: 42\ndata: #{encoded}\n\n"
+               "event: drop_sub_receipts\nid: 42\ndata: #{serialized}\n\n"
     end
   end
 
@@ -276,10 +289,10 @@ defmodule Hologram.Realtime.SSETest do
   describe "encode_refresh_sub_receipts_envelope/2" do
     test "wraps the receipts list in a refresh_sub_receipts SSE event envelope" do
       receipts = [{:notifications, "c1", "token-a"}]
-      {:ok, encoded} = Encoder.encode_term(receipts)
+      serialized = Serializer.serialize!(receipts)
 
       assert encode_refresh_sub_receipts_envelope(42, receipts) ==
-               "event: refresh_sub_receipts\nid: 42\ndata: #{encoded}\n\n"
+               "event: refresh_sub_receipts\nid: 42\ndata: #{serialized}\n\n"
     end
   end
 
@@ -629,9 +642,10 @@ defmodule Hologram.Realtime.SSETest do
       # Only one event chunk total (the bundled one), not one per cid.
       assert length(String.split(updated_conn.resp_body, "event: broadcast\n", trim: true)) == 1
 
-      {:ok, encoded} = Encoder.encode_term({:my_action, %{}, ["chat", "sidebar"]})
+      serialized = Serializer.serialize!({:my_action, %{}, ["chat", "sidebar"]})
+      expected = Jason.decode!(serialized)
 
-      assert {"broadcast", _id, %{"chunks" => [], "data" => ^encoded}} =
+      assert {"broadcast", _id, %{"chunks" => [], "data" => ^expected}} =
                decode_envelope(updated_conn.resp_body)
     end
 
@@ -808,6 +822,17 @@ defmodule Hologram.Realtime.SSETest do
 
       assert updated_conn.resp_body =~ "event: compilation_error\nid: "
       assert updated_conn.resp_body =~ ~s|\ndata: [[{"text":"boom","tone":"banner"}]]\n\n|
+    end
+  end
+
+  describe "process_message/4 on :compiled" do
+    test "pushes a compiled SSE event" do
+      conn = prepared_test_conn()
+      send(self(), :compiled)
+
+      {:cont, updated_conn} = process_message(conn, nil, nil)
+
+      assert updated_conn.resp_body =~ ~r/\Aevent: compiled\nid: \d+\ndata:\n\n\z/
     end
   end
 
@@ -1733,6 +1758,18 @@ defmodule Hologram.Realtime.SSETest do
       wait_until(fn -> Registry.lookup(Hologram.PubSub, topic) != [] end)
 
       refute live_reload_subscriber?(pid)
+    end
+
+    test "asks live reload for the outcome of its last pass once listening" do
+      # Stands in for live reload, which does not run in the test env.
+      Process.register(self(), LiveReload)
+
+      conn = conn_with_instance_id()
+      pid = spawn(fn -> stream(conn) end)
+      on_exit(fn -> Process.exit(pid, :kill) end)
+
+      assert_receive {:"$gen_cast", {:replay_outcome, ^pid}}
+      assert live_reload_subscriber?(pid)
     end
   end
 

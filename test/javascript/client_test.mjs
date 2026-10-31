@@ -42,12 +42,14 @@ describe("Client", () => {
 
     beforeEach(() => {
       ComponentRegistry.clear();
+      App.subscriptionReceiptRegistry.entries.clear();
 
       originalInstanceId = App.instanceId;
       App.instanceId = "test-instance-id";
     });
 
     afterEach(() => {
+      App.subscriptionReceiptRegistry.entries.clear();
       App.instanceId = originalInstanceId;
     });
 
@@ -62,10 +64,41 @@ describe("Client", () => {
         [Type.atom("module"), module],
         [Type.atom("name"), name],
         [Type.atom("params"), params],
+        [Type.atom("sub_receipts"), Type.list([])],
         [Type.atom("target"), target],
       ]);
 
       assert.deepStrictEqual(result, expected);
+    });
+
+    it("includes the tokens held in the subscription receipt registry", () => {
+      const entry = componentRegistryEntryFixture({module: module});
+      ComponentRegistry.putEntry(target, entry);
+
+      App.subscriptionReceiptRegistry.entries.set(
+        encodedSubscriptionReceiptKey(Type.atom("room_a"), "page"),
+        Type.tuple([
+          Type.atom("room_a"),
+          Type.bitstring("page"),
+          Type.bitstring("token-a"),
+        ]),
+      );
+
+      App.subscriptionReceiptRegistry.entries.set(
+        encodedSubscriptionReceiptKey(Type.atom("room_b"), "comp_1"),
+        Type.tuple([
+          Type.atom("room_b"),
+          Type.bitstring("comp_1"),
+          Type.bitstring("token-b"),
+        ]),
+      );
+
+      const result = Client.buildCommandPayload(command);
+
+      assert.deepStrictEqual(
+        Erlang_Maps["get/2"](Type.atom("sub_receipts"), result),
+        Type.list([Type.bitstring("token-a"), Type.bitstring("token-b")]),
+      );
     });
 
     it("throws error when target component is not registered", () => {
@@ -302,11 +335,6 @@ describe("Client", () => {
 
     const pageModule = Type.alias("MyPage");
 
-    const params = Type.map([
-      [Type.atom("user_id"), Type.integer(123)],
-      [Type.atom("status"), Type.atom("active")],
-    ]);
-
     const pageDataResponse = (payload) => ({
       headers: new Headers({"hologram-page-data": "true"}),
       ok: true,
@@ -329,253 +357,135 @@ describe("Client", () => {
       App.instanceId = originalInstanceId;
     });
 
-    describe("fetch parameters", () => {
-      it("constructs correct URL when toParam is a page module", async () => {
-        fetchStub = sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse({type: "page"}));
+    it("asks the page data route for the page", async () => {
+      fetchStub = sinon
+        .stub(globalThis, "fetch")
+        .resolves(pageDataResponse({type: "page"}));
 
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+      await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
 
-        sinon.assert.calledOnce(fetchStub);
-        const [url] = fetchStub.firstCall.args;
-        assert.equal(url, "/hologram/page/MyPage");
-      });
+      const [url, opts] = fetchStub.firstCall.args;
 
-      it("constructs correct URL when toParam is a tuple with page module and params", async () => {
-        fetchStub = sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse({type: "page"}));
+      assert.equal(url, "/hologram/page/MyPage");
+      assert.equal(opts.method, "POST");
 
-        const toParam = Type.tuple([pageModule, params]);
-
-        await Client.fetchPage(toParam, onSuccessStub, onNotPageStub);
-
-        sinon.assert.calledOnce(fetchStub);
-        const [url] = fetchStub.firstCall.args;
-        assert.equal(url, "/hologram/page/MyPage?user_id=123&status=active");
-      });
-
-      it("issues a POST request with a JSON content-type header, not following redirects itself", async () => {
-        fetchStub = sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse({type: "page"}));
-
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-
-        sinon.assert.calledOnce(fetchStub);
-
-        const [, options] = fetchStub.firstCall.args;
-
-        assert.equal(options.method, "POST");
-
-        assert.deepStrictEqual(options.headers, {
-          "Content-Type": "application/json",
-        });
-
-        // Redirects are for the browser to follow, not this fetch: one followed here would be
-        // consumed out of sight.
-        assert.equal(options.redirect, "manual");
-      });
-
-      it("includes instance_id and client_claimed_sub_keys from the subscription receipt registry in the request body", async () => {
-        App.subscriptionReceiptRegistry.entries.set(
-          encodedSubscriptionReceiptKey(Type.atom("room_a"), "page"),
-          Type.tuple([
-            Type.atom("room_a"),
-            Type.bitstring("page"),
-            Type.bitstring("token-a"),
-          ]),
-        );
-
-        fetchStub = sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse({type: "page"}));
-
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-
-        const [, options] = fetchStub.firstCall.args;
-
-        assert.deepStrictEqual(
-          options.body,
-          Serializer.serialize(
-            Type.map([
-              [
-                Type.atom("client_claimed_sub_keys"),
-                Type.list([
-                  Type.tuple([Type.atom("room_a"), Type.bitstring("page")]),
-                ]),
-              ],
-              [Type.atom("instance_id"), Type.bitstring("test-instance-id")],
-            ]),
-            "server",
-          ),
-        );
-      });
+      // Redirects are for the browser to follow, not this fetch: one followed here would be
+      // consumed out of sight.
+      assert.equal(opts.redirect, "manual");
     });
 
-    describe("response handling", () => {
-      it("hands over a marked payload", async () => {
-        const payload = {pageDigest: "abc", type: "page"};
+    // A redirect answers by fetching the next page, so whatever the callback goes on to do is part
+    // of this call. Without the await a failure there would reject a promise nobody holds.
+    it("carries a failure from the success callback to the caller", async () => {
+      sinon
+        .stub(globalThis, "fetch")
+        .resolves(pageDataResponse({type: "page"}));
 
-        fetchStub = sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse(payload));
+      const failing = async () => {
+        throw new HologramRuntimeError("callback failed");
+      };
 
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+      let thrownError = null;
 
-        sinon.assert.calledOnceWithExactly(onSuccessStub, payload);
-        sinon.assert.notCalled(onNotPageStub);
-      });
+      try {
+        await Client.fetchPage(pageModule, failing, onNotPageStub);
+      } catch (error) {
+        thrownError = error;
+      }
 
-      // A page's middleware can answer with any status it likes, a plain 200 included, so the
-      // marker rather than the status is what says an answer describes a page.
-      it("treats an unmarked success as something other than a page", async () => {
-        fetchStub = sinon.stub(globalThis, "fetch").resolves({
-          headers: new Headers(),
-          ok: true,
-          json: sinon.stub().resolves({}),
-        });
-
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-
-        sinon.assert.calledOnce(onNotPageStub);
-        sinon.assert.notCalled(onSuccessStub);
-      });
-
-      it("treats a denied response as something other than a page", async () => {
-        fetchStub = sinon.stub(globalThis, "fetch").resolves({
-          headers: new Headers(),
-          ok: false,
-          status: 403,
-        });
-
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-
-        sinon.assert.calledOnce(onNotPageStub);
-        sinon.assert.notCalled(onSuccessStub);
-      });
-
-      // An opaque redirect carries no headers at all, which is the shape a redirect takes when
-      // the fetch is told not to follow it.
-      it("treats an opaque redirect as something other than a page", async () => {
-        fetchStub = sinon.stub(globalThis, "fetch").resolves({
-          headers: new Headers(),
-          ok: false,
-          status: 0,
-          type: "opaqueredirect",
-        });
-
-        await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-
-        sinon.assert.calledOnce(onNotPageStub);
-        sinon.assert.notCalled(onSuccessStub);
-      });
-
-      it("throws HologramRuntimeError when fetch fails due to network problems", async () => {
-        const networkError = new TypeError("Failed to fetch");
-
-        fetchStub = sinon.stub(globalThis, "fetch").rejects(networkError);
-
-        let errorThrown = false;
-
-        try {
-          await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
-        } catch (error) {
-          errorThrown = true;
-          assert.instanceOf(error, HologramRuntimeError);
-          assert.equal(
-            error.message,
-            "page fetch failed: TypeError: Failed to fetch",
-          );
-        }
-
-        assert.isTrue(
-          errorThrown,
-          "Expected HologramRuntimeError to be thrown",
-        );
-        sinon.assert.notCalled(onSuccessStub);
-      });
-
-      it("rethrows HologramRuntimeError when error occurs during URL construction", async () => {
-        const invalidParams = Type.map([
-          [Type.bitstring("status"), Type.atom("pending")], // key is not an atom
-        ]);
-
-        const toParam = Type.tuple([pageModule, invalidParams]);
-
-        let errorThrown = false;
-
-        try {
-          await Client.fetchPage(toParam, onSuccessStub, onNotPageStub);
-        } catch (error) {
-          errorThrown = true;
-          assert.instanceOf(error, HologramRuntimeError);
-          assert.equal(
-            error.message,
-            'invalid param key type (only atom type is allowed), got: "status"',
-          );
-        }
-
-        assert.isTrue(
-          errorThrown,
-          "Expected original HologramRuntimeError to be rethrown",
-        );
-        sinon.assert.notCalled(onSuccessStub);
-      });
+      assert.equal(thrownError?.message, "callback failed");
     });
 
-    describe("edge cases", () => {
-      // A redirect answers by fetching the next page, so whatever the callback goes on to do is
-      // part of this call. Without the await a failure there would reject a promise nobody holds.
-      it("carries a failure from the success callback to the caller", async () => {
-        sinon
-          .stub(globalThis, "fetch")
-          .resolves(pageDataResponse({type: "page"}));
-
-        const failing = async () => {
-          throw new HologramRuntimeError("callback failed");
-        };
-
-        let thrownError = null;
-
-        try {
-          await Client.fetchPage(pageModule, failing, onNotPageStub);
-        } catch (error) {
-          thrownError = error;
-        }
-
-        assert.equal(thrownError?.message, "callback failed");
+    it("carries a failure from the not-a-page callback to the caller", async () => {
+      sinon.stub(globalThis, "fetch").resolves({
+        headers: new Headers({}),
+        ok: true,
       });
 
-      it("carries a failure from the not-a-page callback to the caller", async () => {
-        sinon.stub(globalThis, "fetch").resolves({
-          headers: new Headers({}),
-          ok: true,
-        });
+      const failing = async () => {
+        throw new HologramRuntimeError("callback failed");
+      };
 
-        const failing = async () => {
-          throw new HologramRuntimeError("callback failed");
-        };
+      let thrownError = null;
 
-        let thrownError = null;
+      try {
+        await Client.fetchPage(pageModule, onSuccessStub, failing);
+      } catch (error) {
+        thrownError = error;
+      }
 
-        try {
-          await Client.fetchPage(pageModule, onSuccessStub, failing);
-        } catch (error) {
-          thrownError = error;
-        }
+      assert.equal(thrownError?.message, "callback failed");
+    });
 
-        assert.equal(thrownError?.message, "callback failed");
+    it("hands over a marked payload", async () => {
+      const payload = {pageDigest: "abc", type: "page"};
+
+      fetchStub = sinon
+        .stub(globalThis, "fetch")
+        .resolves(pageDataResponse(payload));
+
+      await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+
+      sinon.assert.calledOnceWithExactly(onSuccessStub, payload);
+      sinon.assert.notCalled(onNotPageStub);
+    });
+
+    // A page's middleware can answer with any status it likes, a plain 200 included, so the marker
+    // rather than the status is what says an answer describes a page.
+    it("treats an unmarked success as something other than a page", async () => {
+      fetchStub = sinon.stub(globalThis, "fetch").resolves({
+        headers: new Headers(),
+        ok: true,
+        json: sinon.stub().resolves({}),
       });
+
+      await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+
+      sinon.assert.calledOnce(onNotPageStub);
+      sinon.assert.notCalled(onSuccessStub);
+    });
+
+    it("treats a denied response as something other than a page", async () => {
+      fetchStub = sinon.stub(globalThis, "fetch").resolves({
+        headers: new Headers(),
+        ok: false,
+        status: 403,
+      });
+
+      await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+
+      sinon.assert.calledOnce(onNotPageStub);
+      sinon.assert.notCalled(onSuccessStub);
+    });
+
+    // An opaque redirect carries no headers at all, which is the shape a redirect takes when the
+    // fetch is told not to follow it.
+    it("treats an opaque redirect as something other than a page", async () => {
+      fetchStub = sinon.stub(globalThis, "fetch").resolves({
+        headers: new Headers(),
+        ok: false,
+        status: 0,
+        type: "opaqueredirect",
+      });
+
+      await Client.fetchPage(pageModule, onSuccessStub, onNotPageStub);
+
+      sinon.assert.calledOnce(onNotPageStub);
+      sinon.assert.notCalled(onSuccessStub);
     });
   });
 
   describe("sendCommand()", () => {
+    // A reply field holds a term the way the server sends it: serialized, and already parsed along
+    // with the rest of the reply.
+    const serialized = (term) =>
+      JSON.parse(Serializer.serialize(term, "server"));
+
     let fetchStub,
       schedulePushedActionStub,
       originalHologram,
-      originalInstanceId;
+      originalInstanceId,
+      originalRegistryEpoch;
 
     const module = Type.alias("MyComponent");
     const name = Type.atom("my_command");
@@ -606,6 +516,11 @@ describe("Client", () => {
 
       originalInstanceId = App.instanceId;
       App.instanceId = "test-instance-id";
+
+      // A value another test is unlikely to leave behind, so that the stamp the reply's actions
+      // carry is visibly this describe's.
+      originalRegistryEpoch = Hologram.registryEpoch;
+      Hologram.registryEpoch = 3;
     });
 
     afterEach(() => {
@@ -613,17 +528,18 @@ describe("Client", () => {
       App.subscriptionReceiptRegistry.entries.clear();
       globalThis.Hologram = originalHologram;
       App.instanceId = originalInstanceId;
+      Hologram.registryEpoch = originalRegistryEpoch;
     });
 
     it("calls fetch with correct URL, options, and payload including CSRF token", async () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: "Type.nil()",
-          selfEchoes: "Type.list([])",
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(Type.list()),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -650,6 +566,7 @@ describe("Client", () => {
             [Type.atom("module"), module],
             [Type.atom("name"), name],
             [Type.atom("params"), params],
+            [Type.atom("sub_receipts"), Type.list([])],
             [Type.atom("target"), target],
           ]),
           "server",
@@ -661,11 +578,13 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: 'Type.actionStruct({name: Type.atom("dummy_action")})',
-          selfEchoes: "Type.list([])",
+          action: serialized(
+            Type.actionStruct({name: Type.atom("dummy_action")}),
+          ),
+          selfEchoes: serialized(Type.list()),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -679,55 +598,9 @@ describe("Client", () => {
         schedulePushedActionStub,
         Type.actionStruct({name: Type.atom("dummy_action")}),
         [],
-        Hologram.registryEpoch,
+        3,
       );
     });
-
-    it("stamps the next action with the epoch that was current when the command was sent, not the one current when the response arrives", async () => {
-      const originalRegistryEpoch = Hologram.registryEpoch;
-      Hologram.registryEpoch = 5;
-
-      let resolveFetch;
-      const fetchPromise = new Promise((resolve) => {
-        resolveFetch = resolve;
-      });
-
-      fetchStub = sinon.stub(globalThis, "fetch").returns(fetchPromise);
-
-      const sendCommandPromise = Client.sendCommand(command);
-
-      // Simulates a page transition (Hologram.#showNewPage) completing while this
-      // command's fetch is still in flight — registryEpoch catches up to the new
-      // page before the response resolves. The stamped epoch must still be the one
-      // captured before the request went out, or a reply landing after the
-      // transition gets treated as belonging to the new (wrong) page instead of
-      // being recognized as stale.
-      Hologram.registryEpoch = 6;
-
-      resolveFetch({
-        ok: true,
-        json: sinon.stub().resolves({
-          action: 'Type.actionStruct({name: Type.atom("dummy_action")})',
-          selfEchoes: "Type.list([])",
-          status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
-        }),
-      });
-
-      await sendCommandPromise;
-      await waitForEventLoop();
-
-      sinon.assert.calledOnceWithExactly(
-        schedulePushedActionStub,
-        Type.actionStruct({name: Type.atom("dummy_action")}),
-        [],
-        5,
-      );
-
-      Hologram.registryEpoch = originalRegistryEpoch;
-    });
-
 
     // The reply names the chunks the struct types in its actions need, and no action may run
     // before they are in.
@@ -735,13 +608,21 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: 'Type.actionStruct({name: Type.atom("next_action")})',
+          action: serialized(
+            Type.actionStruct({name: Type.atom("next_action")}),
+          ),
           chunks: ["AAAAAAAA", "BBBBBBBB"],
-          selfEchoes:
-            'Type.list([Type.actionStruct({name: Type.atom("self_echo")})])',
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -754,12 +635,11 @@ describe("Client", () => {
         [
           Type.actionStruct({name: Type.atom("next_action")}),
           ["AAAAAAAA", "BBBBBBBB"],
-          Hologram.registryEpoch,
+          3,
         ],
         [
-          Type.actionStruct({name: Type.atom("self_echo")}),
+          Type.actionStruct({name: Type.atom("self_echo"), target: target}),
           ["AAAAAAAA", "BBBBBBBB"],
-          Hologram.registryEpoch,
         ],
       ]);
     });
@@ -768,11 +648,11 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: "Type.nil()",
-          selfEchoes: "Type.list([])",
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(Type.list()),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -839,12 +719,22 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: "Type.nil()",
-          selfEchoes:
-            'Type.list([Type.actionStruct({name: Type.atom("self_echo_a")}), Type.actionStruct({name: Type.atom("self_echo_b")})])',
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo_a"),
+                target: Type.bitstring("my_target"),
+              }),
+              Type.actionStruct({
+                name: Type.atom("self_echo_b"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -857,12 +747,53 @@ describe("Client", () => {
 
       sinon.assert.calledWith(
         schedulePushedActionStub,
-        Type.actionStruct({name: Type.atom("self_echo_a")}),
+        Type.actionStruct({name: Type.atom("self_echo_a"), target: target}),
+        [],
       );
 
       sinon.assert.calledWith(
         schedulePushedActionStub,
-        Type.actionStruct({name: Type.atom("self_echo_b")}),
+        Type.actionStruct({name: Type.atom("self_echo_b"), target: target}),
+        [],
+      );
+    });
+
+    // A self echo is a broadcast the sender's own tab receives, and the server picked its targets
+    // from the subscriptions the command was sent with. One of them can be a component of a page
+    // the user has left since, which is skipped the way SSE skips a pushed action for a cid the
+    // page does not hold, rather than raising for a target the page never had.
+    it("skips a self echo whose target is not on the page", async () => {
+      const mockResponse = {
+        ok: true,
+        json: sinon.stub().resolves({
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo_a"),
+                target: Type.bitstring("left_page_component"),
+              }),
+              Type.actionStruct({
+                name: Type.atom("self_echo_b"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
+          status: 1,
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
+        }),
+      };
+
+      fetchStub = sinon.stub(globalThis, "fetch").resolves(mockResponse);
+
+      await Client.sendCommand(command);
+      await waitForEventLoop();
+
+      sinon.assert.calledOnceWithExactly(
+        schedulePushedActionStub,
+        Type.actionStruct({name: Type.atom("self_echo_b"), target: target}),
+        [],
       );
     });
 
@@ -870,11 +801,11 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: "Type.nil()",
-          selfEchoes: "Type.list([])",
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(Type.list()),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -889,12 +820,20 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: 'Type.actionStruct({name: Type.atom("next_action")})',
-          selfEchoes:
-            'Type.list([Type.actionStruct({name: Type.atom("self_echo")})])',
+          action: serialized(
+            Type.actionStruct({name: Type.atom("next_action")}),
+          ),
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
           status: 1,
-          subReceiptAdds: "Type.list([])",
-          subReceiptDrops: "Type.list([])",
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
         }),
       };
 
@@ -912,8 +851,93 @@ describe("Client", () => {
 
       assert.deepStrictEqual(
         schedulePushedActionStub.secondCall.args[0],
-        Type.actionStruct({name: Type.atom("self_echo")}),
+        Type.actionStruct({name: Type.atom("self_echo"), target: target}),
       );
+    });
+
+    // The next action belongs to the page the command was sent from, which the caller names: the
+    // displayed page for a command the user triggered, the parent action's page for one an action
+    // put. A self echo is a broadcast, so it is passed on with no stamp and schedulePushedAction
+    // stamps it with the page the registry answers for when it arrives, whichever page that is.
+    it("stamps the next action with the epoch it is given, and leaves a self echo to be stamped on arrival", async () => {
+      const mockResponse = {
+        ok: true,
+        json: sinon.stub().resolves({
+          action: serialized(
+            Type.actionStruct({name: Type.atom("next_action")}),
+          ),
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
+          status: 1,
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
+        }),
+      };
+
+      fetchStub = sinon.stub(globalThis, "fetch").resolves(mockResponse);
+
+      await Client.sendCommand(command, 7);
+      await waitForEventLoop();
+
+      assert.deepStrictEqual(schedulePushedActionStub.args, [
+        [Type.actionStruct({name: Type.atom("next_action")}), [], 7],
+        [Type.actionStruct({name: Type.atom("self_echo"), target: target}), []],
+      ]);
+    });
+
+    // The default's one job is to read the epoch before the request goes out. A navigation can
+    // complete while the fetch is in flight, and a next action stamped on arrival would then pass
+    // for the destination's and run there against a target that page never had. A self echo is the
+    // other way round: the subscription it answers may have survived the navigation, so it is
+    // passed on with no stamp, to be stamped on arrival and run on the destination if its target
+    // is on that page.
+    it("stamps the next action with the registry's epoch when the command is sent, and leaves a self echo to be stamped on arrival", async () => {
+      let resolveFetch;
+
+      const fetchPromise = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+
+      fetchStub = sinon.stub(globalThis, "fetch").returns(fetchPromise);
+
+      const sendCommandPromise = Client.sendCommand(command);
+
+      // A page transition completing mid-flight.
+      Hologram.registryEpoch = 4;
+
+      resolveFetch({
+        ok: true,
+        json: sinon.stub().resolves({
+          action: serialized(
+            Type.actionStruct({name: Type.atom("next_action")}),
+          ),
+          selfEchoes: serialized(
+            Type.list([
+              Type.actionStruct({
+                name: Type.atom("self_echo"),
+                target: Type.bitstring("my_target"),
+              }),
+            ]),
+          ),
+          status: 1,
+          subReceiptAdds: serialized(Type.list()),
+          subReceiptDrops: serialized(Type.list()),
+        }),
+      });
+
+      await sendCommandPromise;
+      await waitForEventLoop();
+
+      assert.deepStrictEqual(schedulePushedActionStub.args, [
+        [Type.actionStruct({name: Type.atom("next_action")}), [], 3],
+        [Type.actionStruct({name: Type.atom("self_echo"), target: target}), []],
+      ]);
     });
 
     it("command fails due to network error", async () => {
@@ -956,13 +980,23 @@ describe("Client", () => {
       const mockResponse = {
         ok: true,
         json: sinon.stub().resolves({
-          action: "Type.nil()",
-          selfEchoes: "Type.list([])",
+          action: serialized(Type.nil()),
+          selfEchoes: serialized(Type.list()),
           status: 1,
-          subReceiptAdds:
-            'Type.list([Type.tuple([Type.atom("room_b"), Type.bitstring("page"), Type.bitstring("token-b")])])',
-          subReceiptDrops:
-            'Type.list([Type.tuple([Type.atom("room_a"), Type.bitstring("page")])])',
+          subReceiptAdds: serialized(
+            Type.list([
+              Type.tuple([
+                Type.atom("room_b"),
+                Type.bitstring("page"),
+                Type.bitstring("token-b"),
+              ]),
+            ]),
+          ),
+          subReceiptDrops: serialized(
+            Type.list([
+              Type.tuple([Type.atom("room_a"), Type.bitstring("page")]),
+            ]),
+          ),
         }),
       };
 

@@ -5,6 +5,7 @@ import Bitstring from "./bitstring.mjs";
 import ComponentRegistry from "./component_registry.mjs";
 import Config from "./config.mjs";
 import Connection from "./connection.mjs";
+import Deserializer from "./deserializer.mjs";
 import Hologram from "./hologram.mjs";
 import HologramRuntimeError from "./errors/runtime_error.mjs";
 import HttpTransport from "./http_transport.mjs";
@@ -24,11 +25,19 @@ export default class Client {
 
     const module = ComponentRegistry.getComponentModule(target);
 
+    // Sent so the server can read this tab's subscriptions from signed receipts rather
+    // than from its own node's registry, which holds nothing when the command lands on
+    // a node that does not hold the connection.
+    const subReceipts = Array.from(
+      App.subscriptionReceiptRegistry.entries.values(),
+    ).map((triple) => triple.data[2]);
+
     return Type.map([
       [Type.atom("instance_id"), Type.bitstring(App.instanceId)],
       [Type.atom("module"), module],
       [Type.atom("name"), Erlang_Maps["get/2"](Type.atom("name"), command)],
       [Type.atom("params"), Erlang_Maps["get/2"](Type.atom("params"), command)],
+      [Type.atom("sub_receipts"), Type.list(subReceipts)],
       [Type.atom("target"), target],
     ]);
   }
@@ -157,19 +166,13 @@ export default class Client {
     return Connection.isConnected();
   }
 
-  static async sendCommand(command) {
-    // Captured before the request goes out, not read from the (mutable, page-transition-bumped)
-    // registry epoch once the response comes back. `scheduleAction`'s own default parameter reads
-    // Hologram.registryEpoch at call time, which is correct for a same-tick caller but wrong here:
-    // this command can outlive the page that sent it (a `put_page` navigation can complete while
-    // this fetch is still in flight), and the epoch that should gate its reply is the one the
-    // command was sent under, not whatever epoch happens to be current when the response arrives.
-    // Without this, a reply landing after a page transition is stamped with the NEW page's epoch,
-    // so the staleness guard sees `epoch === currentEpoch` and admits it — even though its target
-    // cid only ever existed on the page that has since been left, raising `invalid action target`
-    // instead of being dropped as stale.
-    const epoch = Hologram.registryEpoch;
-
+  // The epoch stamps the next action the reply carries: it is the page the command was sent from,
+  // so that a reply landing after a navigation is dropped as stale instead of running against the
+  // destination. A command the user triggered passes the displayed page's epoch, a command an
+  // action put passes that action's. The default reads the registry when the command is sent,
+  // never when the reply arrives. The reply's self echoes are not stamped with it: see below.
+  // Deps: [:maps.get/2]
+  static async sendCommand(command, epoch = Hologram.registryEpoch) {
     const opts = {
       method: "POST",
       headers: {
@@ -191,37 +194,44 @@ export default class Client {
       const {
         action,
         chunks = [],
-        selfEchoes: encodedSelfEchoes,
+        selfEchoes: serializedSelfEchoes,
         status,
-        subReceiptAdds: encodedSubReceiptAdds,
-        subReceiptDrops: encodedSubReceiptDrops,
+        subReceiptAdds: serializedSubReceiptAdds,
+        subReceiptDrops: serializedSubReceiptDrops,
       } = await response.json();
 
       if (status === 0) {
         $.#failCommand(action);
       }
 
-      const subReceiptAdds = Interpreter.evaluateJavaScriptExpression(
-        encodedSubReceiptAdds,
-      );
+      const subReceiptAdds = Deserializer.deserialize(serializedSubReceiptAdds);
 
-      const subReceiptDrops = Interpreter.evaluateJavaScriptExpression(
-        encodedSubReceiptDrops,
+      const subReceiptDrops = Deserializer.deserialize(
+        serializedSubReceiptDrops,
       );
 
       App.subscriptionReceiptRegistry.merge(subReceiptAdds, subReceiptDrops);
 
-      const nextAction = Interpreter.evaluateJavaScriptExpression(action);
+      const nextAction = Deserializer.deserialize(action);
 
       if (!Type.isNil(nextAction)) {
         Hologram.schedulePushedAction(nextAction, chunks, epoch);
       }
 
-      const selfEchoes =
-        Interpreter.evaluateJavaScriptExpression(encodedSelfEchoes);
+      const selfEchoes = Deserializer.deserialize(serializedSelfEchoes);
 
+      // A self echo is the sender's own copy of a broadcast, so it goes where a broadcast from
+      // another tab goes: to the page on screen when it arrives, since the subscription it answers
+      // may have survived a navigation (a layout's, say), and nowhere when its target is not on
+      // that page, the way SSE skips a pushed action for a cid the page does not hold. The server
+      // picked the targets from the subscriptions the command was sent with, so one of them can
+      // be a component only the page since left had.
       for (const action of selfEchoes.data) {
-        Hologram.schedulePushedAction(action, chunks, epoch);
+        const target = Erlang_Maps["get/2"](Type.atom("target"), action);
+
+        if (ComponentRegistry.isCidRegistered(target)) {
+          Hologram.schedulePushedAction(action, chunks);
+        }
       }
     } catch (error) {
       if (error instanceof HologramRuntimeError) {

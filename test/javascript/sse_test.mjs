@@ -3,6 +3,7 @@
 import {
   assert,
   defineRuntimeGlobals,
+  registerWebApis,
   initComponentRegistryEntry,
   sinon,
 } from "./support/helpers.mjs";
@@ -11,14 +12,15 @@ import App from "../../assets/js/app.mjs";
 import ComponentRegistry from "../../assets/js/component_registry.mjs";
 import GlobalRegistry from "../../assets/js/global_registry.mjs";
 import Hologram from "../../assets/js/hologram.mjs";
-import Interpreter from "../../assets/js/interpreter.mjs";
 import LiveReload from "../../assets/js/live_reload.mjs";
 import Logger from "../../assets/js/logger.mjs";
+import Serializer from "../../assets/js/serializer.mjs";
 import Sse from "../../assets/js/sse.mjs";
 import SubscriptionReceiptRegistry from "../../assets/js/subscription_receipt_registry.mjs";
 import Type from "../../assets/js/type.mjs";
 
 defineRuntimeGlobals();
+registerWebApis();
 
 describe("Sse", () => {
   let fetchStub;
@@ -40,6 +42,11 @@ describe("Sse", () => {
   const receiptA = receipt(Type.atom("room_a"), "page", "token-a");
   const receiptB = receipt(Type.atom("room_b"), "widget", "token-b");
 
+  // A term the way the server sends it: the serialized text for an event whose data is the term
+  // alone, parsed along with its envelope for an action, a broadcast or the handshake reply.
+  const serializedText = (term) => Serializer.serialize(term, "server");
+  const serializedValue = (term) => JSON.parse(serializedText(term));
+
   function stubHandshakeResponse({
     handshakeId = "test-handshake-id",
     heartbeatIntervalMs = 15_000,
@@ -47,25 +54,17 @@ describe("Sse", () => {
     ok = true,
     status = 200,
   } = {}) {
+    const serializedRefreshedReceipts = serializedValue(refreshedReceipts);
+
     fetchStub.resolves({
       ok,
       status,
       json: async () => ({
         handshakeId,
         heartbeatIntervalMs,
-        refreshedReceipts: "encoded-refreshed-receipts",
+        refreshedReceipts: serializedRefreshedReceipts,
       }),
     });
-
-    return sinon
-      .stub(Interpreter, "evaluateJavaScriptExpression")
-      .callsFake((expression) => {
-        if (expression === "encoded-refreshed-receipts") {
-          return refreshedReceipts;
-        }
-
-        return Type.atom("noop");
-      });
   }
 
   beforeEach(() => {
@@ -652,14 +651,6 @@ describe("Sse", () => {
         }),
       );
 
-      sinon
-        .stub(Interpreter, "evaluateJavaScriptExpression")
-        .callsFake((expression) =>
-          expression === "encoded-refreshed-receipts"
-            ? Type.list()
-            : Type.atom("noop"),
-        );
-
       const supersededConnect = Sse.connect();
 
       Sse.suspend();
@@ -670,7 +661,7 @@ describe("Sse", () => {
         status: 200,
         json: async () => ({
           handshakeId: "resumed-handshake-id",
-          refreshedReceipts: "encoded-refreshed-receipts",
+          refreshedReceipts: serializedValue(Type.list()),
         }),
       });
 
@@ -692,17 +683,9 @@ describe("Sse", () => {
         status: 200,
         json: async () => ({
           handshakeId: "resumed-handshake-id",
-          refreshedReceipts: "encoded-refreshed-receipts",
+          refreshedReceipts: serializedValue(Type.list()),
         }),
       });
-
-      sinon
-        .stub(Interpreter, "evaluateJavaScriptExpression")
-        .callsFake((expression) =>
-          expression === "encoded-refreshed-receipts"
-            ? Type.list()
-            : Type.atom("noop"),
-        );
 
       const scheduleReconnectSpy = sinon.spy(Sse, "scheduleReconnect");
 
@@ -770,21 +753,20 @@ describe("Sse", () => {
         target: cid,
       });
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-action-expression").returns(decodedAction);
+      stubHandshakeResponse();
 
       const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
 
+      const serializedDecodedAction = serializedValue(decodedAction);
+
       Sse.eventSource.listeners.action({
         data: JSON.stringify({
-          action: "encoded-action-expression",
+          action: serializedDecodedAction,
           chunks: ["AAAAAAAA", "BBBBBBBB"],
         }),
       });
-
-      sinon.assert.calledWith(evalStub, "encoded-action-expression");
 
       sinon.assert.calledOnceWithExactly(scheduleStub, decodedAction, [
         "AAAAAAAA",
@@ -798,15 +780,19 @@ describe("Sse", () => {
         target: Type.bitstring("c_unmounted"),
       });
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-action-expression").returns(decodedAction);
+      stubHandshakeResponse();
 
       const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
 
+      const serializedDecodedAction = serializedValue(decodedAction);
+
       Sse.eventSource.listeners.action({
-        data: JSON.stringify({action: "encoded-action-expression", chunks: []}),
+        data: JSON.stringify({
+          action: serializedDecodedAction,
+          chunks: [],
+        }),
       });
 
       sinon.assert.notCalled(scheduleStub);
@@ -829,17 +815,18 @@ describe("Sse", () => {
         Type.list([chat, sidebar]),
       ]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-broadcast").returns(envelope);
+      stubHandshakeResponse();
 
       const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
 
+      const serializedEnvelope = serializedValue(envelope);
+
       Sse.eventSource.listeners.broadcast({
         data: JSON.stringify({
           chunks: ["AAAAAAAA", "BBBBBBBB"],
-          data: "encoded-broadcast",
+          data: serializedEnvelope,
         }),
       });
 
@@ -872,15 +859,16 @@ describe("Sse", () => {
         Type.list([chat, Type.bitstring("unmounted")]),
       ]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-broadcast").returns(envelope);
+      stubHandshakeResponse();
 
       const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
 
+      const serializedEnvelope = serializedValue(envelope);
+
       Sse.eventSource.listeners.broadcast({
-        data: JSON.stringify({chunks: [], data: "encoded-broadcast"}),
+        data: JSON.stringify({chunks: [], data: serializedEnvelope}),
       });
 
       sinon.assert.calledOnceWithExactly(
@@ -897,15 +885,16 @@ describe("Sse", () => {
         Type.list([]),
       ]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-broadcast").returns(envelope);
+      stubHandshakeResponse();
 
       const scheduleStub = sinon.stub(Hologram, "schedulePushedAction");
 
       await Sse.connect();
 
+      const serializedEnvelope = serializedValue(envelope);
+
       Sse.eventSource.listeners.broadcast({
-        data: JSON.stringify({chunks: [], data: "encoded-broadcast"}),
+        data: JSON.stringify({chunks: [], data: serializedEnvelope}),
       });
 
       sinon.assert.notCalled(scheduleStub);
@@ -929,20 +918,34 @@ describe("Sse", () => {
     });
   });
 
+  describe("compiled event", () => {
+    it("takes the compilation error overlay down", async () => {
+      stubHandshakeResponse();
+      const hideStub = sinon.stub(LiveReload, "hideErrorOverlay");
+
+      await Sse.connect();
+
+      Sse.eventSource.listeners.compiled({data: ""});
+
+      sinon.assert.calledOnceWithExactly(hideStub);
+    });
+  });
+
   describe("add_sub_receipts event", () => {
     it("inserts new entries and leaves non-matching entries intact", async () => {
       const adds = Type.list([receiptA]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-adds").returns(adds);
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingB, receiptB);
 
-      Sse.eventSource.listeners.add_sub_receipts({data: "encoded-adds"});
+      const serializedAdds = serializedText(adds);
 
-      assert.strictEqual(
+      Sse.eventSource.listeners.add_sub_receipts({data: serializedAdds});
+
+      assert.deepStrictEqual(
         SubscriptionReceiptRegistry.entries.get(encodedBindingA),
         receiptA,
       );
@@ -958,30 +961,34 @@ describe("Sse", () => {
       const newReceiptA = receipt(Type.atom("room_a"), "page", "new-token-a");
       const adds = Type.list([newReceiptA]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-adds").returns(adds);
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, oldReceiptA);
 
-      Sse.eventSource.listeners.add_sub_receipts({data: "encoded-adds"});
+      const serializedAdds = serializedText(adds);
 
-      assert.strictEqual(
+      Sse.eventSource.listeners.add_sub_receipts({data: serializedAdds});
+
+      assert.deepStrictEqual(
         SubscriptionReceiptRegistry.entries.get(encodedBindingA),
         newReceiptA,
       );
     });
 
     it("is a no-op when the receipts list is empty", async () => {
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-adds").returns(Type.list());
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, receiptA);
 
-      Sse.eventSource.listeners.add_sub_receipts({data: "encoded-adds"});
+      const serializedEmptyList = serializedText(Type.list());
+
+      Sse.eventSource.listeners.add_sub_receipts({
+        data: serializedEmptyList,
+      });
 
       assert.strictEqual(
         SubscriptionReceiptRegistry.entries.get(encodedBindingA),
@@ -994,16 +1001,17 @@ describe("Sse", () => {
     it("purges the named entries from the receipt registry", async () => {
       const dropBindings = Type.list([bindingA]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-drop-keys").returns(dropBindings);
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, receiptA);
       SubscriptionReceiptRegistry.entries.set(encodedBindingB, receiptB);
 
+      const serializedDropBindings = serializedText(dropBindings);
+
       Sse.eventSource.listeners.drop_sub_receipts({
-        data: "encoded-drop-keys",
+        data: serializedDropBindings,
       });
 
       assert.isFalse(SubscriptionReceiptRegistry.entries.has(encodedBindingA));
@@ -1011,15 +1019,16 @@ describe("Sse", () => {
     });
 
     it("is a no-op when the keys list is empty", async () => {
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-drop-keys").returns(Type.list());
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, receiptA);
 
+      const serializedEmptyList = serializedText(Type.list());
+
       Sse.eventSource.listeners.drop_sub_receipts({
-        data: "encoded-drop-keys",
+        data: serializedEmptyList,
       });
 
       assert.isTrue(SubscriptionReceiptRegistry.entries.has(encodedBindingA));
@@ -1033,19 +1042,20 @@ describe("Sse", () => {
     it("replaces matching entries with refreshed receipts and leaves non-matching entries intact", async () => {
       const refreshed = Type.list([freshReceiptA]);
 
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-refreshed").returns(refreshed);
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, staleReceiptA);
       SubscriptionReceiptRegistry.entries.set(encodedBindingB, receiptB);
 
+      const serializedRefreshed = serializedText(refreshed);
+
       Sse.eventSource.listeners.refresh_sub_receipts({
-        data: "encoded-refreshed",
+        data: serializedRefreshed,
       });
 
-      assert.strictEqual(
+      assert.deepStrictEqual(
         SubscriptionReceiptRegistry.entries.get(encodedBindingA),
         freshReceiptA,
       );
@@ -1057,15 +1067,16 @@ describe("Sse", () => {
     });
 
     it("is a no-op when the receipts list is empty", async () => {
-      const evalStub = stubHandshakeResponse();
-      evalStub.withArgs("encoded-refreshed").returns(Type.list());
+      stubHandshakeResponse();
 
       await Sse.connect();
 
       SubscriptionReceiptRegistry.entries.set(encodedBindingA, staleReceiptA);
 
+      const serializedEmptyList = serializedText(Type.list());
+
       Sse.eventSource.listeners.refresh_sub_receipts({
-        data: "encoded-refreshed",
+        data: serializedEmptyList,
       });
 
       assert.strictEqual(

@@ -2,7 +2,7 @@
 defmodule Hologram.MixProject do
   use Mix.Project
 
-  @version "0.12.0"
+  @version "0.12.4"
 
   # Copied from Hologram.Commons.SystemUtils
   @windows_exec_suffixes [".bat", ".cmd", ".exe"]
@@ -22,14 +22,16 @@ defmodule Hologram.MixProject do
         "cmd assets/node_modules/.bin/prettier '*.yml' '.github/**' 'assets/*.json' 'assets/*.mjs' 'assets/js/**' 'benchmarks/javascript/**' 'scripts/**' 'test/javascript/**' --config 'assets/.prettierrc.json' -u --write",
       "format.js.check":
         "cmd assets/node_modules/.bin/prettier '*.yml' '.github/**' 'assets/*.json' 'assets/*.mjs' 'assets/js/**' 'benchmarks/javascript/**' 'scripts/**' 'test/javascript/**' --check --config 'assets/.prettierrc.json' --no-error-on-unmatched-pattern -u",
+      # The npm packages come from the lockfiles, as in CI: a plain install would rewrite a
+      # lockfile that another npm generated, dirtying the tree on a first setup.
       setup: [
         "deps.get",
-        "cmd --cd assets npm install",
+        "cmd --cd assets npm clean-install",
         "cmd --cd test/ecosystem mix deps.get",
         "cmd --cd test/features mix deps.get",
-        "cmd --cd test/features/assets npm install",
+        "cmd --cd test/features/assets npm clean-install",
         "cmd --cd test/umbrella mix deps.get",
-        "cmd --cd test/umbrella/assets npm install"
+        "cmd --cd test/umbrella/assets npm clean-install"
       ],
       t: ["test", "test.js"],
       "test.js": [&test_js/1]
@@ -74,7 +76,7 @@ defmodule Hologram.MixProject do
       {:gproc, "~> 1.0"},
       {:html_entities, "~> 0.5"},
       {:interceptor, "~> 0.5"},
-      {:jason, "~> 1.0"},
+      {:jason, "~> 1.3"},
       {:mix_audit, "~> 2.0", only: [:dev, :test], runtime: false},
       {:mox, "~> 1.0", only: :test},
       {:phoenix, "~> 1.7"},
@@ -278,7 +280,9 @@ defmodule Hologram.MixProject do
 
     opts = [cd: "assets", into: IO.stream(:stdio, :line)]
 
-    cmd_cross_platform("npm", ["install"], opts)
+    # Installs what the lockfile names without writing the lockfile back: an npm other than the
+    # one that generated it writes it differently, and a test run must not dirty the tree.
+    cmd_cross_platform("npm", ["install", "--no-save"], opts)
 
     {_exit_msg, exit_status} = cmd_cross_platform("npm", cmd, opts)
 
