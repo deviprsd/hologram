@@ -1,6 +1,8 @@
 defmodule HologramFeatureTests.ActionsTest do
   use HologramFeatureTests.TestCase, async: true
 
+  alias HologramFeatureTests.Actions.LateResultDestinationPage
+  alias HologramFeatureTests.Actions.LateResultPage
   alias HologramFeatureTests.Actions.Page1
   alias HologramFeatureTests.Actions.Page10
   alias HologramFeatureTests.Actions.Page11
@@ -21,6 +23,8 @@ defmodule HologramFeatureTests.ActionsTest do
   alias HologramFeatureTests.Actions.Page25
   alias HologramFeatureTests.Actions.Page26
   alias HologramFeatureTests.Actions.Page27
+  alias HologramFeatureTests.Actions.Page28
+  alias HologramFeatureTests.Actions.Page29
   alias HologramFeatureTests.Actions.Page3
   alias HologramFeatureTests.Actions.Page4
   alias HologramFeatureTests.Actions.Page5
@@ -480,11 +484,11 @@ defmodule HologramFeatureTests.ActionsTest do
       |> assert_text(css("#result"), ":async_continuation_ran")
     end
 
-    # The await spans the navigation, so the continuation is scheduled only after the swap - a
-    # window the timer cancellation never covered, the timer being armed after it already ran.
-    # The continuation inherits the page its parent ran on, and that page has been left; on the
-    # destination it would raise, Page21 having no action clause for it, which the post-sleep
-    # command would surface from the browser log as a Wallaby.JSError.
+    # The await spans the navigation, so the parent settles only after the swap - a window the
+    # timer cancellation never covered, no timer being armed yet when it ran. The parent settles on
+    # a page that has been left, so its whole result is dropped before the continuation is ever
+    # put; on the destination the continuation would raise, Page21 having no action clause for it,
+    # which the post-sleep command would surface from the browser log as a Wallaby.JSError.
     feature "navigating to another page drops the continuation of an async action",
             %{session: session} do
       session
@@ -494,6 +498,149 @@ defmodule HologramFeatureTests.ActionsTest do
       |> assert_page(Page21)
       |> sleep(3_000)
       |> assert_text("Page 21 title")
+    end
+  end
+
+  # Each slow action awaits 3 seconds before producing its result, and each drop test waits 3.5
+  # after navigating, so the result settles on the page navigated to. A surviving component result
+  # faults on the registry write there, and a surviving command fails on the server and raises on
+  # the client; both surface as a Wallaby.JSError on the first Wallaby call after the wait. A
+  # surviving layout or page result raises nothing, so those tests read the result the destination
+  # renders. A surviving navigation pulls the browser off the destination.
+  describe "result after navigation" do
+    # Positive control for the component drop below: the same button's result lands when the user
+    # stays put, proving the fixture runs a real slow action whose result is written.
+    feature "a slow component action's result lands when the user stays on the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow component action"))
+      |> assert_text(css("#component_result"), "nil")
+      |> assert_text(css("#component_result"), ~s/"component_result_ran"/)
+    end
+
+    # Positive control for the layout drops below, which read the same result: without it, an
+    # action that never wrote would leave "nil" there too.
+    feature "a slow layout action's result lands when the user stays on the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow layout action"))
+      |> assert_text(css("#layout_result"), "nil")
+      |> assert_text(css("#layout_result"), ~s/"layout_result_ran"/)
+    end
+
+    # Positive control for the page drop below, which reads the same result: without it, an action
+    # that never wrote would leave "nil" there too.
+    feature "a slow page action's result lands when the user stays on the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow page action"))
+      |> assert_text(css("#page_result"), "nil")
+      |> assert_text(css("#page_result"), ~s/"page_result_ran"/)
+    end
+
+    # Positive control for the command drop: the command the result puts is sent and its reply
+    # lands when the user stays put.
+    feature "a slow action's command lands when the user stays on the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow command action"))
+      |> assert_text(css("#page_result"), "nil")
+      |> assert_text(css("#page_result"), ~s/"page_command_ran"/)
+    end
+
+    # Positive control for the navigation drop: the navigation the result puts happens when the
+    # user stays put.
+    feature "a slow action's navigation lands when the user stays on the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow navigating action"))
+      |> assert_page(Page21)
+      |> assert_text("Page 21 title")
+    end
+
+    # The component is mounted on the late result page only, so a surviving result targets a cid
+    # the destination's registry does not hold and faults there.
+    feature "navigating to another page drops the result of an action targeting a component",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow component action"))
+      |> click(link("Destination link"))
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_text("Late result destination title")
+    end
+
+    # The layout cid resolves on the destination too, to a new instance of the same module, so a
+    # surviving result would not raise: it would show on the destination's layout.
+    feature "navigating to another page drops the result of an action targeting the layout",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow layout action"))
+      |> click(link("Destination link"))
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_text(css("#layout_result"), "nil")
+    end
+
+    # The page cid resolves on the destination too, to a module that renders the same key, so a
+    # surviving result would show there.
+    feature "navigating to another page drops the result of an action targeting the page",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow page action"))
+      |> click(link("Destination link"))
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_text(css("#page_result"), "nil")
+    end
+
+    # The destination has no command clause, so a surviving command fails on the server and the
+    # client raises on its reply.
+    feature "navigating to another page drops the command an action's result puts",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow command action"))
+      |> click(link("Destination link"))
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_text("Late result destination title")
+    end
+
+    # A surviving navigation would take the browser to Page21.
+    feature "navigating to another page drops the navigation an action's result puts",
+            %{session: session} do
+      session
+      |> visit(LateResultPage)
+      |> click(button("Run slow navigating action"))
+      |> click(link("Destination link"))
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_page(LateResultDestinationPage)
+      |> assert_text("Late result destination title")
+    end
+
+    # Going back restores the registry from a snapshot rather than from mount data, so the result
+    # settles after a transition that reached the epoch bump down a different path.
+    feature "going back to another page drops the result of an action targeting the layout",
+            %{session: session} do
+      session
+      |> visit(LateResultDestinationPage)
+      |> click(link("Late result link"))
+      |> assert_page(LateResultPage)
+      |> click(button("Run slow layout action"))
+      |> go_back()
+      |> assert_page(LateResultDestinationPage)
+      |> sleep(3_500)
+      |> assert_text(css("#layout_result"), "nil")
     end
   end
 
@@ -574,6 +721,51 @@ defmodule HologramFeatureTests.ActionsTest do
       |> assert_page(Page27)
       |> click(button("Put page 27 result"))
       |> assert_text(css("#page_result"), ~s/"Page 27 result"/)
+    end
+  end
+
+  describe "a next action with no delay" do
+    # The submit action's render is the only thing that shows "loading": the next action awaits,
+    # and renders nothing until its promise resolves. A next action that ran before the browser
+    # paints must not take that paint away.
+    feature "leaves the result of its parent on screen while it awaits", %{session: session} do
+      session
+      |> visit(Page29)
+      |> click(button("Submit Page 29 Form"))
+      |> assert_text(css("#status"), "loading")
+      |> assert_text(css("#status"), "done")
+    end
+
+    # The editor shows its draft while editing and the owner's value otherwise. The commit leaves
+    # editing and forwards the draft to the owner in a next action, so a frame painted between the
+    # two would show the owner's old value in the editor. The text is sampled on every animation
+    # frame, since a mutation observer would also record the DOM change of the editor's own render,
+    # which still happens before the owner's.
+    feature "runs before the browser paints", %{session: session} do
+      session
+      |> visit(Page28)
+      |> assert_text(css("#component_24_shown"), "ORIGINAL")
+      |> click(button("Edit Component 24 Draft"))
+      |> assert_text(css("#component_24_shown"), "NEW")
+      |> execute_script("""
+      globalThis.shownSamples = [];
+
+      const sample = () => {
+        globalThis.shownSamples.push(document.getElementById("component_24_shown").textContent);
+        requestAnimationFrame(sample);
+      };
+
+      requestAnimationFrame(sample);
+      """)
+      |> click(button("Commit Component 24 Draft"))
+      |> assert_text(css("#component_24_shown"), "NEW")
+      # Gives the sampler a few frames past the commit's last render. The real bound is one frame,
+      # the rest is margin.
+      |> sleep(200)
+      |> execute_script("return globalThis.shownSamples;", [], fn samples ->
+        assert samples != []
+        assert Enum.uniq(samples) == ["NEW"]
+      end)
     end
   end
 end

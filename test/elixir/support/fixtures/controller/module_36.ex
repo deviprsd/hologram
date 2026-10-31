@@ -1,17 +1,20 @@
-# A page with an optional trailing route param (deviprsd#32).
+# credo:disable-for-this-file Credo.Check.Readability.Specs
 defmodule Hologram.Test.Fixtures.Controller.Module36 do
-  use Hologram.Page
+  use Hologram.Component
 
-  route "/hologram-test-fixtures-controller-module36/:aaa?"
+  middleware :mark
 
-  param :aaa, :string
+  def mark(server, _opts) do
+    put_response_header(server, "x-my-header", "my_value")
+  end
 
-  layout Hologram.Test.Fixtures.LayoutFixture
+  @impl Component
+  def command(:my_command, _params, server) do
+    server
+  end
 
-  @impl Page
+  @impl Component
   def template do
-    ~HOLO"""
-    param_aaa = {inspect(@aaa)}
-    """
+    ~HOLO""
   end
 end

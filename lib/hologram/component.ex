@@ -66,7 +66,7 @@ defmodule Hologram.Component do
   """
   @callback template() :: (map -> list)
 
-  @optional_callbacks [action: 3, command: 3, init: 2]
+  @optional_callbacks [action: 3, command: 3]
 
   @prop_opt_keys [:default, :from_context, :required, :values]
 
@@ -126,9 +126,12 @@ defmodule Hologram.Component do
         def __is_hologram_component__, do: true
 
         @impl Component
+        def init(_props, component), do: component
+
+        @impl Component
         def init(_props, component, server), do: {component, server}
 
-        defoverridable init: 3
+        defoverridable init: 2, init: 3
       end,
       maybe_register_colocated_template_markup(template_path),
       register_props_accumulator()
@@ -235,7 +238,9 @@ defmodule Hologram.Component do
 
   @doc """
   Puts the given action spec to the component or server struct's next_action field.
-  Next action will be executed by the client-side runtime after the specified delay (in milliseconds, defaults to 0).
+  The client runs the next action after the specified delay (in milliseconds, defaults to 0).
+  With no delay it runs right after the current action, before the browser paints, so two components a chain updates are never shown out of step.
+  The browser paints once such a chain ends, or earlier while one of its actions awaits a task.
   An action still waiting out its delay is dropped when the page it was scheduled on is left, so it never runs against the page navigated to.
   """
   @spec put_action(Component.t() | Server.t(), atom | keyword) :: Component.t() | Server.t()
@@ -256,7 +261,8 @@ defmodule Hologram.Component do
 
   @doc """
   Puts the given action spec to the component or server struct's next_action field.
-  Next action will be executed by the client-side runtime after the specified delay (in milliseconds, defaults to 0).
+  The client runs the next action right after the current action, before the browser paints, so two components a chain updates are never shown out of step.
+  The browser paints once such a chain ends, or earlier while one of its actions awaits a task.
   """
   @spec put_action(Component.t() | Server.t(), atom, keyword | map) :: Component.t() | Server.t()
   def put_action(struct, name, params) do
@@ -322,6 +328,7 @@ defmodule Hologram.Component do
   @doc """
   Puts the given command spec to the component's next_command field.
   Next command will be sent asynchronously to the server.
+  The action the command's reply puts is dropped when the page the command was sent from is left before the reply arrives, so it never runs against the page navigated to; the command itself still runs on the server.
   """
   @spec put_command(Component.t(), atom | keyword) :: Component.t()
   def put_command(component, name_or_spec)
@@ -341,6 +348,7 @@ defmodule Hologram.Component do
   @doc """
   Puts the given command spec to the component's next_command field.
   Next command will be sent asynchronously to the server.
+  The action the command's reply puts is dropped when the page the command was sent from is left before the reply arrives, so it never runs against the page navigated to; the command itself still runs on the server.
   """
   @spec put_command(Component.t(), atom, keyword | map) :: Component.t()
   def put_command(%Component{} = component, name, params) do

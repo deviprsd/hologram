@@ -56,19 +56,21 @@ export default class KeyboardEvent {
     ]);
   }
 
-  static isEventIgnored(_event) {
-    return false;
+  // A keydown or keyup with no key is a browser artifact, not a keypress (Chromium fires a bare
+  // Event named keydown before it autofills a field and one named keyup after it). Such an event
+  // also lacks code and the modifier flags, so no usable param can be built from it.
+  static isEventIgnored(event) {
+    return typeof event.key !== "string";
   }
 
   // Decides whether a key filter (the values of a {:key, values} modifier) matches a live
   // event. Each value is either a modifier key, checked against the event's boolean flag, or
   // the key itself, compared against the lowercased event.key (already the canonical form).
   static matchesKeyFilter(filterValues, event) {
-    // event.key is undefined for some real keydown events - no registered
-    // filter can match a key that isn't there, so this is a clean
-    // non-match rather than a crash (same early-bail shape hotkeys.mjs's
-    // own live-event matcher already uses for the same condition).
-    if (event.key == null) return false;
+    // An event with no key matches no filter.
+    if (typeof event.key !== "string") {
+      return false;
+    }
 
     const eventKey = event.key.toLowerCase();
 

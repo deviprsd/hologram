@@ -31,8 +31,10 @@ defmodule Hologram.Compiler do
   # The longest command line, in characters, that esbuild is started with for a group of chunks (see
   # bundle/2). The measured part: on Windows esbuild's launcher is a .cmd file, which is run
   # through cmd.exe (see Hologram.Commons.SystemUtils.cmd_cross_platform/3), and cmd.exe takes a
-  # command line of 8191 characters at most. The policy part: the bound is applied on every OS, so
-  # that the chunks are bundled the same way everywhere.
+  # command line of 8191 characters at most. The launcher is what esbuild is started through there
+  # when the binary of its platform package is not found (see esbuild_bin_path/1). The policy part:
+  # the bound is applied on every OS, and whichever of the two is started, so that the chunks are
+  # bundled the same way everywhere.
   @max_chunks_command_length 8_191
 
   @doc """
@@ -326,11 +328,13 @@ defmodule Hologram.Compiler do
   module info PLT's keys.
   Pass `plt:` to fill an existing PLT instead of starting one; the compile task passes the PLT it keeps between
   compiles.
+  A module with a consolidated beam on the code path is read from it, whatever beam the VM loaded the
+  module from.
 
   Benchmark: https://github.com/bartblast/hologram/blob/master/benchmarks/compiler/build_ir_plt_1/README.md
   """
   @spec build_ir_plt(T.opts()) :: PLT.t()
-  # credo:disable-for-lines:26 Credo.Check.Refactor.Nesting
+  # credo:disable-for-lines:27 Credo.Check.Refactor.Nesting
   # The above Credo check is disabled because the function is optimised this way
   def build_ir_plt(opts \\ []) do
     ir_plt = opts[:plt] || PLT.start(opts)
@@ -341,8 +345,10 @@ defmodule Hologram.Compiler do
     # (determined experimentally)
     chunk_size = 2
 
-    # TODO: Remove this flag and call :code.which/1 directly below when
-    # resolve_beam_source/2 goes (see the removal note there).
+    consolidated_beams = Reflection.list_consolidated_beams()
+
+    # TODO: Remove this flag and the argument it feeds to resolve_beam_source/3
+    # when resolve_beam_source/2 goes (see the removal note there).
     umbrella? = Reflection.umbrella?()
 
     modules
@@ -350,7 +356,7 @@ defmodule Hologram.Compiler do
     |> TaskUtils.map_concurrently(
       fn module_chunk ->
         Enum.each(module_chunk, fn module ->
-          beam_source = resolve_beam_source(module, umbrella?)
+          beam_source = resolve_beam_source(module, consolidated_beams, umbrella?)
 
           if beam_source do
             ir = IR.for_module(module, beam_source)
@@ -383,20 +389,29 @@ defmodule Hologram.Compiler do
   Each module's BEAM is read once. A module whose entry in `old_plt` has the same mtime and size as its BEAM
   now, and whose BEAM was last written at least a second before `dumped_at` (the mtime of the dump `old_plt`
   was loaded from, in posix seconds), reuses that entry without reading the BEAM. Pass nil as `dumped_at` to
-  read every BEAM.
+  read every BEAM. A module with a consolidated beam on the code path is read from it, whatever beam the VM
+  loaded the module from.
   """
   @spec build_module_info_plt!(PLT.t(), non_neg_integer | nil, T.opts()) :: PLT.t()
   def build_module_info_plt!(old_plt, dumped_at, opts \\ []) do
     new_plt = PLT.start(opts)
+    consolidated_beams = Reflection.list_consolidated_beams()
 
     # TODO: Remove this flag and the argument it feeds to
-    # rebuild_module_info_plt_entry!/5 when resolve_beam_source/2 goes (see
+    # rebuild_module_info_plt_entry!/6 when resolve_beam_source/2 goes (see
     # the removal note there).
     umbrella? = Reflection.umbrella?()
 
     TaskUtils.map_concurrently(
       Reflection.list_candidate_modules(),
-      &rebuild_module_info_plt_entry!(&1, old_plt, dumped_at, new_plt, umbrella?),
+      &rebuild_module_info_plt_entry!(
+        &1,
+        old_plt,
+        dumped_at,
+        new_plt,
+        consolidated_beams,
+        umbrella?
+      ),
       max_concurrency: compile_max_concurrency()
     )
 
@@ -1014,6 +1029,26 @@ defmodule Hologram.Compiler do
     end)
 
     :ok
+  end
+
+  @doc """
+  Returns the path esbuild is started with for the given `node_modules` dir: the esbuild binary of
+  the platform package npm installed, `@esbuild/win32-*/esbuild.exe`, when there is exactly one,
+  else the launcher `.bin/esbuild`. On Windows the launcher is a script that starts Node to start
+  the binary, which costs about 50 ms per start. On the other platforms the launcher is the binary
+  itself: esbuild's installer puts it there.
+  """
+  @spec esbuild_bin_path(T.file_path()) :: T.file_path()
+  def esbuild_bin_path(node_modules_path) do
+    binary_paths =
+      [node_modules_path, "@esbuild", "win32-*", "esbuild.exe"]
+      |> Path.join()
+      |> Path.wildcard()
+
+    case binary_paths do
+      [binary_path] -> binary_path
+      _none_or_several -> Path.join([node_modules_path, ".bin", "esbuild"])
+    end
   end
 
   @doc """
@@ -2634,9 +2669,16 @@ defmodule Hologram.Compiler do
 
   # TODO: Drop the umbrella? param and resolve the beam path with :code.which/1
   # when resolve_beam_source/2 goes (see the removal note there).
-  defp rebuild_module_info_plt_entry!(module, old_plt, dumped_at, new_plt, umbrella?) do
+  defp rebuild_module_info_plt_entry!(
+         module,
+         old_plt,
+         dumped_at,
+         new_plt,
+         consolidated_beams,
+         umbrella?
+       ) do
     # No beam: not a module of this project.
-    if beam_source = resolve_beam_source(module, umbrella?) do
+    if beam_source = resolve_beam_source(module, consolidated_beams, umbrella?) do
       put_module_info_plt_entry!(new_plt, module, beam_source, old_plt, dumped_at)
     end
   end
@@ -2879,6 +2921,16 @@ defmodule Hologram.Compiler do
     end)
   end
 
+  # A module with a consolidated beam on the code path is read from it, whatever the VM has loaded.
+  # The compile Phoenix's reloader runs takes the consolidated directory off the code path and
+  # purges its modules, a protocol the compiler calls in that window is loaded from its own beam
+  # again and stays so, and :code.which/1 then names that beam: another digest, mtime and size
+  # than the consolidated beam every other compile reads, so every page reaching the protocol
+  # would be rebuilt.
+  defp resolve_beam_source(module, consolidated_beams, umbrella?) do
+    consolidated_beams[module] || resolve_beam_source(module, umbrella?)
+  end
+
   # In umbrella projects a module can stay loaded from a consolidated protocol
   # beam that Phoenix's code reloader has purged: the reloader compiles with
   # --purge-consolidation-path-if-stale, which deletes the umbrella root
@@ -2893,8 +2945,9 @@ defmodule Hologram.Compiler do
   # Reflection.beam_source/1 and Reflection.umbrella?/0 (if nothing else uses
   # them by then), plus unwinding the umbrella? flag threaded through
   # build_ir_plt/1, build_module_info_plt!/3 and
-  # rebuild_module_info_plt_entry!/5 - their bodies go back to resolving the
-  # beam path with :code.which/1 directly.
+  # rebuild_module_info_plt_entry!/6 - resolve_beam_source/3 stays, with
+  # :code.which/1 as its fallback. Public (unlike upstream's private function) for
+  # Mix.Tasks.Compile.HologramCi.
   @spec resolve_beam_source(module, boolean) :: T.file_path() | nil
   def resolve_beam_source(module, true), do: Reflection.beam_source(module)
 

@@ -1,8 +1,45 @@
 # Hologram
 
-Build rich, interactive UIs entirely in Elixir using Hologram's declarative component system. Your client-side code is intelligently compiled to JavaScript, providing modern frontend capabilities without relying on any JavaScript frameworks.
+Build full-stack web apps entirely in Elixir. Hologram rebuilds the Elixir runtime in the browser, so your client-side code runs as Elixir, with no JavaScript framework and no JavaScript to write.
 
 Website: https://hologram.page
+
+## What it looks like
+
+```elixir
+defmodule MyApp.CounterPage do
+  use Hologram.Page
+
+  route "/counter"
+
+  layout MyApp.MainLayout
+
+  def init(_params, component, _server) do
+    put_state(component, :count, 0)
+  end
+
+  def template do
+    ~HOLO"""
+    <p>Count: {@count}</p>
+    <button $click="increment">+1</button>
+    """
+  end
+
+  def action(:increment, _params, component) do
+    put_state(component, :count, component.state.count + 1)
+  end
+end
+```
+
+The action runs in the browser, so the count updates instantly with no server round-trip.
+
+## Get started
+
+- [Installation](https://hologram.page/docs/installation)
+- [Quick Start](https://hologram.page/docs/quick-start)
+- [Documentation](https://hologram.page/docs/architecture)
+
+If Hologram looks interesting, star the repo to follow along. It helps more Elixir developers find the project.
 
 ## Community
 
@@ -22,21 +59,21 @@ Website: https://hologram.page
 
 <a href="https://www.curiosum.com/?utm_source=github.com&utm_medium=sponsor-logo&utm_campaign=sponsoring_hologram" target="_blank">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/curiosum_logo_horizontal_mono_white.png">
-    <source media="(prefers-color-scheme: light)" srcset=".sponsors/curiosum_logo_horizontal_mono_black.png">
-    <img src=".sponsors/curiosum_logo_horizontal_mono_black.png" alt="Curiosum" height="80">
+    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/curiosum_logo_white.png">
+    <source media="(prefers-color-scheme: light)" srcset=".sponsors/curiosum_logo_black.png">
+    <img src=".sponsors/curiosum_logo_black.png" alt="Curiosum" height="80">
   </picture>
 </a>
 
 [Curiosum](https://www.curiosum.com/?utm_source=github.com&utm_medium=sponsor-logo&utm_campaign=sponsoring_hologram)
 
-### Milestones Sponsor
+### Milestone Sponsor
 
 <a href="https://erlef.org" target="_blank">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/eef_logo_vertical_white.png">
-    <source media="(prefers-color-scheme: light)" srcset=".sponsors/eef_logo_vertical_black.png">
-    <img src=".sponsors/eef_logo_vertical_black.png" alt="Erlang Ecosystem Foundation" height="80">
+    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/eef_logo_white.png">
+    <source media="(prefers-color-scheme: light)" srcset=".sponsors/eef_logo_black.png">
+    <img src=".sponsors/eef_logo_black.png" alt="Erlang Ecosystem Foundation" height="80">
   </picture>
 </a>
 
@@ -46,25 +83,33 @@ Website: https://hologram.page
 
 <a href="https://www.evostore.no/" target="_blank">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/evo_store_logo_horizontal_white.svg">
-    <source media="(prefers-color-scheme: light)" srcset=".sponsors/evo_store_logo_horizontal_black.svg">
-    <img src=".sponsors/evo_store_logo_horizontal_black.svg" alt="Evo Store" height="52">
+    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/evo_store_logo_white.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".sponsors/evo_store_logo_black.svg">
+    <img src=".sponsors/evo_store_logo_black.svg" alt="Evo Store" height="52">
   </picture>
 </a>
 
 [Evo Store](https://www.evostore.no/)
 
-### Innovation Partner Tier
+### Innovation Partner
 
-* Sheharyar Naseer, [@sheharyarn](https://github.com/sheharyarn)
+<a href="https://sruplex.com" target="_blank">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".sponsors/sruplex_logo_white.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".sponsors/sruplex_logo_black.svg">
+    <img src=".sponsors/sruplex_logo_black.svg" alt="Sruplex" height="40">
+  </picture>
+</a>
 
-### Framework Visionary Tier
+[Sruplex](https://sruplex.com)
+
+### Framework Visionary
 
 * [@absowoot](https://github.com/absowoot)
 * Robert Urbańczyk, [@robertu](https://github.com/robertu)
 * Moss Piglet, [@moss-piglet](https://github.com/moss-piglet)
 
-### Early Adopter Tier
+### Early Adopter
 
 * Daniel Calancea, [@D4no0](https://github.com/D4no0)
 * [@pasila](https://github.com/pasila)

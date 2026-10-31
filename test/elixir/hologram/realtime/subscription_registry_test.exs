@@ -12,14 +12,22 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
   # window, which is sized for a slow client connection.
   @attach_wait_ms 50
 
-  setup do
+  # For tests that inspect or release a parked caller themselves. Fifty milliseconds is less than
+  # a slow runner can take between parking a caller and seeing it parked, so a caller parked under
+  # the short window can time out before the test gets to it. Under this one it stays parked until
+  # the test releases it, firing its timer by hand where the timer's answer is what is under test.
+  @parked_wait_ms 60_000
+
+  setup context do
     # Parking a caller asks the cluster over PubSub, so it must be up first - the same
     # order Hologram.Application starts them in.
     wait_for_process_cleanup(Hologram.PubSub)
     start_supervised!({Phoenix.PubSub, name: Hologram.PubSub})
 
+    attach_wait_ms = Map.get(context, :attach_wait_ms, @attach_wait_ms)
+
     wait_for_process_cleanup(SubscriptionRegistry)
-    start_supervised!({SubscriptionRegistry, attach_wait_ms: @attach_wait_ms})
+    start_supervised!({SubscriptionRegistry, attach_wait_ms: attach_wait_ms})
 
     :ok
   end
@@ -46,6 +54,15 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
     end)
 
     task
+  end
+
+  # Sends the registry what the parked caller's own timer sends when the window elapses. The waiter
+  # ref doubles as the timer's ref, so a stale ref fires a timer whose waiter is gone.
+  defp fire_park_timer(instance_id, waiter_ref) do
+    send(
+      Process.whereis(SubscriptionRegistry),
+      {:apply_deltas_timeout, instance_id, waiter_ref}
+    )
   end
 
   # The ref a parked caller carries, which the connection's holder echoes back to address
@@ -405,6 +422,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       assert log =~ ~s(drops: [room_b: "comp_1"])
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "logs nothing when a connection attaches within the wait window" do
       sse_pid = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -556,6 +574,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       assert entry.user_id == "new-user"
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "applies deltas parked by apply_deltas/4 against the entry it creates" do
       task = park_apply_deltas("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
 
@@ -567,6 +586,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       assert bindings_of("test-instance-id") == %{{:room_a, "page"} => "test-user-id"}
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "folds parked deltas on top of the validated bindings rather than replacing them" do
       task = park_apply_deltas("test-instance-id", [{:room_b, "page"}], [], "test-user-id")
 
@@ -588,6 +608,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
              }
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "sends zero-crossing messages for channels a parked delta newly binds" do
       task = park_apply_deltas("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
 
@@ -598,6 +619,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       assert_receive {:sub, :room_a}
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "releases callers parked for the same instance in the order they were issued" do
       task_a = park_apply_deltas("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
       task_b = park_apply_deltas("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
@@ -615,6 +637,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       assert bindings_of("test-instance-id") == %{{:room_a, "page"} => "test-user-id"}
     end
 
+    @tag attach_wait_ms: @parked_wait_ms
     test "leaves callers parked for other instances untouched" do
       # Captured because the untouched caller goes on to time out, which logs.
       capture_log(fn ->
@@ -630,6 +653,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
                  "test-other-instance-id"
                )
 
+        fire_park_timer("test-other-instance-id", parked_waiter_ref("test-other-instance-id"))
         Task.await(task)
       end)
     end
@@ -969,174 +993,6 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
     end
   end
 
-  describe "transition/4" do
-    test "client-side diff is driven by client_claimed_sub_keys, not the registry's bindings" do
-      sse_pid = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id", sse_pid)
-
-      # Seed the registry's bindings with one set
-      transition("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
-
-      # new_sub_keys, client_claimed_sub_keys, and the registry's seeded bindings all differ
-      {add_keys, drop_keys} =
-        transition(
-          "test-instance-id",
-          [{:room_b, "page"}],
-          [{:room_c, "page"}],
-          "test-user-id"
-        )
-
-      assert Enum.sort(add_keys) == [{:room_b, "page"}]
-      assert Enum.sort(drop_keys) == [{:room_c, "page"}]
-    end
-
-    test "replaces the registry's bindings field with the new set" do
-      sse_pid = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id", sse_pid)
-
-      transition("test-instance-id", [{:room_a, "page"}, {:room_b, "comp_1"}], [], "test-user-id")
-
-      [{"test-instance-id", entry}] = :ets.lookup(ets_table_name(), "test-instance-id")
-
-      assert entry.bindings == %{
-               {:room_a, "page"} => "test-user-id",
-               {:room_b, "comp_1"} => "test-user-id"
-             }
-    end
-
-    test "persists authorizing_user_id per binding for both anonymous and authenticated values" do
-      sse_pid_anon = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id-anon", sse_pid_anon)
-      transition("test-instance-id-anon", [{:room_x, "page"}], [], nil)
-
-      [{"test-instance-id-anon", anon_entry}] =
-        :ets.lookup(ets_table_name(), "test-instance-id-anon")
-
-      assert anon_entry.bindings == %{{:room_x, "page"} => nil}
-
-      sse_pid_auth = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id-auth", sse_pid_auth)
-      transition("test-instance-id-auth", [{:room_y, "page"}], [], "test-user-id")
-
-      [{"test-instance-id-auth", auth_entry}] =
-        :ets.lookup(ets_table_name(), "test-instance-id-auth")
-
-      assert auth_entry.bindings == %{{:room_y, "page"} => "test-user-id"}
-    end
-
-    test "returns empty add and drop lists when new_sub_keys fully overlap client_claimed_sub_keys" do
-      sse_pid = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id", sse_pid)
-
-      bindings = [{:room_a, "page"}, {:room_b, "comp_1"}]
-      {add_keys, drop_keys} = transition("test-instance-id", bindings, bindings, "test-user-id")
-
-      assert add_keys == []
-      assert drop_keys == []
-    end
-
-    test "returns correct add and drop lists for partial overlap" do
-      sse_pid = spawn(fn -> Process.sleep(:infinity) end)
-      :ok = register_connection("test-instance-id", sse_pid)
-
-      {add_keys, drop_keys} =
-        transition(
-          "test-instance-id",
-          [{:room_b, "page"}, {:room_c, "page"}],
-          [{:room_a, "page"}, {:room_b, "page"}],
-          "test-user-id"
-        )
-
-      assert Enum.sort(add_keys) == [{:room_c, "page"}]
-      assert Enum.sort(drop_keys) == [{:room_a, "page"}]
-    end
-
-    test "sends {:sub, channel} to sse_pid on the first cid-binding for a channel" do
-      :ok = register_connection("test-instance-id", self())
-
-      transition("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
-
-      assert_receive {:sub, :room_a}
-    end
-
-    test "sends {:unsub, channel} to sse_pid when the last cid-binding for a channel is dropped" do
-      :ok = register_connection("test-instance-id", self())
-
-      transition("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
-
-      assert_receive {:sub, :room_a}
-
-      transition("test-instance-id", [], [{:room_a, "page"}], "test-user-id")
-
-      assert_receive {:unsub, :room_a}
-    end
-
-    test "sends no message when the channel still has other cid-bindings after the transition" do
-      :ok = register_connection("test-instance-id", self())
-
-      transition(
-        "test-instance-id",
-        [{:room_a, "page"}, {:room_a, "comp_1"}],
-        [],
-        "test-user-id"
-      )
-
-      assert_receive {:sub, :room_a}
-
-      # Drop one cid and add another for the same channel - channel always has >=1 binding
-      transition(
-        "test-instance-id",
-        [{:room_a, "page"}, {:room_a, "comp_2"}],
-        [{:room_a, "comp_1"}],
-        "test-user-id"
-      )
-
-      refute_receive {:sub, :room_a}
-      refute_receive {:unsub, :room_a}
-    end
-
-    test "sends no messages when new_sub_keys fully overlap the registry's bindings" do
-      :ok = register_connection("test-instance-id", self())
-
-      bindings = [{:room_a, "page"}, {:room_b, "comp_1"}]
-      transition("test-instance-id", bindings, [], "test-user-id")
-
-      assert_receive {:sub, :room_a}
-      assert_receive {:sub, :room_b}
-
-      transition("test-instance-id", bindings, bindings, "test-user-id")
-
-      refute_receive {:sub, _channel}
-      refute_receive {:unsub, _channel}
-    end
-
-    test "returns the client-side diff for an unknown instance_id" do
-      {add_keys, drop_keys} =
-        transition(
-          "test-unknown-instance-id",
-          [{:room_a, "page"}, {:room_b, "page"}],
-          [{:room_b, "page"}, {:room_c, "page"}],
-          "test-user-id"
-        )
-
-      assert Enum.sort(add_keys) == [{:room_a, "page"}]
-      assert Enum.sort(drop_keys) == [{:room_c, "page"}]
-    end
-
-    test "creates no entry for an unknown instance_id" do
-      transition("test-unknown-instance-id", [{:room_a, "page"}], [], "test-user-id")
-
-      assert :ets.lookup(ets_table_name(), "test-unknown-instance-id") == []
-    end
-
-    test "sends no zero-crossing messages for an unknown instance_id" do
-      transition("test-unknown-instance-id", [{:room_a, "page"}], [], "test-user-id")
-
-      refute_receive {:sub, _channel}
-      refute_receive {:unsub, _channel}
-    end
-  end
-
   describe "update_identity/3" do
     test "updates session_id and user_id on an existing entry" do
       sse_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -1155,6 +1011,8 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
   end
 
   describe "handle {:apply_deltas_remote_reply, ...}" do
+    @describetag attach_wait_ms: @parked_wait_ms
+
     test "releases the parked caller with the holder's result" do
       task = park_apply_deltas("test-instance-id", [{:room_a, "page"}], [], "test-user-id")
       waiter_ref = parked_waiter_ref("test-instance-id")
@@ -1178,7 +1036,7 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
       )
 
       # get_state queues behind the reply, so the waiter must already be gone by the time
-      # it returns - well inside the window, which would otherwise clear it on timeout.
+      # it returns. The window is long enough that only the reply can have cleared it.
       assert :sys.get_state(SubscriptionRegistry).waiters == %{}
 
       Task.await(task)
@@ -1197,8 +1055,9 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
 
           Task.await(task)
 
-          # Outlast the window so the stale timer fires against an absent waiter.
-          Process.sleep(@attach_wait_ms * 2)
+          # The stale timer fires against an absent waiter. get_state queues behind it, so it
+          # has been handled by the time get_state returns.
+          fire_park_timer("test-instance-id", waiter_ref)
           :sys.get_state(SubscriptionRegistry)
         end)
 
@@ -1215,7 +1074,8 @@ defmodule Hologram.Realtime.SubscriptionRegistryTest do
 
       assert Map.has_key?(:sys.get_state(SubscriptionRegistry).waiters, "test-instance-id")
 
-      # The caller stays parked and is answered by its own timer.
+      # The caller stays parked until its timer fires, and is answered the way the timer answers.
+      fire_park_timer("test-instance-id", parked_waiter_ref("test-instance-id"))
       capture_log(fn -> assert Task.await(task) == {[{:room_a, "page"}], []} end)
     end
 

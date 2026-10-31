@@ -13,9 +13,11 @@
 // Overlays are told apart by id, so each caller keeps its own and showing one
 // doesn't disturb another. A dismissable overlay closes on its dismiss button
 // or on Escape - a compilation error leaves the page meaningless and stays
-// until a successful recompilation reloads it, whereas a runtime error often
-// leaves the rest of the page usable, and an overlay with no way out would make
-// the app impossible to exercise by hand.
+// until the code compiles again, whereas a runtime error often leaves the rest
+// of the page usable, and an overlay with no way out would make the app
+// impossible to exercise by hand.
+
+import App from "./app.mjs";
 
 const CLASS_PREFIX = "hologram-error-overlay";
 
@@ -233,6 +235,10 @@ export default class ErrorOverlay {
     const style = document.createElement("style");
     style.id = STYLE_ELEMENT_ID;
     style.textContent = STYLES;
+
+    if (App.cspNonce !== null) {
+      style.nonce = App.cspNonce;
+    }
 
     document.head.appendChild(style);
   }
